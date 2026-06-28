@@ -78,3 +78,15 @@ Milestone 0 weighted coverage: 20 / 20 = 100%.
 | M1-P1-log-output-includes-start-stop-failure | P1 | 3 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
 
 Milestone 1 weighted coverage: 26 / 26 = 100%.
+
+## Milestone 2 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M2-P0-normal-feed-contains-video | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M2-P0-normal-feed-contains-audio | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M2-P0-receiver-consumes-audio-video-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M2-P1-audio-continuity-30-minutes | P1 | 3 | not implemented | tracked in `TEST_GAPS.md` |
+| M2-P1-audio-config-error-handling | P1 | 3 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
+
+Milestone 2 weighted coverage: 18 / 21 = 85.7%.

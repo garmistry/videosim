@@ -17,9 +17,11 @@ class VideoFeedConfig:
     height: int = 720
     framerate: int = 30
     pattern: str = "smpte"
+    audio: bool = True
+    audio_frequency: int = 440
 
     def __post_init__(self):
-        for name in ("port", "width", "height", "framerate"):
+        for name in ("port", "width", "height", "framerate", "audio_frequency"):
             value = getattr(self, name)
             if value < 1:
                 raise ValueError(f"{name} must be greater than 0")
@@ -39,9 +41,14 @@ def require_gst_launch() -> str:
 
 
 def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
-    return [
+    args = [
         require_gst_launch(),
         "-e",
+        "mpegtsmux",
+        "name=mux",
+        "!",
+        "srtsink",
+        f"uri=srt://:{config.port}?mode=listener",
         "videotestsrc",
         "is-live=true",
         f"pattern={config.pattern}",
@@ -55,11 +62,26 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "!",
         "h264parse",
         "!",
-        "mpegtsmux",
-        "!",
-        "srtsink",
-        f'uri=srt://:{config.port}?mode=listener',
+        "mux.",
     ]
+    if config.audio:
+        args.extend(
+            [
+                "audiotestsrc",
+                "is-live=true",
+                "wave=sine",
+                f"freq={config.audio_frequency}",
+                "!",
+                "audio/x-raw,rate=48000,channels=2",
+                "!",
+                "avenc_aac",
+                "!",
+                "aacparse",
+                "!",
+                "mux.",
+            ]
+        )
+    return args
 
 
 def run_video_feed(config: VideoFeedConfig) -> int:

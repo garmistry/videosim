@@ -4,17 +4,17 @@
 
 ## Current Gate
 
-Milestones 0 and 1 have no known P0 test gaps. Milestone 1 live SRT receiver and
-restart proof runs in Docker with `docker compose run --build --rm live-srt`.
+Milestones 0, 1, and 2 have no known P0 test gaps. Milestone 1 and 2 live SRT
+receiver proof runs in Docker with `docker compose run --build --rm live-srt`.
 
 ## Deferred Until Later Milestones
 
-The following gaps are expected because the application implementation has not
-started yet:
+The following gaps are expected because their owning milestone is not complete
+or the gap is non-critical for a completed milestone:
 
 | Gap | Priority | Planned milestone |
 |---|---|---|
-| Audio stream detection tests. | P0 | Milestone 2 |
+| Audio continuity for 30 minutes. | P1 | Milestone 2 |
 | Caption generation and detection tests. | P0 | Milestone 3 |
 | Profile validation tests. | P0 | Milestone 4 |
 | Static outage profile tests for all required modes. | P0 | Milestone 5 |

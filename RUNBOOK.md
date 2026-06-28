@@ -34,10 +34,22 @@ docker compose run --build --rm live-srt
 
 ## Run The Current CLI
 
-Start a video-only SRT listener feed:
+Start an audio/video SRT listener feed:
 
 ```sh
 python3 -m videosim start --port 9000
+```
+
+Change the generated audio tone:
+
+```sh
+python3 -m videosim start --port 9000 --audio-frequency 1000
+```
+
+Disable audio for the earlier video-only path:
+
+```sh
+python3 -m videosim start --port 9000 --no-audio
 ```
 
 Print the GStreamer command without starting a feed:

@@ -11,7 +11,7 @@ LIVE = os.environ.get("VIDEOSIM_LIVE_SRT") == "1"
 
 @unittest.skipUnless(LIVE, "set VIDEOSIM_LIVE_SRT=1 to run live SRT tests")
 class LiveSrtTest(unittest.TestCase):
-    def test_receiver_detects_video_and_feed_restarts(self):
+    def test_receiver_detects_audio_video_and_feed_restarts(self):
         port = 9920
         self._run_once(port)
         self._run_once(port)
@@ -57,6 +57,15 @@ class LiveSrtTest(unittest.TestCase):
                     "queue",
                     "!",
                     "h264parse",
+                    "!",
+                    "fakesink",
+                    "sync=false",
+                    "num-buffers=10",
+                    "demux.",
+                    "!",
+                    "queue",
+                    "!",
+                    "aacparse",
                     "!",
                     "fakesink",
                     "sync=false",

@@ -13,18 +13,29 @@ class VideoFeedCliTest(unittest.TestCase):
 
         self.assertEqual(config.endpoint, "srt://127.0.0.1:9910?mode=caller")
 
-    def test_pipeline_uses_srt_listener_video_test_source(self):
+    def test_pipeline_uses_srt_listener_video_and_audio_test_sources(self):
         config = VideoFeedConfig(port=9910, width=320, height=180, framerate=10)
 
         with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
             args = video_pipeline_args(config)
 
         self.assertIn("videotestsrc", args)
+        self.assertIn("audiotestsrc", args)
         self.assertIn("x264enc", args)
+        self.assertIn("avenc_aac", args)
+        self.assertIn("freq=440", args)
         self.assertIn("mpegtsmux", args)
         self.assertIn("srtsink", args)
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
         self.assertIn("uri=srt://:9910?mode=listener", args)
+
+    def test_pipeline_can_disable_audio(self):
+        config = VideoFeedConfig(port=9910, audio=False)
+
+        with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+            args = video_pipeline_args(config)
+
+        self.assertNotIn("audiotestsrc", args)
 
     def test_invalid_port_returns_clear_error(self):
         stderr = StringIO()
@@ -33,6 +44,14 @@ class VideoFeedCliTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("port must be between 1 and 65535", stderr.getvalue())
+
+    def test_invalid_audio_frequency_returns_clear_error(self):
+        stderr = StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            main(["start", "--audio-frequency", "0"])
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("audio_frequency must be greater than 0", stderr.getvalue())
 
     def test_missing_gstreamer_returns_clear_error(self):
         stderr = StringIO()

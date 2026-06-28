@@ -20,3 +20,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 11 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 1 test proving SRT receiver video detection and restart on the same port.
 - Completed Milestone 1 CLI SRT video feed gate at 100% weighted coverage.
+- Added generated AAC audio to the default SRT feed with `audiotestsrc` and `--audio-frequency` validation; kept `--no-audio` for video-only operation.
+- Updated Docker live SRT test to prove one receiver consumes both H.264 video and AAC audio, then restarts on the same port.
+- Validation run: `python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed tests.test_live_srt` passed, 14 tests with the live test skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 13 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 1 test proving audio/video receiver consumption.
+- Completed Milestone 2 add-audio gate at 85.7% weighted coverage; skipped P1 30-minute continuity test is recorded in `TEST_GAPS.md`.

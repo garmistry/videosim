@@ -159,3 +159,19 @@ Milestone 6 weighted coverage: 44 / 44 = 100%.
 | M7-P1-backend-start-failure-shown-clearly | P1 | 3 | not implemented | tracked in `TEST_GAPS.md` |
 
 Milestone 7 weighted coverage: 23 / 26 = 88.5%.
+
+## Milestone 8 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M8-P0-gui-starts-normal-mode | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P0-gui-starts-audio-only-mode | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P0-gui-starts-video-only-mode | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P0-gui-starts-no-caption-mode | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P0-gui-starts-black-video-mode | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P0-gui-starts-frozen-video-mode | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P0-gui-state-matches-validation-output | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M8-P1-mode-labels-understandable | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+| M8-P1-invalid-combinations-blocked | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+
+Milestone 8 weighted coverage: 41 / 41 = 100%.

@@ -62,3 +62,10 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 32 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 5 tests.
 - Completed Milestone 7 minimal-GUI gate at 88.5% weighted coverage.
+- Added GUI mode selector for normal, audio-only, video-only, no-captions, black-video, and frozen-video profiles.
+- Added invalid-mode blocking in the GUI state/handler and tests for labels/profile selection.
+- Added Docker live GUI mode-selection proof: each GUI-selected mode starts and validates against its profile.
+- Validation run: `python3 -m unittest discover -s tests` passed, 35 tests with 6 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 35 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 6 tests.
+- Completed Milestone 8 GUI-outage-selection gate at 100% weighted coverage.

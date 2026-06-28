@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 import unittest
-from urllib import request
+from urllib import parse, request
 
 
 LIVE = os.environ.get("VIDEOSIM_LIVE_SRT") == "1"
@@ -122,6 +122,83 @@ class LiveSrtTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertTrue(report["passed"])
+        finally:
+            try:
+                request.urlopen(f"http://127.0.0.1:{http_port}/stop", data=b"", timeout=5).read()
+            except Exception:
+                pass
+            self._stop_sender(gui)
+
+    def test_gui_starts_each_outage_mode_and_validation_matches(self):
+        http_port = 18081
+        feed_port = 9960
+        cases = [
+            ("normal", "profiles/srt-normal.yaml"),
+            ("audio_only", "profiles/srt-audio-only.yaml"),
+            ("video_only", "profiles/srt-video-only.yaml"),
+            ("no_captions", "profiles/srt-no-captions.yaml"),
+            ("black_video", "profiles/srt-black-video.yaml"),
+            ("frozen_video", "profiles/srt-frozen-video.yaml"),
+        ]
+        gui = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "gui",
+                "--host",
+                "127.0.0.1",
+                "--http-port",
+                str(http_port),
+                "--feed-port",
+                str(feed_port),
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--framerate",
+                "10",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            self._wait_for_http(http_port)
+            for mode, profile in cases:
+                with self.subTest(mode=mode):
+                    data = parse.urlencode({"mode": mode}).encode("utf-8")
+                    request.urlopen(f"http://127.0.0.1:{http_port}/start", data=data, timeout=5).read()
+                    time.sleep(4)
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "videosim",
+                            "validate",
+                            "--profile",
+                            profile,
+                            "--port",
+                            str(feed_port),
+                            "--width",
+                            "320",
+                            "--height",
+                            "180",
+                            "--framerate",
+                            "10",
+                            "--json",
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=30,
+                    )
+                    report = json.loads(result.stdout)
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertTrue(report["passed"])
+                    request.urlopen(f"http://127.0.0.1:{http_port}/stop", data=b"", timeout=5).read()
+                    time.sleep(0.5)
         finally:
             try:
                 request.urlopen(f"http://127.0.0.1:{http_port}/stop", data=b"", timeout=5).read()

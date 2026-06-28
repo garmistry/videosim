@@ -8,6 +8,17 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass, field
+from urllib.parse import parse_qs
+
+
+PROFILE_OPTIONS = {
+    "normal": ("Normal", "profiles/srt-normal.yaml"),
+    "audio_only": ("Audio only", "profiles/srt-audio-only.yaml"),
+    "video_only": ("Video only", "profiles/srt-video-only.yaml"),
+    "no_captions": ("No captions", "profiles/srt-no-captions.yaml"),
+    "black_video": ("Black video", "profiles/srt-black-video.yaml"),
+    "frozen_video": ("Frozen video", "profiles/srt-frozen-video.yaml"),
+}
 
 
 @dataclass
@@ -16,6 +27,7 @@ class GuiState:
     width: int = 1280
     height: int = 720
     framerate: int = 30
+    mode: str = "normal"
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
 
@@ -33,13 +45,17 @@ class GuiState:
         if self.status == "running":
             self.log("Feed already running")
             return
+        if self.mode not in PROFILE_OPTIONS:
+            self.log(f"Unsupported mode: {self.mode}")
+            return
+        _, profile = PROFILE_OPTIONS[self.mode]
         cmd = [
             sys.executable,
             "-m",
             "videosim",
             "start",
             "--profile",
-            "profiles/srt-normal.yaml",
+            profile,
             "--port",
             str(self.feed_port),
             "--width",
@@ -50,7 +66,7 @@ class GuiState:
             str(self.framerate),
         ]
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        self.log(f"Started feed at {self.endpoint}")
+        self.log(f"Started {self.mode} feed at {self.endpoint}")
         threading.Thread(target=self._capture_logs, args=(self.process,), daemon=True).start()
 
     def stop(self):
@@ -89,15 +105,21 @@ class GuiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/start":
+            params = self._read_form()
+            mode = params.get("mode", [self.state.mode])[0]
+            if mode in PROFILE_OPTIONS:
+                self.state.mode = mode
+            else:
+                self.state.log(f"Unsupported mode: {mode}")
+                self._redirect_home()
+                return
             self.state.start()
         elif self.path == "/stop":
             self.state.stop()
         else:
             self.send_error(404)
             return
-        self.send_response(303)
-        self.send_header("Location", "/")
-        self.end_headers()
+        self._redirect_home()
 
     def log_message(self, format, *args):
         return
@@ -110,11 +132,25 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _redirect_home(self):
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+    def _read_form(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8") if length else ""
+        return parse_qs(body)
+
 
 def render_page(state: GuiState) -> str:
     logs = "\n".join(html.escape(line) for line in state.logs[-80:])
     status = html.escape(state.status)
     endpoint = html.escape(state.endpoint)
+    options = "\n".join(
+        f'<option value="{html.escape(mode)}"{" selected" if mode == state.mode else ""}>{html.escape(label)}</option>'
+        for mode, (label, _) in PROFILE_OPTIONS.items()
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -135,8 +171,11 @@ def render_page(state: GuiState) -> str:
   <h1>Video Feed Simulator</h1>
   <div>Status: <strong>{status}</strong></div>
   <label>SRT endpoint<br><input id="endpoint" value="{endpoint}" readonly></label>
+  <form method="post" action="/start" class="row">
+    <label>Mode <select name="mode">{options}</select></label>
+    <button type="submit">Start</button>
+  </form>
   <div class="row">
-    <form method="post" action="/start"><button type="submit">Start</button></form>
     <form method="post" action="/stop"><button type="submit">Stop</button></form>
     <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('endpoint').value)">Copy URL</button>
   </div>

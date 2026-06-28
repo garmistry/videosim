@@ -57,7 +57,7 @@
 | 5 Static outage profiles | complete | Six sample profiles validate live in Docker, including track absence, no captions, black frames, and frozen frames. |
 | 6 Automated validation tool | complete | `videosim validate` emits human/JSON reports and Docker live tests cover all modes plus stopped feed. |
 | 7 Minimal Linux GUI | complete | Local browser GUI launches, shows copyable endpoint/logs/state, starts/stops normal feed, and Docker live test validates the GUI-started feed. |
-| 8 GUI outage mode selection | not started | Pending mode selector. |
+| 8 GUI outage mode selection | complete | GUI mode selector starts all six required modes and Docker live validation confirms selected stream state. |
 | 9 Runtime fault controls | not started | Pending restart-backed toggles. |
 | 10 Observability and troubleshooting | not started | Pending diagnostics. |
 | 11 Receiver compatibility | not started | Pending compatibility report. |

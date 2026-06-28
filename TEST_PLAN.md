@@ -65,3 +65,16 @@ Core outage milestones require stricter coverage:
 | M0-P0-runbook-has-install-and-verify-path | P0 | 5 | implemented | `python3 -m unittest tests.test_docs_contract` |
 
 Milestone 0 weighted coverage: 20 / 20 = 100%.
+
+## Milestone 1 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M1-P0-start-srt-video-feed | P0 | 5 | partially implemented | `python3 -m unittest tests.test_cli_video_feed` |
+| M1-P0-receiver-detects-video | P0 | 5 | not implemented | pending receiver validation |
+| M1-P0-stop-feed | P0 | 5 | partially implemented | `python3 -m unittest tests.test_cli_video_feed`; manual Ctrl-C smoke |
+| M1-P0-restart-feed | P0 | 5 | not implemented | pending integration test |
+| M1-P1-invalid-port-handling | P1 | 3 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
+| M1-P1-log-output-includes-start-stop-failure | P1 | 3 | partially implemented | start/stop log smoke only |
+
+Milestone 1 remains open until receiver video detection and restart tests pass.

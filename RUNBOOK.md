@@ -19,19 +19,28 @@ for the planned GUI, SRT output, MPEG-TS muxing, H.264 video, and captions.
 ## Verify Current Repository Contract
 
 ```sh
-python3 -m unittest tests.test_docs_contract
+python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed
 ```
 
-Expected result: all Milestone 0 contract checks pass.
+Expected result: all current contract and CLI checks pass.
 
-## Run The Simulator
+## Run The Current CLI
 
-Not implemented yet. The planned first runnable path is a CLI command that starts
-an SRT listener feed, followed by the GUI once feed orchestration exists.
+Start a video-only SRT listener feed:
+
+```sh
+python3 -m videosim start --port 9000
+```
+
+Print the GStreamer command without starting a feed:
+
+```sh
+python3 -m videosim start --port 9000 --print-command
+```
+
+Stop a running feed with Ctrl-C.
 
 ## Planned Receiver Commands
-
-These commands are placeholders until the CLI exposes an endpoint:
 
 ```sh
 ffplay "srt://127.0.0.1:9000?mode=caller"
@@ -46,5 +55,5 @@ gst-launch-1.0 srtsrc uri="srt://127.0.0.1:9000?mode=caller" ! tsdemux ! fakesin
 - Missing `srtsink` or `srtsrc`: install the GStreamer bad plugins package for
   the platform.
 - Missing `ffprobe`: install FFmpeg.
-- No simulator command exists yet: continue with Milestone 1 before attempting a
-  live SRT demo.
+- FFmpeg reports `Protocol not found` for SRT: use GStreamer tools or install an
+  FFmpeg build with SRT enabled.

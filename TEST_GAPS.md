@@ -14,7 +14,7 @@ started yet:
 
 | Gap | Priority | Planned milestone |
 |---|---|---|
-| Real SRT feed start/stop tests. | P0 | Milestone 1 |
+| Automated real SRT feed start/restart integration tests. | P0 | Milestone 1 |
 | Receiver video detection tests. | P0 | Milestone 1 |
 | Audio stream detection tests. | P0 | Milestone 2 |
 | Caption generation and detection tests. | P0 | Milestone 3 |

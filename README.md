@@ -6,9 +6,9 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestone 0 is the active baseline: repo contract, acceptance criteria, and
-documentation consistency checks. Media generation, validation, and GUI code are
-planned next and are not implemented yet.
+Milestone 0 is complete. Milestone 1 is in progress: a CLI can start and stop a
+synthetic video-only SRT listener feed through GStreamer. Receiver validation,
+audio, captions, fault modes, and the GUI are not implemented yet.
 
 ## MVP Scope
 
@@ -58,14 +58,30 @@ The installer supports common Linux package managers and Homebrew on macOS.
 
 ## Verification
 
-Run the current Milestone 0 contract check:
+Run the current checks:
 
 ```sh
-python3 -m unittest tests.test_docs_contract
+python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed
 ```
 
-This verifies that critical MVP requirements map to planned acceptance tests and
-that every required feed mode has expected video/audio/caption behavior.
+This verifies the Milestone 0 contract and the Milestone 1 CLI command-building
+and stop behavior.
+
+## Run Current CLI
+
+Start a synthetic video-only SRT listener feed:
+
+```sh
+python3 -m videosim start --port 9000
+```
+
+Receiver URL:
+
+```text
+srt://127.0.0.1:9000?mode=caller
+```
+
+Stop the feed with Ctrl-C.
 
 ## Documentation
 

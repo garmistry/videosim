@@ -52,7 +52,7 @@
 | 0 Repo and product contract | complete | Docs exist and contract test passes. |
 | 1 CLI SRT video feed | complete | CLI starts/stops/restarts a synthetic video SRT listener and Docker live test proves receiver video detection. |
 | 2 Add audio | complete | CLI emits audio/video SRT and Docker live test proves receiver consumes H.264 video plus AAC audio. |
-| 3 Add closed captions | not started | Pending generated captions. |
+| 3 Add closed captions | complete | CLI inserts generated CEA-608 captions into H.264 and Docker live test extracts them; no-caption negative test passes. |
 | 4 Feed profiles | not started | Pending profile schema and loader. |
 | 5 Static outage profiles | not started | Pending six sample profiles. |
 | 6 Automated validation tool | not started | Pending validator command. |

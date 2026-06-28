@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--pattern", default="smpte")
     start.add_argument("--no-audio", action="store_true", help="disable generated audio")
     start.add_argument("--audio-frequency", type=int, default=440, help="generated audio tone frequency in Hz")
+    start.add_argument("--no-captions", action="store_true", help="disable generated CEA-608 captions")
     start.add_argument("--print-command", action="store_true", help="print GStreamer command and exit")
 
     return parser
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
             pattern=args.pattern,
             audio=not args.no_audio,
             audio_frequency=args.audio_frequency,
+            captions=not args.no_captions,
         )
         if args.print_command:
             print(shlex.join(video_pipeline_args(config)))

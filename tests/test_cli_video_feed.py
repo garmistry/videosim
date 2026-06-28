@@ -4,7 +4,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from videosim.cli import main
-from videosim.feed import VideoFeedConfig, run_video_feed, video_pipeline_args
+from videosim.feed import VideoFeedConfig, cea608_pairs, run_video_feed, video_pipeline_args
 
 
 class VideoFeedCliTest(unittest.TestCase):
@@ -24,6 +24,10 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("x264enc", args)
         self.assertIn("avenc_aac", args)
         self.assertIn("freq=440", args)
+        self.assertIn("cccombiner", args)
+        self.assertIn("h264ccinserter", args)
+        self.assertIn("fdsrc", args)
+        self.assertIn("closedcaption/x-cea-608,format=raw,field=0,framerate=10/1", args)
         self.assertIn("mpegtsmux", args)
         self.assertIn("srtsink", args)
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
@@ -36,6 +40,22 @@ class VideoFeedCliTest(unittest.TestCase):
             args = video_pipeline_args(config)
 
         self.assertNotIn("audiotestsrc", args)
+
+    def test_pipeline_can_disable_captions(self):
+        config = VideoFeedConfig(port=9910, captions=False)
+
+        with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+            args = video_pipeline_args(config)
+
+        self.assertNotIn("h264ccinserter", args)
+        self.assertNotIn("fdsrc", args)
+
+    def test_cea608_caption_bytes_have_odd_parity(self):
+        pairs = list(cea608_pairs("OK"))
+
+        self.assertEqual(len(pairs), 1)
+        for byte in pairs[0]:
+            self.assertEqual(byte.bit_count() % 2, 1)
 
     def test_invalid_port_returns_clear_error(self):
         stderr = StringIO()
@@ -92,7 +112,7 @@ class VideoFeedCliTest(unittest.TestCase):
         with redirect_stdout(stdout), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
             "videosim.feed.subprocess.Popen", return_value=fake
         ):
-            code = run_video_feed(VideoFeedConfig(port=9910))
+            code = run_video_feed(VideoFeedConfig(port=9910, captions=False))
 
         self.assertEqual(code, 0)
         self.assertTrue(fake.signals)
@@ -128,7 +148,7 @@ class VideoFeedCliTest(unittest.TestCase):
         with redirect_stdout(StringIO()), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
             "videosim.feed.subprocess.Popen", return_value=fake
         ), patch("videosim.feed.subprocess.TimeoutExpired", TimeoutError):
-            code = run_video_feed(VideoFeedConfig(port=9910))
+            code = run_video_feed(VideoFeedConfig(port=9910, captions=False))
 
         self.assertEqual(code, 0)
         self.assertTrue(fake.terminated)

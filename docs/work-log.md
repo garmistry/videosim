@@ -26,3 +26,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 13 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 1 test proving audio/video receiver consumption.
 - Completed Milestone 2 add-audio gate at 85.7% weighted coverage; skipped P1 30-minute continuity test is recorded in `TEST_GAPS.md`.
+- Added generated CEA-608 caption insertion using `fdsrc`, `cccombiner`, and `h264ccinserter`; added `--no-captions`.
+- Updated live Docker receiver test to extract captions with `h264ccextractor` and added a no-caption negative check.
+- Validation run: `python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed tests.test_live_srt` passed, 17 tests with 2 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 15 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 2 tests proving captions present and absent when disabled.
+- Completed Milestone 3 add-closed-captions gate at 85.7% weighted coverage; skipped P1 caption update-over-time verification is recorded in `TEST_GAPS.md`.

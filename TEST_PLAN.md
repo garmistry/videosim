@@ -90,3 +90,15 @@ Milestone 1 weighted coverage: 26 / 26 = 100%.
 | M2-P1-audio-config-error-handling | P1 | 3 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
 
 Milestone 2 weighted coverage: 18 / 21 = 85.7%.
+
+## Milestone 3 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M3-P0-captions-present-in-normal-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M3-P0-captions-can-be-detected | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M3-P0-video-audio-still-present-when-captions-enabled | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M3-P1-caption-text-updates-over-time | P1 | 3 | not implemented | tracked in `TEST_GAPS.md` |
+| M3-P1-caption-disabled-negative-test | P1 | 3 | implemented | `docker compose run --build --rm live-srt` |
+
+Milestone 3 weighted coverage: 18 / 21 = 85.7%.

@@ -52,6 +52,12 @@ Disable audio for the earlier video-only path:
 python3 -m videosim start --port 9000 --no-audio
 ```
 
+Disable generated CEA-608 captions:
+
+```sh
+python3 -m videosim start --port 9000 --no-captions
+```
+
 Print the GStreamer command without starting a feed:
 
 ```sh

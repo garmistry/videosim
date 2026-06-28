@@ -2,10 +2,13 @@
 
 # Known Limitations
 
-- The CLI can start, stop, and restart an audio/video SRT listener feed. GUI,
-  captions, fault modes, profile loader, and standalone validator are not
-  implemented yet.
+- The CLI can start, stop, and restart an audio/video/caption SRT listener feed.
+  GUI, fault modes, profile loader, and standalone validator are not implemented
+  yet.
 - The Milestone 2 30-minute audio continuity P1 test is not implemented.
+- Captions start after a fixed 3-second delay so live SRT video caps negotiate
+  before caption bytes reach `cccombiner`.
+- The Milestone 3 caption update-over-time P1 test is not implemented.
 - The Dockerfile is a Linux test harness, not release packaging.
 - Docker packaging is preferred for portability but is not part of the critical
   MVP gate in AGENTS.md; revisit after core feed generation and validation work.

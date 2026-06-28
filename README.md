@@ -6,10 +6,11 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestones 0, 1, and 2 are complete. The CLI can start, stop, and restart a
-synthetic audio/video SRT listener feed through GStreamer, and a Docker live test
-proves a GStreamer receiver can consume H.264 video and AAC audio from the SRT
-endpoint. Captions, fault modes, validation, and the GUI are not implemented yet.
+Milestones 0 through 3 are complete. The CLI can start, stop, and restart a
+synthetic audio/video/caption SRT listener feed through GStreamer, and Docker
+live tests prove a GStreamer receiver can consume H.264 video, AAC audio, and
+extract CEA-608 captions from the H.264 stream. Fault modes, validation, and the
+GUI are not implemented yet.
 
 ## MVP Scope
 
@@ -83,8 +84,8 @@ Start a synthetic audio/video SRT listener feed:
 python3 -m videosim start --port 9000
 ```
 
-Use `--audio-frequency 1000` to change the generated tone, or `--no-audio` for
-the earlier video-only feed.
+Use `--audio-frequency 1000` to change the generated tone, `--no-audio` for the
+earlier video-only feed, or `--no-captions` to disable caption insertion.
 
 Receiver URL:
 

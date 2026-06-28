@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import shutil
 import signal
 import subprocess
+import threading
+import time
 
 
 class FeedError(Exception):
@@ -19,6 +21,7 @@ class VideoFeedConfig:
     pattern: str = "smpte"
     audio: bool = True
     audio_frequency: int = 440
+    captions: bool = True
 
     def __post_init__(self):
         for name in ("port", "width", "height", "framerate", "audio_frequency"):
@@ -55,6 +58,11 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "!",
         f"video/x-raw,width={config.width},height={config.height},framerate={config.framerate}/1",
         "!",
+    ]
+    if config.captions:
+        args.extend(["cccombiner", "name=cc", "!", f"video/x-raw,framerate={config.framerate}/1", "!"])
+    args.extend(
+        [
         "x264enc",
         "tune=zerolatency",
         "speed-preset=ultrafast",
@@ -62,8 +70,17 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "!",
         "h264parse",
         "!",
+        "video/x-h264,alignment=au",
+        "!",
+        ]
+    )
+    if config.captions:
+        args.extend(["h264ccinserter", "!", "h264parse", "!"])
+    args.extend(
+        [
         "mux.",
-    ]
+        ]
+    )
     if config.audio:
         args.extend(
             [
@@ -81,13 +98,29 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
                 "mux.",
             ]
         )
+    if config.captions:
+        args.extend(
+            [
+                "fdsrc",
+                "fd=0",
+                "do-timestamp=true",
+                "!",
+                f"closedcaption/x-cea-608,format=raw,field=0,framerate={config.framerate}/1",
+                "!",
+                "cc.caption",
+            ]
+        )
     return args
 
 
 def run_video_feed(config: VideoFeedConfig) -> int:
     args = video_pipeline_args(config)
     print(f"Starting SRT video feed at {config.endpoint}", flush=True)
-    proc = subprocess.Popen(args)
+    proc = subprocess.Popen(args, stdin=subprocess.PIPE if config.captions else None)
+    writer = None
+    if config.captions and proc.stdin:
+        writer = threading.Thread(target=write_caption_stream, args=(proc.stdin, config.framerate), daemon=True)
+        writer.start()
 
     try:
         return proc.wait()
@@ -103,4 +136,41 @@ def run_video_feed(config: VideoFeedConfig) -> int:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=5)
+        stdin = getattr(proc, "stdin", None)
+        if stdin:
+            stdin.close()
+        if writer:
+            writer.join(timeout=1)
         return 0
+
+
+def write_caption_stream(stream, framerate: int):
+    delay = 1 / (framerate * 5)
+    sequence = 0
+    # ponytail: fixed startup delay; use bus-driven negotiation if sub-second captions matter.
+    time.sleep(3)
+    while True:
+        text = f"VIDEOSIM {sequence:04d} "
+        sequence += 1
+        for pair in cea608_pairs(text):
+            try:
+                stream.write(pair)
+                stream.flush()
+            except (BrokenPipeError, ValueError):
+                return
+            time.sleep(delay)
+
+
+def cea608_pairs(text: str):
+    encoded = [_odd_parity(ord(char) & 0x7F) for char in text]
+    if len(encoded) % 2:
+        encoded.append(_odd_parity(ord(" ")))
+    for index in range(0, len(encoded), 2):
+        yield bytes(encoded[index : index + 2])
+
+
+def _odd_parity(value: int) -> int:
+    value &= 0x7F
+    if value.bit_count() % 2 == 0:
+        return value | 0x80
+    return value

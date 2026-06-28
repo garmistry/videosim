@@ -102,3 +102,15 @@ Milestone 2 weighted coverage: 18 / 21 = 85.7%.
 | M3-P1-caption-disabled-negative-test | P1 | 3 | implemented | `docker compose run --build --rm live-srt` |
 
 Milestone 3 weighted coverage: 18 / 21 = 85.7%.
+
+## Milestone 4 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M4-P0-valid-normal-profile-runs | P0 | 5 | implemented | `python3 -m unittest tests.test_profiles` |
+| M4-P0-invalid-profile-fails-safely | P0 | 5 | implemented | `python3 -m unittest tests.test_profiles` |
+| M4-P0-profile-maps-to-expected-video-audio-caption-state | P0 | 5 | implemented | `python3 -m unittest tests.test_profiles` |
+| M4-P1-missing-fields-reported-clearly | P1 | 3 | implemented | `python3 -m unittest tests.test_profiles` |
+| M4-P1-schema-version-checked | P1 | 3 | implemented | `python3 -m unittest tests.test_profiles` |
+
+Milestone 4 weighted coverage: 21 / 21 = 100%.

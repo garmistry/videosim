@@ -32,3 +32,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 15 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 2 tests proving captions present and absent when disabled.
 - Completed Milestone 3 add-closed-captions gate at 85.7% weighted coverage; skipped P1 caption update-over-time verification is recorded in `TEST_GAPS.md`.
+- Added flat YAML profile loader, `profiles/srt-normal.yaml`, and `python3 -m videosim start --profile`.
+- Added profile tests for valid normal profile loading, CLI command generation, invalid mode failure, missing required fields, schema version checks, and CLI profile error reporting.
+- Validation run: `python3 -m unittest discover -s tests` passed, 23 tests with 2 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 23 tests.
+- Docker live regression run: `docker compose run --build --rm live-srt` passed, 2 tests.
+- Completed Milestone 4 feed-profile gate at 100% weighted coverage.

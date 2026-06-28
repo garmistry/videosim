@@ -3,8 +3,8 @@
 # Known Limitations
 
 - The CLI can start, stop, and restart an audio/video/caption SRT listener feed.
-  GUI, fault modes, profile loader, and standalone validator are not implemented
-  yet.
+  GUI, fault modes, and standalone validator are not implemented yet.
+- Profile parsing supports only the flat Milestone 4 YAML shape and normal mode.
 - The Milestone 2 30-minute audio continuity P1 test is not implemented.
 - Captions start after a fixed 3-second delay so live SRT video caps negotiate
   before caption bytes reach `cccombiner`.

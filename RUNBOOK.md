@@ -58,6 +58,12 @@ Disable generated CEA-608 captions:
 python3 -m videosim start --port 9000 --no-captions
 ```
 
+Start from the sample normal profile:
+
+```sh
+python3 -m videosim start --profile profiles/srt-normal.yaml
+```
+
 Print the GStreamer command without starting a feed:
 
 ```sh

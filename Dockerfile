@@ -13,4 +13,4 @@ RUN apt-get update \
 WORKDIR /app
 COPY . .
 
-CMD ["python", "-m", "unittest", "tests.test_docs_contract", "tests.test_cli_video_feed"]
+CMD ["python", "-m", "unittest", "discover", "-s", "tests"]

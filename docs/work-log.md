@@ -14,3 +14,9 @@
 - Validation run: `python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed` passed, 9 tests.
 - Manual smoke: `python3 -m videosim start --port 9911 --width 320 --height 180 --framerate 10` started, printed `srt://127.0.0.1:9911?mode=caller`, and stopped with Ctrl-C exit code 0.
 - Skipped checks: automated receiver video detection and restart proof are still missing, so Milestone 1 remains open.
+- Added Docker Linux test harness and live SRT integration test at `tests/test_live_srt.py`.
+- Added stop fallback from SIGINT to terminate/kill for stuck media child processes.
+- Validation run: `python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed tests.test_live_srt` passed, 12 tests with the live test skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 11 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 1 test proving SRT receiver video detection and restart on the same port.
+- Completed Milestone 1 CLI SRT video feed gate at 100% weighted coverage.

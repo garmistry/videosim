@@ -19,10 +19,18 @@ for the planned GUI, SRT output, MPEG-TS muxing, H.264 video, and captions.
 ## Verify Current Repository Contract
 
 ```sh
-python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed
+python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed tests.test_live_srt
 ```
 
-Expected result: all current contract and CLI checks pass.
+Expected result: all current contract and CLI checks pass; the live SRT test is
+skipped unless `VIDEOSIM_LIVE_SRT=1` is set.
+
+Run the Linux/Docker gates:
+
+```sh
+docker compose run --build --rm test
+docker compose run --build --rm live-srt
+```
 
 ## Run The Current CLI
 

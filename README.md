@@ -6,9 +6,10 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestone 0 is complete. Milestone 1 is in progress: a CLI can start and stop a
-synthetic video-only SRT listener feed through GStreamer. Receiver validation,
-audio, captions, fault modes, and the GUI are not implemented yet.
+Milestones 0 and 1 are complete. The CLI can start, stop, and restart a
+synthetic video-only SRT listener feed through GStreamer, and a Docker live test
+proves a GStreamer receiver can consume H.264 video from the SRT endpoint.
+Audio, captions, fault modes, validation, and the GUI are not implemented yet.
 
 ## MVP Scope
 
@@ -27,7 +28,8 @@ The critical MVP must support:
 
 Out of scope until the critical MVP is done: protocols beyond SRT, multiple
 simultaneous feeds, local preview, packet/jitter simulation, REST API, metrics,
-and packaging such as Docker/AppImage/Flatpak.
+and release packaging such as AppImage/Flatpak. Docker is present as a Linux
+test harness, not a release package.
 
 ## Architecture
 
@@ -61,11 +63,17 @@ The installer supports common Linux package managers and Homebrew on macOS.
 Run the current checks:
 
 ```sh
-python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed
+python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed tests.test_live_srt
 ```
 
-This verifies the Milestone 0 contract and the Milestone 1 CLI command-building
-and stop behavior.
+The live SRT test is skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
+
+Run the Linux/Docker gates:
+
+```sh
+docker compose run --build --rm test
+docker compose run --build --rm live-srt
+```
 
 ## Run Current CLI
 

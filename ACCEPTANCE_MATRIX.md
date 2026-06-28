@@ -50,7 +50,7 @@
 | Milestone | Status | Human-visible output |
 |---|---|---|
 | 0 Repo and product contract | complete | Docs exist and contract test passes. |
-| 1 CLI SRT video feed | in progress | CLI starts/stops a synthetic video SRT listener; receiver proof pending. |
+| 1 CLI SRT video feed | complete | CLI starts/stops/restarts a synthetic video SRT listener and Docker live test proves receiver video detection. |
 | 2 Add audio | not started | Pending audio/video feed. |
 | 3 Add closed captions | not started | Pending generated captions. |
 | 4 Feed profiles | not started | Pending profile schema and loader. |

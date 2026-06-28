@@ -70,11 +70,11 @@ Milestone 0 weighted coverage: 20 / 20 = 100%.
 
 | Test ID | Priority | Weight | Status | Command |
 |---|---:|---:|---|---|
-| M1-P0-start-srt-video-feed | P0 | 5 | partially implemented | `python3 -m unittest tests.test_cli_video_feed` |
-| M1-P0-receiver-detects-video | P0 | 5 | not implemented | pending receiver validation |
-| M1-P0-stop-feed | P0 | 5 | partially implemented | `python3 -m unittest tests.test_cli_video_feed`; manual Ctrl-C smoke |
-| M1-P0-restart-feed | P0 | 5 | not implemented | pending integration test |
+| M1-P0-start-srt-video-feed | P0 | 5 | implemented | `python3 -m unittest tests.test_cli_video_feed`; `docker compose run --build --rm live-srt` |
+| M1-P0-receiver-detects-video | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M1-P0-stop-feed | P0 | 5 | implemented | `python3 -m unittest tests.test_cli_video_feed`; `docker compose run --build --rm live-srt` |
+| M1-P0-restart-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M1-P1-invalid-port-handling | P1 | 3 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
-| M1-P1-log-output-includes-start-stop-failure | P1 | 3 | partially implemented | start/stop log smoke only |
+| M1-P1-log-output-includes-start-stop-failure | P1 | 3 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
 
-Milestone 1 remains open until receiver video detection and restart tests pass.
+Milestone 1 weighted coverage: 26 / 26 = 100%.

@@ -34,6 +34,16 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("port must be between 1 and 65535", stderr.getvalue())
 
+    def test_missing_gstreamer_returns_clear_error(self):
+        stderr = StringIO()
+        with redirect_stderr(stderr), patch("videosim.feed.shutil.which", return_value=None), self.assertRaises(
+            SystemExit
+        ) as raised:
+            main(["start", "--print-command"])
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("Missing gst-launch-1.0", stderr.getvalue())
+
     def test_print_command_does_not_start_feed(self):
         stdout = StringIO()
         with redirect_stdout(stdout), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
@@ -59,13 +69,51 @@ class VideoFeedCliTest(unittest.TestCase):
                 self.signals.append(signum)
 
         fake = FakeProcess()
-        with redirect_stdout(StringIO()), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
+        stdout = StringIO()
+        with redirect_stdout(stdout), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
             "videosim.feed.subprocess.Popen", return_value=fake
         ):
             code = run_video_feed(VideoFeedConfig(port=9910))
 
         self.assertEqual(code, 0)
         self.assertTrue(fake.signals)
+        self.assertIn("Starting SRT video feed", stdout.getvalue())
+        self.assertIn("Stopping SRT video feed", stdout.getvalue())
+
+    def test_keyboard_interrupt_kills_stuck_feed(self):
+        class FakeProcess:
+            def __init__(self):
+                self.signals = []
+                self.terminated = False
+                self.killed = False
+                self.waits = 0
+
+            def wait(self, timeout=None):
+                self.waits += 1
+                if self.waits == 1:
+                    raise KeyboardInterrupt
+                if self.waits < 4:
+                    raise TimeoutError
+                return 0
+
+            def send_signal(self, signum):
+                self.signals.append(signum)
+
+            def terminate(self):
+                self.terminated = True
+
+            def kill(self):
+                self.killed = True
+
+        fake = FakeProcess()
+        with redirect_stdout(StringIO()), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
+            "videosim.feed.subprocess.Popen", return_value=fake
+        ), patch("videosim.feed.subprocess.TimeoutExpired", TimeoutError):
+            code = run_video_feed(VideoFeedConfig(port=9910))
+
+        self.assertEqual(code, 0)
+        self.assertTrue(fake.terminated)
+        self.assertTrue(fake.killed)
 
 
 if __name__ == "__main__":

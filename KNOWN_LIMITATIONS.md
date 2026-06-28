@@ -2,10 +2,10 @@
 
 # Known Limitations
 
-- The CLI can start a video-only SRT listener feed. GUI, audio, captions, fault
-  modes, profile loader, and validator are not implemented yet.
-- Automated receiver detection and restart proof for Milestone 1 are not
+- The CLI can start, stop, and restart a video-only SRT listener feed. GUI,
+  audio, captions, fault modes, profile loader, and validator are not
   implemented yet.
+- The Dockerfile is a Linux test harness, not release packaging.
 - Docker packaging is preferred for portability but is not part of the critical
   MVP gate in AGENTS.md; revisit after core feed generation and validation work.
 - macOS is treated as a development target. Linux remains the required runtime

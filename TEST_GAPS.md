@@ -4,8 +4,8 @@
 
 ## Current Gate
 
-Milestone 0 has no known P0 test gaps after the documentation contract check is
-implemented and passing.
+Milestones 0 and 1 have no known P0 test gaps. Milestone 1 live SRT receiver and
+restart proof runs in Docker with `docker compose run --build --rm live-srt`.
 
 ## Deferred Until Later Milestones
 
@@ -14,8 +14,6 @@ started yet:
 
 | Gap | Priority | Planned milestone |
 |---|---|---|
-| Automated real SRT feed start/restart integration tests. | P0 | Milestone 1 |
-| Receiver video detection tests. | P0 | Milestone 1 |
 | Audio stream detection tests. | P0 | Milestone 2 |
 | Caption generation and detection tests. | P0 | Milestone 3 |
 | Profile validation tests. | P0 | Milestone 4 |

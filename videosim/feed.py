@@ -72,5 +72,13 @@ def run_video_feed(config: VideoFeedConfig) -> int:
     except KeyboardInterrupt:
         print("Stopping SRT video feed", flush=True)
         proc.send_signal(signal.SIGINT)
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
         return 0

@@ -69,3 +69,11 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 35 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 6 tests.
 - Completed Milestone 8 GUI-outage-selection gate at 100% weighted coverage.
+- Added GUI runtime fault controls for video, audio, captions, black video, and frozen video, applied through controlled stream restarts.
+- Added restart logging, contradictory-control blocking, and safer stopped-process cleanup in GUI state.
+- Added fast GUI tests for control mapping, invalid combinations, restart behavior, and start-failure recovery.
+- Added Docker live GUI control test that toggles every required runtime fault off/on and validates stream state after each transition.
+- Validation run: `python3 -m unittest discover -s tests` passed, 41 tests with 7 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 41 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 7 tests.
+- Completed Milestone 9 runtime-fault-controls gate at 100% weighted coverage.

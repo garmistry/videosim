@@ -175,3 +175,18 @@ Milestone 7 weighted coverage: 23 / 26 = 88.5%.
 | M8-P1-invalid-combinations-blocked | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
 
 Milestone 8 weighted coverage: 41 / 41 = 100%.
+
+## Milestone 9 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M9-P0-toggle-video-off-on | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M9-P0-toggle-audio-off-on | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M9-P0-toggle-captions-off-on | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M9-P0-toggle-black-video-off-on | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M9-P0-toggle-frozen-video-off-on | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M9-P0-gui-state-equals-validation-result | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M9-P1-toggle-event-logging | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+| M9-P1-contradictory-states-prevented | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+
+Milestone 9 weighted coverage: 36 / 36 = 100%.

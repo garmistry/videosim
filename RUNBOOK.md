@@ -91,7 +91,9 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 Open `http://127.0.0.1:8080`.
 
 Use the mode selector to start normal, audio-only, video-only, no-captions,
-black-video, or frozen-video feeds.
+black-video, or frozen-video feeds. Use the runtime fault controls to toggle
+video, audio, captions, black video, or frozen video while the GUI is running;
+the MVP applies those changes with a controlled stream restart.
 
 Print the GStreamer command without starting a feed:
 

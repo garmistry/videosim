@@ -206,6 +206,74 @@ class LiveSrtTest(unittest.TestCase):
                 pass
             self._stop_sender(gui)
 
+    def test_gui_runtime_fault_controls_restart_and_validate(self):
+        http_port = 18082
+        feed_port = 9970
+        normal = {"video": "on", "audio": "on", "captions": "on"}
+        transitions = [
+            ("video off", {"audio": "on"}, "profiles/srt-audio-only.yaml"),
+            ("video on", normal, "profiles/srt-normal.yaml"),
+            ("audio off", {"video": "on", "captions": "on"}, "profiles/srt-video-only.yaml"),
+            ("audio on", normal, "profiles/srt-normal.yaml"),
+            ("captions off", {"video": "on", "audio": "on"}, "profiles/srt-no-captions.yaml"),
+            ("captions on", normal, "profiles/srt-normal.yaml"),
+            ("black on", {"video": "on", "audio": "on", "captions": "on", "black_video": "on"}, "profiles/srt-black-video.yaml"),
+            ("black off", normal, "profiles/srt-normal.yaml"),
+            ("frozen on", {"video": "on", "audio": "on", "captions": "on", "frozen_video": "on"}, "profiles/srt-frozen-video.yaml"),
+            ("frozen off", normal, "profiles/srt-normal.yaml"),
+        ]
+        gui = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "gui",
+                "--host",
+                "127.0.0.1",
+                "--http-port",
+                str(http_port),
+                "--feed-port",
+                str(feed_port),
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--framerate",
+                "10",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            self._wait_for_http(http_port)
+            request.urlopen(
+                f"http://127.0.0.1:{http_port}/start",
+                data=parse.urlencode(normal).encode("utf-8"),
+                timeout=5,
+            ).read()
+            time.sleep(4)
+            self._validate_running_gui_profile("profiles/srt-normal.yaml", feed_port)
+            for label, controls, profile in transitions:
+                with self.subTest(label=label):
+                    request.urlopen(
+                        f"http://127.0.0.1:{http_port}/start",
+                        data=parse.urlencode(controls).encode("utf-8"),
+                        timeout=5,
+                    ).read()
+                    time.sleep(4)
+                    self._validate_running_gui_profile(profile, feed_port)
+                    page = request.urlopen(f"http://127.0.0.1:{http_port}/", timeout=5).read().decode("utf-8")
+                    mode = profile.removeprefix("profiles/srt-").removesuffix(".yaml").replace("-", "_")
+                    self.assertIn(f'<option value="{mode}" selected>', page)
+        finally:
+            try:
+                request.urlopen(f"http://127.0.0.1:{http_port}/stop", data=b"", timeout=5).read()
+            except Exception:
+                pass
+            self._stop_sender(gui)
+
     def _run_once(self, port, extra_sender_args=None, expect_captions=True):
         extra_sender_args = extra_sender_args or []
         sender = subprocess.Popen(
@@ -404,6 +472,35 @@ class LiveSrtTest(unittest.TestCase):
             text=True,
             start_new_session=True,
         )
+
+    def _validate_running_gui_profile(self, profile, port):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "validate",
+                "--profile",
+                profile,
+                "--port",
+                str(port),
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--framerate",
+                "10",
+                "--json",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=45,
+        )
+        report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(report["passed"])
 
     def _wait_for_http(self, port):
         deadline = time.time() + 10

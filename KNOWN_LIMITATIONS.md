@@ -3,7 +3,8 @@
 # Known Limitations
 
 - The CLI can start, stop, and restart an audio/video/caption SRT listener feed.
-- Runtime fault toggles are not implemented yet; changing GUI mode uses stop/start.
+- Runtime fault controls use a controlled stream restart; seamless in-place
+  toggles are intentionally out of MVP scope.
 - Profile parsing supports only the flat YAML shape used by the current normal
   and outage profiles.
 - The Milestone 2 30-minute audio continuity P1 test is not implemented.

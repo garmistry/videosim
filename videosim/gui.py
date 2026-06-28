@@ -20,6 +20,43 @@ PROFILE_OPTIONS = {
     "frozen_video": ("Frozen video", "profiles/srt-frozen-video.yaml"),
 }
 
+CONTROL_FIELDS = ("video", "audio", "captions", "black_video", "frozen_video")
+CONTROL_FORM_FIELD = "controls"
+
+MODE_CONTROLS = {
+    "normal": {"video": True, "audio": True, "captions": True, "black_video": False, "frozen_video": False},
+    "audio_only": {"video": False, "audio": True, "captions": False, "black_video": False, "frozen_video": False},
+    "video_only": {"video": True, "audio": False, "captions": True, "black_video": False, "frozen_video": False},
+    "no_captions": {"video": True, "audio": True, "captions": False, "black_video": False, "frozen_video": False},
+    "black_video": {"video": True, "audio": True, "captions": True, "black_video": True, "frozen_video": False},
+    "frozen_video": {"video": True, "audio": True, "captions": True, "black_video": False, "frozen_video": True},
+}
+
+
+def controls_for_mode(mode: str) -> dict[str, bool]:
+    return dict(MODE_CONTROLS.get(mode, MODE_CONTROLS["normal"]))
+
+
+def mode_from_controls(controls: dict[str, bool]) -> str:
+    normalized = {field: bool(controls.get(field)) for field in CONTROL_FIELDS}
+    for mode, expected in MODE_CONTROLS.items():
+        if normalized == expected:
+            return mode
+
+    if normalized["black_video"] and normalized["frozen_video"]:
+        raise ValueError("Black video and frozen video cannot both be enabled")
+    if not normalized["video"] and not normalized["audio"]:
+        raise ValueError("Video and audio cannot both be disabled")
+    if not normalized["video"] and (normalized["captions"] or normalized["black_video"] or normalized["frozen_video"]):
+        raise ValueError("Video-dependent faults require video to be enabled")
+    raise ValueError("Unsupported toggle combination")
+
+
+def mode_from_form(params: dict[str, list[str]], default_mode: str) -> str:
+    if CONTROL_FORM_FIELD in params or any(field in params for field in CONTROL_FIELDS):
+        return mode_from_controls({field: field in params for field in CONTROL_FIELDS})
+    return params.get("mode", [default_mode])[0]
+
 
 @dataclass
 class GuiState:
@@ -44,10 +81,10 @@ class GuiState:
     def start(self):
         if self.status == "running":
             self.log("Feed already running")
-            return
+            return False
         if self.mode not in PROFILE_OPTIONS:
             self.log(f"Unsupported mode: {self.mode}")
-            return
+            return False
         _, profile = PROFILE_OPTIONS[self.mode]
         cmd = [
             sys.executable,
@@ -65,22 +102,44 @@ class GuiState:
             "--framerate",
             str(self.framerate),
         ]
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        try:
+            self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        except OSError as exc:
+            self.process = None
+            self.log(f"Failed to start {self.mode} feed: {exc}")
+            return False
         self.log(f"Started {self.mode} feed at {self.endpoint}")
         threading.Thread(target=self._capture_logs, args=(self.process,), daemon=True).start()
+        return True
+
+    def apply_mode(self, mode: str):
+        if mode not in PROFILE_OPTIONS:
+            self.log(f"Unsupported mode: {mode}")
+            return False
+        if self.status == "running" and mode == self.mode:
+            self.log("Feed already running")
+            return True
+        if self.status == "running":
+            self.log(f"Restarting feed for {mode} mode")
+            self.stop()
+        self.mode = mode
+        return self.start()
 
     def stop(self):
         if not self.process or self.process.poll() is not None:
+            self.process = None
             self.log("Feed already stopped")
             return
+        process = self.process
         self.log("Stopping feed")
-        os.killpg(self.process.pid, signal.SIGINT)
+        os.killpg(process.pid, signal.SIGINT)
         try:
-            self.process.wait(timeout=10)
+            process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            os.killpg(self.process.pid, signal.SIGKILL)
-            self.process.wait(timeout=5)
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
             self.log("Killed stuck feed")
+        self.process = None
         self.log("Feed stopped")
 
     def log(self, message: str):
@@ -106,14 +165,13 @@ class GuiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/start":
             params = self._read_form()
-            mode = params.get("mode", [self.state.mode])[0]
-            if mode in PROFILE_OPTIONS:
-                self.state.mode = mode
-            else:
-                self.state.log(f"Unsupported mode: {mode}")
+            try:
+                mode = mode_from_form(params, self.state.mode)
+            except ValueError as exc:
+                self.state.log(str(exc))
                 self._redirect_home()
                 return
-            self.state.start()
+            self.state.apply_mode(mode)
         elif self.path == "/stop":
             self.state.stop()
         else:
@@ -151,6 +209,8 @@ def render_page(state: GuiState) -> str:
         f'<option value="{html.escape(mode)}"{" selected" if mode == state.mode else ""}>{html.escape(label)}</option>'
         for mode, (label, _) in PROFILE_OPTIONS.items()
     )
+    controls = controls_for_mode(state.mode)
+    checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -161,7 +221,9 @@ def render_page(state: GuiState) -> str:
     body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 56rem; }}
     main {{ display: grid; gap: 1rem; }}
     button {{ padding: 0.6rem 0.9rem; }}
-    input {{ width: min(100%, 32rem); padding: 0.55rem; }}
+    #endpoint {{ width: min(100%, 32rem); padding: 0.55rem; }}
+    fieldset {{ border: 1px solid #bbb; padding: 0.75rem; }}
+    label.control {{ display: inline-flex; gap: 0.35rem; align-items: center; margin-right: 0.75rem; }}
     pre {{ background: #111; color: #eee; min-height: 12rem; padding: 1rem; overflow: auto; }}
     .row {{ display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }}
   </style>
@@ -174,6 +236,20 @@ def render_page(state: GuiState) -> str:
   <form method="post" action="/start" class="row">
     <label>Mode <select name="mode">{options}</select></label>
     <button type="submit">Start</button>
+  </form>
+  <form method="post" action="/start">
+    <fieldset>
+      <legend>Runtime fault controls</legend>
+      <input type="hidden" name="{CONTROL_FORM_FIELD}" value="1">
+      <div class="row">
+        <label class="control"><input type="checkbox" name="video"{checked["video"]}> Video</label>
+        <label class="control"><input type="checkbox" name="audio"{checked["audio"]}> Audio</label>
+        <label class="control"><input type="checkbox" name="captions"{checked["captions"]}> Captions</label>
+        <label class="control"><input type="checkbox" name="black_video"{checked["black_video"]}> Black video</label>
+        <label class="control"><input type="checkbox" name="frozen_video"{checked["frozen_video"]}> Frozen video</label>
+        <button type="submit">Apply controls</button>
+      </div>
+    </fieldset>
   </form>
   <div class="row">
     <form method="post" action="/stop"><button type="submit">Stop</button></form>

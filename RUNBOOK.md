@@ -95,6 +95,10 @@ black-video, or frozen-video feeds. Use the runtime fault controls to toggle
 video, audio, captions, black video, or frozen video while the GUI is running;
 the MVP applies those changes with a controlled stream restart.
 
+Use the Validate button to run the current profile validation from the GUI.
+Use Download diagnostics to export status, mode, endpoint, last error,
+validation output, and recent logs as text.
+
 Print the GStreamer command without starting a feed:
 
 ```sh

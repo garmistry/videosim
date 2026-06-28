@@ -1,7 +1,15 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from videosim.gui import GuiState, MODE_CONTROLS, PROFILE_OPTIONS, mode_from_controls, mode_from_form, render_page
+from videosim.gui import (
+    GuiState,
+    MODE_CONTROLS,
+    PROFILE_OPTIONS,
+    diagnostics_text,
+    mode_from_controls,
+    mode_from_form,
+    render_page,
+)
 
 
 class GuiTest(unittest.TestCase):
@@ -15,6 +23,9 @@ class GuiTest(unittest.TestCase):
         self.assertIn("Stop", page)
         self.assertIn("srt://127.0.0.1:9912?mode=caller", page)
         self.assertIn("hello", page)
+        self.assertIn("Last error", page)
+        self.assertIn("Validate", page)
+        self.assertIn("Download diagnostics", page)
         for label, _ in PROFILE_OPTIONS.values():
             self.assertIn(label, page)
         for label in ("Video", "Audio", "Captions", "Black video", "Frozen video", "Apply controls"):
@@ -114,7 +125,65 @@ class GuiTest(unittest.TestCase):
 
         self.assertFalse(started)
         self.assertEqual(state.status, "stopped")
+        self.assertEqual(state.last_error, "Failed to start normal feed: missing gst")
         self.assertIn("Failed to start normal feed: missing gst", state.logs)
+
+    def test_intentional_outage_is_visible_without_error(self):
+        state = GuiState(mode="audio_only")
+
+        page = render_page(state)
+
+        self.assertIn("Intentional outage: <strong>yes</strong>", page)
+        self.assertIn("Last error: <strong>none</strong>", page)
+
+    def test_pipeline_exit_sets_last_error_and_keeps_logs(self):
+        state = GuiState()
+        process = Mock()
+        process.stdout = ["pipeline failed"]
+        process.poll.return_value = 2
+
+        state._capture_logs(process)
+
+        self.assertEqual(state.last_error, "Feed process exited with code 2: pipeline failed")
+        self.assertIn("pipeline failed", state.logs)
+
+    def test_validation_output_visible_in_gui(self):
+        state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        result = Mock(returncode=0, stdout="Validation PASS\nreachable=True\n")
+
+        with patch("videosim.gui.subprocess.run", return_value=result) as run:
+            passed = state.validate()
+
+        self.assertTrue(passed)
+        self.assertIn("Validation PASS", render_page(state))
+        cmd = run.call_args.args[0]
+        self.assertIn("validate", cmd)
+        self.assertIn("profiles/srt-normal.yaml", cmd)
+        self.assertIn("9912", cmd)
+
+    def test_validation_failure_sets_actionable_error(self):
+        state = GuiState()
+        result = Mock(returncode=1, stdout="Validation FAIL\nerrors=feed unreachable\n")
+
+        with patch("videosim.gui.subprocess.run", return_value=result):
+            passed = state.validate()
+
+        self.assertFalse(passed)
+        self.assertEqual(state.last_error, "errors=feed unreachable")
+        self.assertIn("Validation failed", state.logs)
+
+    def test_diagnostics_export_contains_state_validation_and_logs(self):
+        state = GuiState(feed_port=9912, mode="black_video")
+        state.validation_output = "Validation PASS"
+        state.log("Started black_video feed")
+
+        diagnostics = diagnostics_text(state)
+
+        self.assertIn("status=stopped", diagnostics)
+        self.assertIn("mode=black_video", diagnostics)
+        self.assertIn("intentional_outage=yes", diagnostics)
+        self.assertIn("Validation PASS", diagnostics)
+        self.assertIn("Started black_video feed", diagnostics)
 
 
 if __name__ == "__main__":

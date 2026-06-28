@@ -67,6 +67,8 @@ class GuiState:
     mode: str = "normal"
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
+    last_error: str = ""
+    validation_output: str = ""
 
     @property
     def endpoint(self) -> str:
@@ -78,12 +80,16 @@ class GuiState:
             return "running"
         return "stopped"
 
+    @property
+    def intentional_outage(self) -> bool:
+        return self.mode != "normal"
+
     def start(self):
         if self.status == "running":
             self.log("Feed already running")
             return False
         if self.mode not in PROFILE_OPTIONS:
-            self.log(f"Unsupported mode: {self.mode}")
+            self.fail(f"Unsupported mode: {self.mode}")
             return False
         _, profile = PROFILE_OPTIONS[self.mode]
         cmd = [
@@ -102,11 +108,12 @@ class GuiState:
             "--framerate",
             str(self.framerate),
         ]
+        self.last_error = ""
         try:
             self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         except OSError as exc:
             self.process = None
-            self.log(f"Failed to start {self.mode} feed: {exc}")
+            self.fail(f"Failed to start {self.mode} feed: {exc}")
             return False
         self.log(f"Started {self.mode} feed at {self.endpoint}")
         threading.Thread(target=self._capture_logs, args=(self.process,), daemon=True).start()
@@ -114,7 +121,7 @@ class GuiState:
 
     def apply_mode(self, mode: str):
         if mode not in PROFILE_OPTIONS:
-            self.log(f"Unsupported mode: {mode}")
+            self.fail(f"Unsupported mode: {mode}")
             return False
         if self.status == "running" and mode == self.mode:
             self.log("Feed already running")
@@ -124,6 +131,44 @@ class GuiState:
             self.stop()
         self.mode = mode
         return self.start()
+
+    def validate(self):
+        if self.mode not in PROFILE_OPTIONS:
+            self.fail(f"Unsupported mode: {self.mode}")
+            return False
+        _, profile = PROFILE_OPTIONS[self.mode]
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "videosim",
+                    "validate",
+                    "--profile",
+                    profile,
+                    "--port",
+                    str(self.feed_port),
+                    "--width",
+                    str(self.width),
+                    "--height",
+                    str(self.height),
+                    "--framerate",
+                    str(self.framerate),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=45,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.validation_output = ""
+            self.fail(f"Validation failed: {exc}")
+            return False
+        self.validation_output = result.stdout.strip()
+        self.log("Validation passed" if result.returncode == 0 else "Validation failed")
+        if result.returncode != 0:
+            self.last_error = self.validation_output.splitlines()[-1] if self.validation_output else "Validation failed"
+        return result.returncode == 0
 
     def stop(self):
         if not self.process or self.process.poll() is not None:
@@ -142,6 +187,10 @@ class GuiState:
         self.process = None
         self.log("Feed stopped")
 
+    def fail(self, message: str):
+        self.last_error = message
+        self.log(message)
+
     def log(self, message: str):
         self.logs.append(message)
         del self.logs[:-200]
@@ -149,14 +198,23 @@ class GuiState:
     def _capture_logs(self, process):
         if not process.stdout:
             return
+        last_line = ""
         for line in process.stdout:
-            self.log(line.rstrip())
+            last_line = line.rstrip()
+            self.log(last_line)
+        code = process.poll()
+        if code not in (None, 0):
+            detail = f": {last_line}" if last_line else ""
+            self.fail(f"Feed process exited with code {code}{detail}")
 
 
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
     def do_GET(self):
+        if self.path == "/diagnostics.txt":
+            self._send_text(diagnostics_text(self.state))
+            return
         if self.path != "/":
             self.send_error(404)
             return
@@ -174,6 +232,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             self.state.apply_mode(mode)
         elif self.path == "/stop":
             self.state.stop()
+        elif self.path == "/validate":
+            self.state.validate()
         else:
             self.send_error(404)
             return
@@ -186,6 +246,15 @@ class GuiHandler(BaseHTTPRequestHandler):
         encoded = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _send_text(self, body: str):
+        encoded = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Disposition", "attachment; filename=videosim-diagnostics.txt")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
@@ -205,6 +274,9 @@ def render_page(state: GuiState) -> str:
     logs = "\n".join(html.escape(line) for line in state.logs[-80:])
     status = html.escape(state.status)
     endpoint = html.escape(state.endpoint)
+    outage = "yes" if state.intentional_outage else "no"
+    last_error = html.escape(state.last_error or "none")
+    validation = html.escape(state.validation_output or "not run")
     options = "\n".join(
         f'<option value="{html.escape(mode)}"{" selected" if mode == state.mode else ""}>{html.escape(label)}</option>'
         for mode, (label, _) in PROFILE_OPTIONS.items()
@@ -232,6 +304,8 @@ def render_page(state: GuiState) -> str:
 <main>
   <h1>Video Feed Simulator</h1>
   <div>Status: <strong>{status}</strong></div>
+  <div>Intentional outage: <strong>{outage}</strong></div>
+  <div>Last error: <strong>{last_error}</strong></div>
   <label>SRT endpoint<br><input id="endpoint" value="{endpoint}" readonly></label>
   <form method="post" action="/start" class="row">
     <label>Mode <select name="mode">{options}</select></label>
@@ -253,13 +327,37 @@ def render_page(state: GuiState) -> str:
   </form>
   <div class="row">
     <form method="post" action="/stop"><button type="submit">Stop</button></form>
+    <form method="post" action="/validate"><button type="submit">Validate</button></form>
     <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('endpoint').value)">Copy URL</button>
+    <a href="/diagnostics.txt">Download diagnostics</a>
   </div>
+  <h2>Validation</h2>
+  <pre>{validation}</pre>
   <h2>Logs</h2>
   <pre>{logs}</pre>
 </main>
 </body>
 </html>"""
+
+
+def diagnostics_text(state: GuiState) -> str:
+    return "\n".join(
+        [
+            "Video Feed Simulator diagnostics",
+            f"status={state.status}",
+            f"mode={state.mode}",
+            f"intentional_outage={'yes' if state.intentional_outage else 'no'}",
+            f"endpoint={state.endpoint}",
+            f"last_error={state.last_error or 'none'}",
+            "",
+            "validation:",
+            state.validation_output or "not run",
+            "",
+            "logs:",
+            *state.logs[-200:],
+            "",
+        ]
+    )
 
 
 def run_gui(host: str, port: int, state: GuiState):

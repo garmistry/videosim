@@ -77,3 +77,10 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 41 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 7 tests.
 - Completed Milestone 9 runtime-fault-controls gate at 100% weighted coverage.
+- Added GUI observability: last error display, intentional outage state, validation output, and downloadable diagnostics text.
+- Added pipeline-exit error capture so failed child processes leave a visible error while preserving logs.
+- Added GUI tests for failed feed errors, intentional outage labeling, validation output, actionable validation failures, and diagnostics export.
+- Validation run: `python3 -m unittest discover -s tests` passed, 46 tests with 7 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 46 tests.
+- Docker live regression run: `docker compose run --build --rm live-srt` passed, 7 tests.
+- Completed Milestone 10 observability-and-troubleshooting gate at 100% weighted coverage.

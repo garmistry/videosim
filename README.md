@@ -6,7 +6,7 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestones 0 through 9 are complete. The CLI and local browser GUI can start,
+Milestones 0 through 10 are complete. The CLI and local browser GUI can start,
 stop, restart, and validate a
 synthetic audio/video/caption SRT listener feed through GStreamer, and Docker
 live tests prove a GStreamer receiver can consume H.264 video, AAC audio, and
@@ -115,6 +115,9 @@ Then open `http://127.0.0.1:8080`.
 The GUI mode selector and runtime fault controls support normal, audio-only,
 video-only, no-captions, black-video, and frozen-video feeds. Changing fault
 controls while a feed is running uses a controlled stream restart.
+
+The GUI also shows status, intentional outage state, last error, logs,
+validation output, and a downloadable diagnostics text file.
 
 Receiver URL:
 

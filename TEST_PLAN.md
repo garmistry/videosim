@@ -156,9 +156,9 @@ Milestone 6 weighted coverage: 44 / 44 = 100%.
 | M7-P0-receiver-consumes-gui-started-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M7-P0-gui-stops-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M7-P1-logs-shown-in-gui | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
-| M7-P1-backend-start-failure-shown-clearly | P1 | 3 | not implemented | tracked in `TEST_GAPS.md` |
+| M7-P1-backend-start-failure-shown-clearly | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
 
-Milestone 7 weighted coverage: 23 / 26 = 88.5%.
+Milestone 7 weighted coverage: 26 / 26 = 100%.
 
 ## Milestone 8 Tests
 
@@ -190,3 +190,16 @@ Milestone 8 weighted coverage: 41 / 41 = 100%.
 | M9-P1-contradictory-states-prevented | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
 
 Milestone 9 weighted coverage: 36 / 36 = 100%.
+
+## Milestone 10 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M10-P0-failed-feed-shows-error | P0 | 5 | implemented | `python3 -m unittest tests.test_gui` |
+| M10-P0-intentional-outage-shown-as-intentional | P0 | 5 | implemented | `python3 -m unittest tests.test_gui` |
+| M10-P0-logs-visible | P0 | 5 | implemented | `python3 -m unittest tests.test_gui` |
+| M10-P0-logs-exportable | P0 | 5 | implemented | `python3 -m unittest tests.test_gui` |
+| M10-P1-validation-output-visible-in-gui | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+| M10-P1-error-messages-actionable | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+
+Milestone 10 weighted coverage: 26 / 26 = 100%.

@@ -84,3 +84,10 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 46 tests.
 - Docker live regression run: `docker compose run --build --rm live-srt` passed, 7 tests.
 - Completed Milestone 10 observability-and-troubleshooting gate at 100% weighted coverage.
+- Added receiver compatibility report covering GStreamer, ffprobe, and ffplay across all required modes.
+- Added FFmpeg to the Docker Linux test harness for ffprobe/ffplay compatibility checks.
+- Added Docker live compatibility test for all six required profiles using ffprobe stream detection, ffplay headless smoke playback, and GStreamer receiver consumption.
+- Validation run: `python3 -m unittest discover -s tests` passed, 47 tests with 8 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 47 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 8 tests.
+- Completed Milestone 11 receiver-compatibility gate at 100% weighted coverage for applicable tests.

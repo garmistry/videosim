@@ -18,4 +18,7 @@
   target.
 - Audio-only caption behavior is explicitly allowed to be absent/unsupported and
   must be reported clearly by validation.
-- Receiver compatibility is unproven until Milestone 11.
+- ffprobe and ffplay compatibility tests are receiver smoke checks; semantic
+  caption, black-video, and frozen-video proof remains in `videosim validate`.
+- VLC is not tested in the minimal headless Docker harness.
+- No project-specific target receiver has been defined.

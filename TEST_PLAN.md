@@ -203,3 +203,16 @@ Milestone 9 weighted coverage: 36 / 36 = 100%.
 | M10-P1-error-messages-actionable | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
 
 Milestone 10 weighted coverage: 26 / 26 = 100%.
+
+## Milestone 11 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M11-P0-ffplay-consumes-required-modes | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M11-P0-ffprobe-detects-required-tracks | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M11-P0-gstreamer-receiver-consumes-required-modes | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M11-P0-required-target-receivers | P0 | 5 | not applicable | no project-specific target receiver is defined |
+| M11-P1-known-limitations-documented | P1 | 3 | implemented | `COMPATIBILITY_REPORT.md`; `KNOWN_LIMITATIONS.md` |
+| M11-P1-vlc-smoke-test | P1 | 3 | not applicable | VLC is not feasible in the minimal headless Docker harness |
+
+Milestone 11 weighted coverage: 18 / 18 = 100% for applicable tests.

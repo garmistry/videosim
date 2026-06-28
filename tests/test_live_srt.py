@@ -10,6 +10,15 @@ from urllib import parse, request
 
 LIVE = os.environ.get("VIDEOSIM_LIVE_SRT") == "1"
 
+REQUIRED_MODE_CASES = [
+    ("normal", "srt-normal.yaml", {"video": True, "audio": True, "captions": True}),
+    ("audio_only", "srt-audio-only.yaml", {"video": False, "audio": True, "captions": False}),
+    ("video_only", "srt-video-only.yaml", {"video": True, "audio": False, "captions": True}),
+    ("no_captions", "srt-no-captions.yaml", {"video": True, "audio": True, "captions": False}),
+    ("black_video", "srt-black-video.yaml", {"video": True, "audio": True, "captions": True, "black": True}),
+    ("frozen_video", "srt-frozen-video.yaml", {"video": True, "audio": True, "captions": True, "frozen": True}),
+]
+
 
 @unittest.skipUnless(LIVE, "set VIDEOSIM_LIVE_SRT=1 to run live SRT tests")
 class LiveSrtTest(unittest.TestCase):
@@ -23,17 +32,40 @@ class LiveSrtTest(unittest.TestCase):
         self._run_once(port, extra_sender_args=["--no-captions"], expect_captions=False)
 
     def test_static_outage_profiles_validate(self):
-        cases = [
-            ("srt-normal.yaml", {"video": True, "audio": True, "captions": True}),
-            ("srt-audio-only.yaml", {"video": False, "audio": True, "captions": False}),
-            ("srt-video-only.yaml", {"video": True, "audio": False, "captions": True}),
-            ("srt-no-captions.yaml", {"video": True, "audio": True, "captions": False}),
-            ("srt-black-video.yaml", {"video": True, "audio": True, "captions": True, "black": True}),
-            ("srt-frozen-video.yaml", {"video": True, "audio": True, "captions": True, "frozen": True}),
-        ]
-        for offset, (profile, expected) in enumerate(cases):
+        for offset, (_, profile, expected) in enumerate(REQUIRED_MODE_CASES):
             with self.subTest(profile=profile):
                 self._validate_profile(profile, 9930 + offset, expected)
+
+    def test_receiver_compatibility_required_modes(self):
+        for offset, (mode, profile, expected) in enumerate(REQUIRED_MODE_CASES):
+            port = 9980 + offset
+            with self.subTest(mode=mode):
+                sender = self._start_sender(
+                    [
+                        "--profile",
+                        f"profiles/{profile}",
+                        "--port",
+                        str(port),
+                        "--width",
+                        "320",
+                        "--height",
+                        "180",
+                        "--framerate",
+                        "10",
+                    ]
+                )
+                try:
+                    time.sleep(4)
+                    if sender.poll() is not None:
+                        output = sender.stdout.read() if sender.stdout else ""
+                        self.fail(f"sender exited early with {sender.returncode}: {output}")
+                    endpoint = f"srt://127.0.0.1:{port}?mode=caller"
+
+                    self._assert_ffprobe_streams(endpoint, expected)
+                    self._assert_ffplay_consumes(endpoint)
+                    self._assert_gst_receiver_consumes(endpoint, expected)
+                finally:
+                    self._stop_sender(sender)
 
     def test_validate_stopped_feed_reports_unreachable(self):
         result = subprocess.run(
@@ -501,6 +533,61 @@ class LiveSrtTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(report["passed"])
+
+    def _assert_ffprobe_streams(self, endpoint, expected):
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "json",
+                endpoint,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        stream_types = {stream["codec_type"] for stream in json.loads(result.stdout)["streams"]}
+        self.assertEqual("video" in stream_types, expected["video"])
+        self.assertEqual("audio" in stream_types, expected["audio"])
+
+    def _assert_ffplay_consumes(self, endpoint):
+        env = os.environ.copy()
+        env.update({"SDL_AUDIODRIVER": "dummy", "SDL_VIDEODRIVER": "dummy"})
+        player = subprocess.Popen(
+            ["ffplay", "-hide_banner", "-loglevel", "error", "-autoexit", "-t", "3", endpoint],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+        time.sleep(5)
+        if player.poll() not in (None, 0):
+            output = player.stdout.read() if player.stdout else ""
+            self.fail(f"ffplay exited early with {player.returncode}: {output}")
+        if player.poll() is None:
+            player.terminate()
+            try:
+                player.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                player.kill()
+                player.wait(timeout=5)
+        if player.stdout:
+            player.stdout.close()
+
+    def _assert_gst_receiver_consumes(self, endpoint, expected):
+        args = ["gst-launch-1.0", "-q", "srtsrc", f"uri={endpoint}", "!", "tsdemux", "name=demux"]
+        if expected["video"]:
+            args.extend(["demux.", "!", "queue", "!", "h264parse", "!", "fakesink", "sync=false", "num-buffers=5"])
+        if expected["audio"]:
+            args.extend(["demux.", "!", "queue", "!", "aacparse", "!", "fakesink", "sync=false", "num-buffers=5"])
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout)
 
     def _wait_for_http(self, port):
         deadline = time.time() + 10

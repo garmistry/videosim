@@ -6,11 +6,11 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestones 0 through 10 are complete. The CLI and local browser GUI can start,
+Milestones 0 through 11 are complete. The CLI and local browser GUI can start,
 stop, restart, and validate a
 synthetic audio/video/caption SRT listener feed through GStreamer, and Docker
-live tests prove a GStreamer receiver can consume H.264 video, AAC audio, and
-extract CEA-608 captions from the H.264 stream.
+live tests prove GStreamer, ffprobe, and ffplay receiver compatibility for the
+required modes.
 
 ## MVP Scope
 
@@ -134,4 +134,5 @@ Stop the feed with Ctrl-C.
 - [ACCEPTANCE_MATRIX.md](ACCEPTANCE_MATRIX.md) - acceptance criteria by mode and milestone.
 - [TEST_GAPS.md](TEST_GAPS.md) - missing tests and allowed gaps.
 - [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) - current limitations.
+- [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) - receiver compatibility evidence.
 - [RUNBOOK.md](RUNBOOK.md) - install, run, verify, and troubleshoot steps.

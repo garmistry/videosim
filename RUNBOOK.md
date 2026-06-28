@@ -115,6 +115,9 @@ ffprobe -hide_banner "srt://127.0.0.1:9000?mode=caller"
 gst-launch-1.0 srtsrc uri="srt://127.0.0.1:9000?mode=caller" ! tsdemux ! fakesink
 ```
 
+Receiver compatibility evidence is maintained in
+[COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md).
+
 ## Troubleshooting
 
 - Missing `gst-launch-1.0`: rerun `scripts/install-deps.sh` or install

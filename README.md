@@ -6,7 +6,7 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestones 0 through 4 are complete. The CLI can start, stop, and restart a
+Milestones 0 through 5 are complete. The CLI can start, stop, and restart a
 synthetic audio/video/caption SRT listener feed through GStreamer, and Docker
 live tests prove a GStreamer receiver can consume H.264 video, AAC audio, and
 extract CEA-608 captions from the H.264 stream. Fault modes, validation, and the
@@ -94,8 +94,8 @@ python3 -m videosim start --profile profiles/srt-normal.yaml
 ```
 
 Static outage profile files also exist for `audio_only`, `video_only`,
-`no_captions`, `black_video`, and `frozen_video`; live validation for all six
-profiles is still pending.
+`no_captions`, `black_video`, and `frozen_video`; Docker live validation covers
+all six profiles.
 
 Receiver URL:
 

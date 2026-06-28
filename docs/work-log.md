@@ -44,3 +44,8 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 25 tests.
 - Docker live regression run: `docker compose run --build --rm live-srt` passed, 2 tests.
 - Milestone 5 remains open: live validation for all six static outage profiles, including black-frame and frozen-frame checks, is still pending.
+- Added Docker live validation for all six static outage profiles, including track presence/absence, caption presence/absence, black-frame ratio, and near-identical frozen frames.
+- Validation run: `python3 -m unittest discover -s tests` passed, 26 tests with 3 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 26 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 3 tests covering normal, no-captions, and all six static outage profiles.
+- Completed Milestone 5 static-outage-profile gate at 100% weighted coverage.

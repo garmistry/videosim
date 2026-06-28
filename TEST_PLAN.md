@@ -119,13 +119,13 @@ Milestone 4 weighted coverage: 21 / 21 = 100%.
 
 | Test ID | Priority | Weight | Status | Command |
 |---|---:|---:|---|---|
-| M5-P0-normal-profile-validates | P0 | 5 | partially implemented | profile loads and maps; live mode validation pending |
-| M5-P0-audio-only-profile-validates | P0 | 5 | partially implemented | profile loads and maps; live mode validation pending |
-| M5-P0-video-only-profile-validates | P0 | 5 | partially implemented | profile loads and maps; live mode validation pending |
-| M5-P0-no-caption-profile-validates | P0 | 5 | partially implemented | profile loads and maps; live mode validation pending |
-| M5-P0-black-video-profile-validates | P0 | 5 | partially implemented | profile loads and maps; black-frame validation pending |
-| M5-P0-frozen-video-profile-validates | P0 | 5 | partially implemented | profile loads and maps; frozen-frame validation pending |
+| M5-P0-normal-profile-validates | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M5-P0-audio-only-profile-validates | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M5-P0-video-only-profile-validates | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M5-P0-no-caption-profile-validates | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M5-P0-black-video-profile-validates | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M5-P0-frozen-video-profile-validates | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M5-P1-unknown-outage-mode-fails-clearly | P1 | 3 | implemented | `python3 -m unittest tests.test_profiles` |
-| M5-P1-receiver-does-not-crash-on-any-outage-scenario | P1 | 3 | not implemented | pending live mode validation |
+| M5-P1-receiver-does-not-crash-on-any-outage-scenario | P1 | 3 | implemented | `docker compose run --build --rm live-srt` |
 
-Milestone 5 remains open until every static outage profile has live validation evidence.
+Milestone 5 weighted coverage: 36 / 36 = 100%.

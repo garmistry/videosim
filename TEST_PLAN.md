@@ -222,10 +222,10 @@ Milestone 11 weighted coverage: 18 / 18 = 100% for applicable tests.
 | Test ID | Priority | Weight | Status | Command |
 |---|---:|---:|---|---|
 | M12-P0-normal-feed-24-hour-soak | P0 | 5 | not implemented | tracked in `TEST_GAPS.md` |
-| M12-P0-required-outage-soak-tests | P0 | 5 | not implemented | tracked in `TEST_GAPS.md` |
+| M12-P0-required-outage-soak-tests | P0 | 5 | short proof implemented, long run pending | `docker compose run --build --rm live-srt`; tracked in `TEST_GAPS.md` |
 | M12-P0-repeated-start-stop-test | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
-| M12-P0-gui-remains-responsive-during-long-run | P0 | 5 | not implemented | tracked in `TEST_GAPS.md` |
+| M12-P0-gui-remains-responsive-during-long-run | P0 | 5 | short proof implemented, long run pending | `docker compose run --build --rm live-srt`; tracked in `TEST_GAPS.md` |
 | M12-P1-resource-usage-report | P1 | 3 | implemented | `python3 -m unittest tests.test_soak`; `STABILITY_REPORT.md` |
 | M12-P1-validation-every-15-minutes-during-soak | P1 | 3 | supported by harness, long run pending | `python3 -m unittest tests.test_soak` |
 
-Milestone 12 weighted coverage: 11 / 26 = 42.3%; milestone remains open.
+Milestone 12 weighted coverage: 11 / 26 = 42.3%; milestone remains open until long-run P0 evidence exists.

@@ -8,14 +8,16 @@ Milestone 12 is in progress. The repo now includes a timed soak harness:
 python3 -m videosim soak --profile profiles/srt-normal.yaml --port 9000 --duration-seconds 86400 --validation-interval-seconds 900 --json
 ```
 
-For fast Docker proof, `tests.test_live_srt.LiveSrtTest.test_short_soak_harness_validates_normal_feed`
-runs the same harness with an 8-second duration.
+For fast Docker proof, the live suite runs the same harness with an 8-second
+duration for normal and outage profiles.
 
 ## Current Evidence
 
 | Check | Status | Evidence |
 |---|---|---|
 | Short normal soak harness | pass | `docker compose run --build --rm live-srt` |
+| Short outage soak harness | pass | `docker compose run --build --rm live-srt` |
+| GUI responsive while feed runs | pass | `docker compose run --build --rm live-srt` |
 | Periodic validation support | pass | `videosim soak --validation-interval-seconds ...` |
 | Repeated start/stop | pass | Existing Docker live restart tests |
 | RSS memory sampling | implemented | `videosim soak --json` reports start/end/growth MB when available |
@@ -25,8 +27,8 @@ runs the same harness with an 8-second duration.
 | Required M12 item | Status |
 |---|---|
 | Normal feed 24-hour soak | pending |
-| Required outage mode soak tests | pending |
-| GUI remains responsive during long run | pending |
+| Required outage mode long soak tests | pending |
+| GUI remains responsive during long run | pending; short running-feed proof passes |
 | Resource usage over 24 hours under threshold | pending |
 | Validation every 15 minutes during 24-hour soak | pending |
 

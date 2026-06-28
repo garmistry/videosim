@@ -17,7 +17,7 @@ or the gap is non-critical for a completed milestone:
 | Audio continuity for 30 minutes. | P1 | Milestone 2 |
 | Caption text update-over-time verification. | P1 | Milestone 3 |
 | Normal feed 24-hour soak run. | P0 | Milestone 12 |
-| Required outage mode soak runs. | P0 | Milestone 12 |
+| Required outage mode long soak runs. | P0 | Milestone 12 |
 | GUI responsiveness during long soak. | P0 | Milestone 12 |
 | 24-hour resource threshold evidence. | P1 | Milestone 12 |
 

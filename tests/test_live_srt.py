@@ -97,6 +97,64 @@ class LiveSrtTest(unittest.TestCase):
         self.assertFalse(report["reachable"])
 
     def test_short_soak_harness_validates_normal_feed(self):
+        report = self._run_short_soak("profiles/srt-normal.yaml", 9990)
+
+        self.assertTrue(report["passed"])
+        self.assertGreaterEqual(report["validations"], 1)
+        self.assertEqual(report["crashes"], 0)
+
+    def test_short_soak_harness_validates_outage_feeds(self):
+        for offset, (mode, profile, _) in enumerate(REQUIRED_MODE_CASES[1:]):
+            with self.subTest(mode=mode):
+                report = self._run_short_soak(f"profiles/{profile}", 9991 + offset)
+
+                self.assertTrue(report["passed"])
+                self.assertGreaterEqual(report["validations"], 1)
+                self.assertEqual(report["crashes"], 0)
+
+    def test_gui_remains_responsive_while_feed_runs(self):
+        http_port = 18083
+        feed_port = 9997
+        gui = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "gui",
+                "--host",
+                "127.0.0.1",
+                "--http-port",
+                str(http_port),
+                "--feed-port",
+                str(feed_port),
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--framerate",
+                "10",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            self._wait_for_http(http_port)
+            request.urlopen(f"http://127.0.0.1:{http_port}/start", data=b"", timeout=5).read()
+            time.sleep(4)
+            for _ in range(3):
+                page = request.urlopen(f"http://127.0.0.1:{http_port}/", timeout=2).read().decode("utf-8")
+                self.assertIn("Status: <strong>running</strong>", page)
+                time.sleep(2)
+        finally:
+            try:
+                request.urlopen(f"http://127.0.0.1:{http_port}/stop", data=b"", timeout=5).read()
+            except Exception:
+                pass
+            self._stop_sender(gui)
+
+    def _run_short_soak(self, profile, port):
         result = subprocess.run(
             [
                 sys.executable,
@@ -104,9 +162,9 @@ class LiveSrtTest(unittest.TestCase):
                 "videosim",
                 "soak",
                 "--profile",
-                "profiles/srt-normal.yaml",
+                profile,
                 "--port",
-                "9990",
+                str(port),
                 "--width",
                 "320",
                 "--height",
@@ -126,12 +184,9 @@ class LiveSrtTest(unittest.TestCase):
             text=True,
             timeout=35,
         )
-        report = json.loads(result.stdout)
 
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertTrue(report["passed"])
-        self.assertGreaterEqual(report["validations"], 1)
-        self.assertEqual(report["crashes"], 0)
+        return json.loads(result.stdout)
 
     def test_gui_starts_normal_feed_that_validates(self):
         http_port = 18080

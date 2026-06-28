@@ -98,3 +98,10 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 52 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 9 tests.
 - Milestone 12 remains open at 42.3% weighted coverage pending long-run soak evidence.
+- Added short Docker live soak coverage for required outage profiles.
+- Added Docker live GUI responsiveness proof while a feed is running.
+- Updated M12 stability docs to distinguish short proofs from pending long-run gate evidence.
+- Validation run: `python3 -m unittest discover -s tests` passed, 54 tests with 11 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 54 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 11 tests.
+- Milestone 12 remains open pending 24-hour normal/outage soak evidence and long-run GUI/resource proof.

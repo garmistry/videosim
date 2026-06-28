@@ -61,4 +61,4 @@
 | 9 Runtime fault controls | complete | GUI runtime controls toggle video, audio, captions, black video, and frozen video via controlled restart, with Docker live validation after each transition. |
 | 10 Observability and troubleshooting | complete | GUI shows status, intentional outage state, last error, logs, validation output, and exports diagnostics text. |
 | 11 Receiver compatibility | complete | Docker live test proves GStreamer, ffprobe, and ffplay compatibility for all required modes; limitations are documented in `COMPATIBILITY_REPORT.md`. |
-| 12 Soak and stability | in progress | Timed soak harness and short Docker normal-feed proof exist; 24-hour and outage soak evidence remain pending. |
+| 12 Soak and stability | in progress | Timed soak harness plus short Docker normal/outage and GUI responsiveness proofs exist; 24-hour evidence remains pending. |

@@ -49,3 +49,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 26 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 3 tests covering normal, no-captions, and all six static outage profiles.
 - Completed Milestone 5 static-outage-profile gate at 100% weighted coverage.
+- Added `python3 -m videosim validate --profile ...` with human-readable and JSON output.
+- Reused validation for live static profiles and added stopped-feed unreachable validation.
+- Validation run: `python3 -m unittest discover -s tests` passed, 29 tests with 4 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 29 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 4 tests covering all six modes and stopped feed.
+- Completed Milestone 6 automated-validation gate at 100% weighted coverage.

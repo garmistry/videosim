@@ -129,3 +129,20 @@ Milestone 4 weighted coverage: 21 / 21 = 100%.
 | M5-P1-receiver-does-not-crash-on-any-outage-scenario | P1 | 3 | implemented | `docker compose run --build --rm live-srt` |
 
 Milestone 5 weighted coverage: 36 / 36 = 100%.
+
+## Milestone 6 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M6-P0-validate-normal-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P0-validate-audio-only-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P0-validate-video-only-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P0-validate-no-caption-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P0-validate-black-video-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P0-validate-frozen-video-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P0-validate-stopped-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M6-P1-false-positive-check | P1 | 3 | implemented | absent-track, no-caption, and stopped-feed live checks |
+| M6-P1-false-negative-check | P1 | 3 | implemented | all expected-present live profile checks |
+| M6-P1-clear-validation-failure-messages | P1 | 3 | implemented | `python3 -m unittest tests.test_validator` |
+
+Milestone 6 weighted coverage: 44 / 44 = 100%.

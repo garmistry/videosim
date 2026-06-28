@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .profile import ProfileError, load_profile
+from .validator import human_summary, validate_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--no-captions", action="store_true", help="disable generated CEA-608 captions")
     start.add_argument("--print-command", action="store_true", help="print GStreamer command and exit")
 
+    validate = subparsers.add_parser("validate", help="validate a running SRT feed against a profile")
+    validate.add_argument("--profile", required=True, help="profile describing expected stream state")
+    validate.add_argument("--port", type=int, help="override the profile port")
+    validate.add_argument("--width", type=int, help="override the profile width")
+    validate.add_argument("--height", type=int, help="override the profile height")
+    validate.add_argument("--framerate", type=int, help="override the profile framerate")
+    validate.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
     return parser
 
 
@@ -33,6 +42,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "validate":
+            config = load_profile(args.profile)
+            overrides = {
+                key: value
+                for key, value in {
+                    "port": args.port,
+                    "width": args.width,
+                    "height": args.height,
+                    "framerate": args.framerate,
+                }.items()
+                if value is not None
+            }
+            if overrides:
+                config = replace(config, **overrides)
+            report = validate_config(config)
+            print(report.to_json() if args.json else human_summary(report))
+            return 0 if report.passed else 1
+
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()
         overrides = {
             key: value

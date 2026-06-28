@@ -75,6 +75,13 @@ profiles/srt-black-video.yaml
 profiles/srt-frozen-video.yaml
 ```
 
+## Validate A Running Feed
+
+```sh
+python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
+python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
+```
+
 Print the GStreamer command without starting a feed:
 
 ```sh

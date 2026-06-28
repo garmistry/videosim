@@ -55,7 +55,7 @@
 | 3 Add closed captions | complete | CLI inserts generated CEA-608 captions into H.264 and Docker live test extracts them; no-caption negative test passes. |
 | 4 Feed profiles | complete | Flat YAML normal profile loads, validates schema version, maps to feed config, and drives CLI command generation. |
 | 5 Static outage profiles | complete | Six sample profiles validate live in Docker, including track absence, no captions, black frames, and frozen frames. |
-| 6 Automated validation tool | not started | Pending validator command. |
+| 6 Automated validation tool | complete | `videosim validate` emits human/JSON reports and Docker live tests cover all modes plus stopped feed. |
 | 7 Minimal Linux GUI | not started | Pending GUI shell. |
 | 8 GUI outage mode selection | not started | Pending mode selector. |
 | 9 Runtime fault controls | not started | Pending restart-backed toggles. |

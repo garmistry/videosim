@@ -3,7 +3,7 @@
 # Known Limitations
 
 - The CLI can start, stop, and restart an audio/video/caption SRT listener feed.
-  GUI, fault modes, and standalone validator are not implemented yet.
+  GUI controls are not implemented yet.
 - Profile parsing supports only the flat YAML shape used by the current normal
   and outage profiles.
 - The Milestone 2 30-minute audio continuity P1 test is not implemented.

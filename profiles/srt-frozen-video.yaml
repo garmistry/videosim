@@ -1,0 +1,8 @@
+schema_version: 1
+mode: frozen_video
+port: 9000
+width: 1280
+height: 720
+framerate: 30
+pattern: smpte
+audio_frequency: 440

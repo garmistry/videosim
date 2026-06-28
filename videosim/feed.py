@@ -19,9 +19,11 @@ class VideoFeedConfig:
     height: int = 720
     framerate: int = 30
     pattern: str = "smpte"
+    video: bool = True
     audio: bool = True
     audio_frequency: int = 440
     captions: bool = True
+    frozen: bool = False
 
     def __post_init__(self):
         for name in ("port", "width", "height", "framerate", "audio_frequency"):
@@ -30,6 +32,10 @@ class VideoFeedConfig:
                 raise ValueError(f"{name} must be greater than 0")
         if self.port > 65535:
             raise ValueError("port must be between 1 and 65535")
+        if self.captions and not self.video:
+            raise ValueError("captions require video")
+        if not self.video and not self.audio:
+            raise ValueError("at least one of video or audio must be enabled")
 
     @property
     def endpoint(self) -> str:
@@ -52,35 +58,36 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "!",
         "srtsink",
         f"uri=srt://:{config.port}?mode=listener",
-        "videotestsrc",
-        "is-live=true",
-        f"pattern={config.pattern}",
-        "!",
-        f"video/x-raw,width={config.width},height={config.height},framerate={config.framerate}/1",
-        "!",
     ]
-    if config.captions:
-        args.extend(["cccombiner", "name=cc", "!", f"video/x-raw,framerate={config.framerate}/1", "!"])
-    args.extend(
-        [
-        "x264enc",
-        "tune=zerolatency",
-        "speed-preset=ultrafast",
-        f"key-int-max={config.framerate}",
-        "!",
-        "h264parse",
-        "!",
-        "video/x-h264,alignment=au",
-        "!",
-        ]
-    )
-    if config.captions:
-        args.extend(["h264ccinserter", "!", "h264parse", "!"])
-    args.extend(
-        [
-        "mux.",
-        ]
-    )
+    if config.video:
+        args.extend(["videotestsrc", "is-live=true", f"pattern={config.pattern}"])
+        if config.frozen:
+            args.extend(["num-buffers=1", "!", "imagefreeze", "is-live=true"])
+        args.extend(
+            [
+                "!",
+                f"video/x-raw,width={config.width},height={config.height},framerate={config.framerate}/1",
+                "!",
+            ]
+        )
+        if config.captions:
+            args.extend(["cccombiner", "name=cc", "!", f"video/x-raw,framerate={config.framerate}/1", "!"])
+        args.extend(
+            [
+                "x264enc",
+                "tune=zerolatency",
+                "speed-preset=ultrafast",
+                f"key-int-max={config.framerate}",
+                "!",
+                "h264parse",
+                "!",
+                "video/x-h264,alignment=au",
+                "!",
+            ]
+        )
+        if config.captions:
+            args.extend(["h264ccinserter", "!", "h264parse", "!"])
+        args.extend(["mux."])
     if config.audio:
         args.extend(
             [
@@ -98,7 +105,7 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
                 "mux.",
             ]
         )
-    if config.captions:
+    if config.captions and config.video:
         args.extend(
             [
                 "fdsrc",
@@ -116,7 +123,7 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
 def run_video_feed(config: VideoFeedConfig) -> int:
     args = video_pipeline_args(config)
     print(f"Starting SRT video feed at {config.endpoint}", flush=True)
-    proc = subprocess.Popen(args, stdin=subprocess.PIPE if config.captions else None)
+    proc = subprocess.Popen(args, stdin=subprocess.PIPE if config.captions and config.video else None)
     writer = None
     if config.captions and proc.stdin:
         writer = threading.Thread(target=write_caption_stream, args=(proc.stdin, config.framerate), daemon=True)

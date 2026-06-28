@@ -38,3 +38,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 23 tests.
 - Docker live regression run: `docker compose run --build --rm live-srt` passed, 2 tests.
 - Completed Milestone 4 feed-profile gate at 100% weighted coverage.
+- Added required static outage profile files for audio-only, video-only, no-captions, black-video, and frozen-video modes.
+- Added profile mode presets and pipeline branches for video absence, audio absence, caption absence, black video, and frozen video via `imagefreeze`.
+- Validation run: `python3 -m unittest discover -s tests` passed, 25 tests with 2 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 25 tests.
+- Docker live regression run: `docker compose run --build --rm live-srt` passed, 2 tests.
+- Milestone 5 remains open: live validation for all six static outage profiles, including black-frame and frozen-frame checks, is still pending.

@@ -4,7 +4,10 @@
 
 - The CLI can start, stop, and restart an audio/video/caption SRT listener feed.
   GUI, fault modes, and standalone validator are not implemented yet.
-- Profile parsing supports only the flat Milestone 4 YAML shape and normal mode.
+- Profile parsing supports only the flat YAML shape used by the current normal
+  and outage profiles.
+- Static outage profiles exist, but Milestone 5 live validation for all six
+  modes is not complete.
 - The Milestone 2 30-minute audio continuity P1 test is not implemented.
 - Captions start after a fixed 3-second delay so live SRT video caps negotiate
   before caption bytes reach `cccombiner`.
@@ -14,8 +17,6 @@
   MVP gate in AGENTS.md; revisit after core feed generation and validation work.
 - macOS is treated as a development target. Linux remains the required runtime
   target.
-- Caption behavior must be proven as a real stream, not burned-in text, before
-  Milestone 3 can close.
 - Audio-only caption behavior is explicitly allowed to be absent/unsupported and
   must be reported clearly by validation.
 - Receiver compatibility is unproven until Milestone 11.

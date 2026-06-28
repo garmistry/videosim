@@ -93,6 +93,10 @@ Start from the sample normal profile:
 python3 -m videosim start --profile profiles/srt-normal.yaml
 ```
 
+Static outage profile files also exist for `audio_only`, `video_only`,
+`no_captions`, `black_video`, and `frozen_video`; live validation for all six
+profiles is still pending.
+
 Receiver URL:
 
 ```text

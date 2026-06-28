@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from videosim.cli import main
+from videosim.feed import video_pipeline_args
 from videosim.profile import ProfileError, load_profile
 
 
@@ -21,6 +22,38 @@ class ProfileTest(unittest.TestCase):
         self.assertTrue(config.captions)
         self.assertEqual(config.audio_frequency, 440)
 
+    def test_required_static_profiles_map_to_expected_state(self):
+        cases = {
+            "srt-normal.yaml": {"video": True, "audio": True, "captions": True},
+            "srt-audio-only.yaml": {"video": False, "audio": True, "captions": False},
+            "srt-video-only.yaml": {"video": True, "audio": False, "captions": True},
+            "srt-no-captions.yaml": {"video": True, "audio": True, "captions": False},
+            "srt-black-video.yaml": {"video": True, "audio": True, "captions": True, "pattern": "black"},
+            "srt-frozen-video.yaml": {"video": True, "audio": True, "captions": True, "frozen": True},
+        }
+
+        for filename, expected in cases.items():
+            with self.subTest(profile=filename):
+                config = load_profile(ROOT / "profiles" / filename)
+                for field, value in expected.items():
+                    self.assertEqual(getattr(config, field), value)
+
+    def test_required_static_profiles_build_expected_pipeline_branches(self):
+        with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+            audio_only = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-audio-only.yaml"))
+            video_only = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-video-only.yaml"))
+            no_captions = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-no-captions.yaml"))
+            black_video = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-black-video.yaml"))
+            frozen_video = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-frozen-video.yaml"))
+
+        self.assertNotIn("videotestsrc", audio_only)
+        self.assertIn("audiotestsrc", audio_only)
+        self.assertIn("videotestsrc", video_only)
+        self.assertNotIn("audiotestsrc", video_only)
+        self.assertNotIn("h264ccinserter", no_captions)
+        self.assertIn("pattern=black", black_video)
+        self.assertIn("imagefreeze", frozen_video)
+
     def test_cli_print_command_uses_profile(self):
         stdout = StringIO()
         with redirect_stdout(stdout), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
@@ -35,7 +68,7 @@ class ProfileTest(unittest.TestCase):
             profile.write("schema_version: 1\nmode: unsupported\n")
             profile.flush()
 
-            with self.assertRaises(ProfileError):
+            with self.assertRaisesRegex(ProfileError, "Unsupported profile mode"):
                 load_profile(profile.name)
 
     def test_missing_required_field_is_clear(self):

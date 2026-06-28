@@ -1,0 +1,4 @@
+schema_version: 1
+mode: audio_only
+port: 9000
+audio_frequency: 440

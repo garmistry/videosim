@@ -64,6 +64,17 @@ Start from the sample normal profile:
 python3 -m videosim start --profile profiles/srt-normal.yaml
 ```
 
+Available static profiles:
+
+```text
+profiles/srt-normal.yaml
+profiles/srt-audio-only.yaml
+profiles/srt-video-only.yaml
+profiles/srt-no-captions.yaml
+profiles/srt-black-video.yaml
+profiles/srt-frozen-video.yaml
+```
+
 Print the GStreamer command without starting a feed:
 
 ```sh

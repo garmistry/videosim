@@ -18,12 +18,22 @@ ALLOWED_KEYS = {
     "height",
     "framerate",
     "pattern",
+    "video",
     "audio",
     "audio_frequency",
     "captions",
+    "frozen",
 }
 INT_KEYS = {"schema_version", "port", "width", "height", "framerate", "audio_frequency"}
-BOOL_KEYS = {"audio", "captions"}
+BOOL_KEYS = {"video", "audio", "captions", "frozen"}
+MODE_PRESETS = {
+    "normal": {},
+    "audio_only": {"video": False, "audio": True, "captions": False},
+    "video_only": {"video": True, "audio": False, "captions": True},
+    "no_captions": {"video": True, "audio": True, "captions": False},
+    "black_video": {"video": True, "audio": True, "captions": True, "pattern": "black"},
+    "frozen_video": {"video": True, "audio": True, "captions": True, "frozen": True},
+}
 
 
 def load_profile(path: str | Path) -> VideoFeedConfig:
@@ -33,10 +43,12 @@ def load_profile(path: str | Path) -> VideoFeedConfig:
         raise ProfileError(f"Missing required profile field: {', '.join(sorted(missing))}")
     if values["schema_version"] != 1:
         raise ProfileError("Unsupported profile schema_version")
-    if values["mode"] != "normal":
-        raise ProfileError("Only normal profiles are supported in Milestone 4")
+    if values["mode"] not in MODE_PRESETS:
+        raise ProfileError(f"Unsupported profile mode: {values['mode']}")
 
-    config_values = {key: value for key, value in values.items() if key not in {"schema_version", "mode"}}
+    config_values = MODE_PRESETS[values["mode"]] | {
+        key: value for key, value in values.items() if key not in {"schema_version", "mode"}
+    }
     try:
         return VideoFeedConfig(**config_values)
     except ValueError as exc:

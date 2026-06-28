@@ -20,6 +20,12 @@ Run the same script in Docker:
 docker compose run --build --rm m12-soak
 ```
 
+Check completed report files:
+
+```sh
+python3 -m videosim soak-check --report-dir reports/m12-soak --memory-growth-threshold-mb 200
+```
+
 For fast Docker proof, the live suite runs the same harness with an 8-second
 duration for normal and outage profiles.
 
@@ -32,6 +38,7 @@ duration for normal and outage profiles.
 | GUI responsive while feed runs | pass | `docker compose run --build --rm live-srt` |
 | Periodic validation support | pass | `videosim soak --validation-interval-seconds ...` |
 | One-command full feed soak runner | implemented | `scripts/run-m12-soak.sh`; `docker compose run --build --rm m12-soak` |
+| Soak report threshold checker | implemented | `python3 -m videosim soak-check --report-dir ...` |
 | Repeated start/stop | pass | Existing Docker live restart tests |
 | RSS memory sampling | implemented | `videosim soak --json` reports start/end/growth MB when available |
 
@@ -54,3 +61,6 @@ duration for normal and outage profiles.
   a future soak run justifies a different limit.
 - `NORMAL_DURATION_SECONDS`, `OUTAGE_DURATION_SECONDS`, and
   `VALIDATION_INTERVAL_SECONDS` can shorten or lengthen the full soak runner.
+- `videosim soak-check` requires all six feed reports to pass, have zero
+  crashes, include validation attempts, and stay under the memory-growth
+  threshold when memory data is available.

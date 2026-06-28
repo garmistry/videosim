@@ -38,4 +38,6 @@ run_soak no_captions profiles/srt-no-captions.yaml 9103 "${OUTAGE_DURATION_SECON
 run_soak black_video profiles/srt-black-video.yaml 9104 "${OUTAGE_DURATION_SECONDS}"
 run_soak frozen_video profiles/srt-frozen-video.yaml 9105 "${OUTAGE_DURATION_SECONDS}"
 
+python3 -m videosim soak-check --report-dir "${REPORT_DIR}" --json | tee "${REPORT_DIR}/summary.json"
+
 echo "M12 soak reports written to ${REPORT_DIR}"

@@ -103,6 +103,12 @@ scripts/run-m12-soak.sh
 docker compose run --build --rm m12-soak
 ```
 
+Check completed soak reports:
+
+```sh
+python3 -m videosim soak-check --report-dir reports/m12-soak --memory-growth-threshold-mb 200
+```
+
 ## Launch The GUI
 
 ```sh

@@ -7,6 +7,10 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+
+REQUIRED_SOAK_REPORTS = ("normal", "audio_only", "video_only", "no_captions", "black_video", "frozen_video")
 
 
 @dataclass
@@ -20,6 +24,18 @@ class SoakReport:
     memory_start_mb: float | None = None
     memory_end_mb: float | None = None
     memory_growth_mb: float | None = None
+    passed: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), sort_keys=True)
+
+
+@dataclass
+class SoakCheckReport:
+    report_dir: str
+    memory_growth_threshold_mb: float
+    checked_reports: int = 0
     passed: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -154,6 +170,45 @@ def human_summary(report: SoakReport) -> str:
         f"memory_start_mb={report.memory_start_mb}",
         f"memory_end_mb={report.memory_end_mb}",
         f"memory_growth_mb={report.memory_growth_mb}",
+    ]
+    if report.errors:
+        fields.append("errors=" + "; ".join(report.errors))
+    return "\n".join(fields)
+
+
+def check_reports(report_dir: str, memory_growth_threshold_mb: float = 200) -> SoakCheckReport:
+    check = SoakCheckReport(report_dir, memory_growth_threshold_mb)
+    base = Path(report_dir)
+    for name in REQUIRED_SOAK_REPORTS:
+        path = base / f"{name}.json"
+        if not path.is_file():
+            check.errors.append(f"missing report: {path}")
+            continue
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            check.errors.append(f"invalid report {path}: {exc}")
+            continue
+        check.checked_reports += 1
+        if not report.get("passed"):
+            check.errors.append(f"{name} did not pass")
+        if report.get("crashes") != 0:
+            check.errors.append(f"{name} crashes={report.get('crashes')}")
+        if report.get("validations", 0) < 1:
+            check.errors.append(f"{name} has no validations")
+        growth = report.get("memory_growth_mb")
+        if growth is not None and growth > memory_growth_threshold_mb:
+            check.errors.append(f"{name} memory_growth_mb={growth} exceeds {memory_growth_threshold_mb}")
+    check.passed = not check.errors
+    return check
+
+
+def check_summary(report: SoakCheckReport) -> str:
+    status = "PASS" if report.passed else "FAIL"
+    fields = [
+        f"Soak check {status}: {report.report_dir}",
+        f"checked_reports={report.checked_reports}",
+        f"memory_growth_threshold_mb={report.memory_growth_threshold_mb}",
     ]
     if report.errors:
         fields.append("errors=" + "; ".join(report.errors))

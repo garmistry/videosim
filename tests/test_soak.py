@@ -1,13 +1,14 @@
 import json
 import subprocess
+import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from videosim.cli import main
-from videosim.soak import SoakReport, human_summary, run_soak
+from videosim.soak import REQUIRED_SOAK_REPORTS, SoakReport, check_reports, human_summary, run_soak
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,6 +76,45 @@ class SoakTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
 
+    def test_check_reports_passes_complete_soak_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in REQUIRED_SOAK_REPORTS:
+                (Path(tmp) / f"{name}.json").write_text(
+                    json.dumps({"passed": True, "crashes": 0, "validations": 2, "memory_growth_mb": 1.0}),
+                    encoding="utf-8",
+                )
+
+            report = check_reports(tmp, memory_growth_threshold_mb=200)
+
+        self.assertTrue(report.passed)
+        self.assertEqual(report.checked_reports, len(REQUIRED_SOAK_REPORTS))
+
+    def test_check_reports_fails_missing_or_bad_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "normal.json").write_text(
+                json.dumps({"passed": True, "crashes": 0, "validations": 1, "memory_growth_mb": 250}),
+                encoding="utf-8",
+            )
+
+            report = check_reports(tmp, memory_growth_threshold_mb=200)
+
+        self.assertFalse(report.passed)
+        self.assertTrue(any("missing report" in error for error in report.errors))
+        self.assertTrue(any("memory_growth_mb=250" in error for error in report.errors))
+
+    def test_cli_soak_check_returns_success_for_complete_reports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in REQUIRED_SOAK_REPORTS:
+                (Path(tmp) / f"{name}.json").write_text(
+                    json.dumps({"passed": True, "crashes": 0, "validations": 1}),
+                    encoding="utf-8",
+                )
+
+            with redirect_stdout(StringIO()):
+                code = main(["soak-check", "--report-dir", tmp])
+
+        self.assertEqual(code, 0)
+
     def test_m12_soak_script_covers_required_profiles(self):
         script = ROOT / "scripts" / "run-m12-soak.sh"
         result = subprocess.run(["bash", "-n", str(script)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -93,6 +133,7 @@ class SoakTest(unittest.TestCase):
         self.assertIn("NORMAL_DURATION_SECONDS", text)
         self.assertIn("OUTAGE_DURATION_SECONDS", text)
         self.assertIn("VALIDATION_INTERVAL_SECONDS", text)
+        self.assertIn("soak-check", text)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ from dataclasses import replace
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .gui import GuiState, run_gui
 from .profile import ProfileError, load_profile
+from .soak import check_reports
+from .soak import check_summary
 from .soak import human_summary as soak_summary
 from .soak import run_soak
 from .validator import human_summary, validate_config
@@ -55,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     soak.add_argument("--validation-interval-seconds", type=float, default=15)
     soak.add_argument("--startup-seconds", type=float, default=4)
     soak.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    soak_check = subparsers.add_parser("soak-check", help="check soak JSON reports")
+    soak_check.add_argument("--report-dir", required=True, help="directory containing normal.json and outage reports")
+    soak_check.add_argument("--memory-growth-threshold-mb", type=float, default=200)
+    soak_check.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     return parser
 
@@ -108,6 +115,13 @@ def main(argv: list[str] | None = None) -> int:
                 args.startup_seconds,
             )
             print(report.to_json() if args.json else soak_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "soak-check":
+            if args.memory_growth_threshold_mb < 0:
+                raise ValueError("memory_growth_threshold_mb must be zero or greater")
+            report = check_reports(args.report_dir, args.memory_growth_threshold_mb)
+            print(report.to_json() if args.json else check_summary(report))
             return 0 if report.passed else 1
 
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()

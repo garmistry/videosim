@@ -111,3 +111,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 55 tests.
 - Shortened Docker M12 soak smoke: `NORMAL_DURATION_SECONDS=8 OUTAGE_DURATION_SECONDS=8 VALIDATION_INTERVAL_SECONDS=3 docker compose run --build --rm m12-soak` passed for all six profiles.
 - Full 24-hour soak evidence remains pending; the new runner is the collection path.
+- Added `python3 -m videosim soak-check` to verify all six soak reports, zero crashes, validation attempts, and memory growth threshold.
+- Updated `scripts/run-m12-soak.sh` to emit `summary.json` from `soak-check`.
+- Validation run: `python3 -m unittest discover -s tests` passed, 58 tests with 11 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 58 tests.
+- Shortened Docker M12 soak smoke with final report check passed: `NORMAL_DURATION_SECONDS=8 OUTAGE_DURATION_SECONDS=8 VALIDATION_INTERVAL_SECONDS=3 docker compose run --build --rm m12-soak`.
+- Full 24-hour soak evidence remains pending; completed reports now have an automated checker.

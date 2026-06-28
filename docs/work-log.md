@@ -55,3 +55,10 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 29 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 4 tests covering all six modes and stopped feed.
 - Completed Milestone 6 automated-validation gate at 100% weighted coverage.
+- Added local browser GUI via `python3 -m videosim gui` with start/stop controls, copyable endpoint, status, and logs.
+- Added GUI tests for rendered controls/logs and normal-profile feed launch command.
+- Added Docker live GUI proof: HTTP start control launches a normal feed and `videosim validate` confirms the GUI-started feed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 32 tests with 5 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 32 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 5 tests.
+- Completed Milestone 7 minimal-GUI gate at 88.5% weighted coverage.

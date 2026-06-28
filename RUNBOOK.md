@@ -82,6 +82,14 @@ python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
 ```
 
+## Launch The GUI
+
+```sh
+python3 -m videosim gui --http-port 8080 --feed-port 9000
+```
+
+Open `http://127.0.0.1:8080`.
+
 Print the GStreamer command without starting a feed:
 
 ```sh

@@ -4,7 +4,7 @@
 
 ## Current Gate
 
-Milestones 0 through 6 have no known P0 test gaps. Milestone 1 through 6 live SRT
+Milestones 0 through 7 have no known P0 test gaps. Milestone 1 through 7 live SRT
 receiver proof runs in Docker with `docker compose run --build --rm live-srt`.
 
 ## Deferred Until Later Milestones
@@ -16,7 +16,7 @@ or the gap is non-critical for a completed milestone:
 |---|---|---|
 | Audio continuity for 30 minutes. | P1 | Milestone 2 |
 | Caption text update-over-time verification. | P1 | Milestone 3 |
-| GUI launch/start/stop tests. | P0 | Milestone 7 |
+| GUI backend start failure display. | P1 | Milestone 7 |
 | GUI outage selection tests. | P0 | Milestone 8 |
 | Runtime fault toggle tests. | P0 | Milestone 9 |
 | Log/error/diagnostic export tests. | P0 | Milestone 10 |

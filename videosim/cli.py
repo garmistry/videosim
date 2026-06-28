@@ -6,6 +6,7 @@ import sys
 from dataclasses import replace
 
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
+from .gui import GuiState, run_gui
 from .profile import ProfileError, load_profile
 from .validator import human_summary, validate_config
 
@@ -34,6 +35,14 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--framerate", type=int, help="override the profile framerate")
     validate.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
+    gui = subparsers.add_parser("gui", help="launch the local browser GUI")
+    gui.add_argument("--host", default="127.0.0.1")
+    gui.add_argument("--http-port", type=int, default=8080)
+    gui.add_argument("--feed-port", type=int, default=9000)
+    gui.add_argument("--width", type=int, default=1280)
+    gui.add_argument("--height", type=int, default=720)
+    gui.add_argument("--framerate", type=int, default=30)
+
     return parser
 
 
@@ -42,6 +51,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "gui":
+            run_gui(
+                args.host,
+                args.http_port,
+                GuiState(feed_port=args.feed_port, width=args.width, height=args.height, framerate=args.framerate),
+            )
+            return 0
+
         if args.command == "validate":
             config = load_profile(args.profile)
             overrides = {

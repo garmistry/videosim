@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 import unittest
+from urllib import request
 
 
 LIVE = os.environ.get("VIDEOSIM_LIVE_SRT") == "1"
@@ -62,6 +63,71 @@ class LiveSrtTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["reachable"])
+
+    def test_gui_starts_normal_feed_that_validates(self):
+        http_port = 18080
+        feed_port = 9950
+        gui = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "gui",
+                "--host",
+                "127.0.0.1",
+                "--http-port",
+                str(http_port),
+                "--feed-port",
+                str(feed_port),
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--framerate",
+                "10",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            self._wait_for_http(http_port)
+            request.urlopen(f"http://127.0.0.1:{http_port}/start", data=b"", timeout=5).read()
+            time.sleep(4)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "videosim",
+                    "validate",
+                    "--profile",
+                    "profiles/srt-normal.yaml",
+                    "--port",
+                    str(feed_port),
+                    "--width",
+                    "320",
+                    "--height",
+                    "180",
+                    "--framerate",
+                    "10",
+                    "--json",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=30,
+            )
+            report = json.loads(result.stdout)
+
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertTrue(report["passed"])
+        finally:
+            try:
+                request.urlopen(f"http://127.0.0.1:{http_port}/stop", data=b"", timeout=5).read()
+            except Exception:
+                pass
+            self._stop_sender(gui)
 
     def _run_once(self, port, extra_sender_args=None, expect_captions=True):
         extra_sender_args = extra_sender_args or []
@@ -261,6 +327,18 @@ class LiveSrtTest(unittest.TestCase):
             text=True,
             start_new_session=True,
         )
+
+    def _wait_for_http(self, port):
+        deadline = time.time() + 10
+        last_error = None
+        while time.time() < deadline:
+            try:
+                request.urlopen(f"http://127.0.0.1:{port}/", timeout=1).read()
+                return
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.2)
+        self.fail(f"GUI did not start: {last_error}")
 
     def _stop_sender(self, sender):
         if sender.poll() is None:

@@ -6,10 +6,11 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestones 0 through 6 are complete. The CLI can start, stop, restart, and validate a
+Milestones 0 through 7 are complete. The CLI and local browser GUI can start,
+stop, restart, and validate a
 synthetic audio/video/caption SRT listener feed through GStreamer, and Docker
 live tests prove a GStreamer receiver can consume H.264 video, AAC audio, and
-extract CEA-608 captions from the H.264 stream. The GUI is not implemented yet.
+extract CEA-608 captions from the H.264 stream.
 
 ## MVP Scope
 
@@ -102,6 +103,14 @@ python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --js
 Static outage profile files also exist for `audio_only`, `video_only`,
 `no_captions`, `black_video`, and `frozen_video`; Docker live validation covers
 all six profiles.
+
+Launch the local browser GUI:
+
+```sh
+python3 -m videosim gui --http-port 8080 --feed-port 9000
+```
+
+Then open `http://127.0.0.1:8080`.
 
 Receiver URL:
 

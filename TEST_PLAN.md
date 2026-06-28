@@ -146,3 +146,16 @@ Milestone 5 weighted coverage: 36 / 36 = 100%.
 | M6-P1-clear-validation-failure-messages | P1 | 3 | implemented | `python3 -m unittest tests.test_validator` |
 
 Milestone 6 weighted coverage: 44 / 44 = 100%.
+
+## Milestone 7 Tests
+
+| Test ID | Priority | Weight | Status | Command |
+|---|---:|---:|---|---|
+| M7-P0-gui-launches | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M7-P0-gui-starts-normal-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M7-P0-receiver-consumes-gui-started-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M7-P0-gui-stops-feed | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
+| M7-P1-logs-shown-in-gui | P1 | 3 | implemented | `python3 -m unittest tests.test_gui` |
+| M7-P1-backend-start-failure-shown-clearly | P1 | 3 | not implemented | tracked in `TEST_GAPS.md` |
+
+Milestone 7 weighted coverage: 23 / 26 = 88.5%.

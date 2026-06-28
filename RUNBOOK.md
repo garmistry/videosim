@@ -96,6 +96,13 @@ Full M12 normal-feed run:
 python3 -m videosim soak --profile profiles/srt-normal.yaml --port 9000 --duration-seconds 86400 --validation-interval-seconds 900 --json
 ```
 
+Full M12 feed soak runner:
+
+```sh
+scripts/run-m12-soak.sh
+docker compose run --build --rm m12-soak
+```
+
 ## Launch The GUI
 
 ```sh

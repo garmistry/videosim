@@ -1,11 +1,15 @@
 import json
+import subprocess
 import unittest
 from contextlib import redirect_stderr
 from io import StringIO
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from videosim.cli import main
 from videosim.soak import SoakReport, human_summary, run_soak
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class SoakTest(unittest.TestCase):
@@ -70,6 +74,25 @@ class SoakTest(unittest.TestCase):
             main(["soak", "--profile", "profiles/srt-normal.yaml", "--duration-seconds", "0"])
 
         self.assertEqual(raised.exception.code, 2)
+
+    def test_m12_soak_script_covers_required_profiles(self):
+        script = ROOT / "scripts" / "run-m12-soak.sh"
+        result = subprocess.run(["bash", "-n", str(script)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        text = script.read_text(encoding="utf-8")
+        for profile in (
+            "profiles/srt-normal.yaml",
+            "profiles/srt-audio-only.yaml",
+            "profiles/srt-video-only.yaml",
+            "profiles/srt-no-captions.yaml",
+            "profiles/srt-black-video.yaml",
+            "profiles/srt-frozen-video.yaml",
+        ):
+            self.assertIn(profile, text)
+        self.assertIn("NORMAL_DURATION_SECONDS", text)
+        self.assertIn("OUTAGE_DURATION_SECONDS", text)
+        self.assertIn("VALIDATION_INTERVAL_SECONDS", text)
 
 
 if __name__ == "__main__":

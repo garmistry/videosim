@@ -7,3 +7,14 @@ services:
     environment:
       VIDEOSIM_LIVE_SRT: "1"
     command: python -m unittest tests.test_live_srt
+  m12-soak:
+    build: .
+    environment:
+      REPORT_DIR: /app/reports/m12-soak
+      NORMAL_DURATION_SECONDS: ${NORMAL_DURATION_SECONDS:-86400}
+      OUTAGE_DURATION_SECONDS: ${OUTAGE_DURATION_SECONDS:-3600}
+      VALIDATION_INTERVAL_SECONDS: ${VALIDATION_INTERVAL_SECONDS:-900}
+      STARTUP_SECONDS: ${STARTUP_SECONDS:-4}
+    volumes:
+      - ./reports:/app/reports
+    command: bash scripts/run-m12-soak.sh

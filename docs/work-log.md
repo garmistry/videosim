@@ -105,3 +105,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 54 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 11 tests.
 - Milestone 12 remains open pending 24-hour normal/outage soak evidence and long-run GUI/resource proof.
+- Added `scripts/run-m12-soak.sh` and `docker compose run --build --rm m12-soak` to collect full M12 feed soak reports for normal and outage profiles.
+- Added report-output ignores for local and Docker contexts.
+- Validation run: `python3 -m unittest discover -s tests` passed, 55 tests with 11 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 55 tests.
+- Shortened Docker M12 soak smoke: `NORMAL_DURATION_SECONDS=8 OUTAGE_DURATION_SECONDS=8 VALIDATION_INTERVAL_SECONDS=3 docker compose run --build --rm m12-soak` passed for all six profiles.
+- Full 24-hour soak evidence remains pending; the new runner is the collection path.

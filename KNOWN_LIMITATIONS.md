@@ -22,3 +22,5 @@
   caption, black-video, and frozen-video proof remains in `videosim validate`.
 - VLC is not tested in the minimal headless Docker harness.
 - No project-specific target receiver has been defined.
+- The soak harness is implemented, but 24-hour normal/outage soak evidence is
+  still pending.

@@ -100,6 +100,12 @@ python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
 ```
 
+Run a timed soak with periodic validation:
+
+```sh
+python3 -m videosim soak --profile profiles/srt-normal.yaml --port 9000 --duration-seconds 86400 --validation-interval-seconds 900 --json
+```
+
 Static outage profile files also exist for `audio_only`, `video_only`,
 `no_captions`, `black_video`, and `frozen_video`; Docker live validation covers
 all six profiles.
@@ -135,4 +141,5 @@ Stop the feed with Ctrl-C.
 - [TEST_GAPS.md](TEST_GAPS.md) - missing tests and allowed gaps.
 - [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) - current limitations.
 - [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) - receiver compatibility evidence.
+- [STABILITY_REPORT.md](STABILITY_REPORT.md) - soak harness and pending long-run evidence.
 - [RUNBOOK.md](RUNBOOK.md) - install, run, verify, and troubleshoot steps.

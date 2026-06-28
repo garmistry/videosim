@@ -82,6 +82,20 @@ python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
 ```
 
+## Run A Soak
+
+Short smoke:
+
+```sh
+python3 -m videosim soak --profile profiles/srt-normal.yaml --port 9000 --duration-seconds 60 --validation-interval-seconds 15 --json
+```
+
+Full M12 normal-feed run:
+
+```sh
+python3 -m videosim soak --profile profiles/srt-normal.yaml --port 9000 --duration-seconds 86400 --validation-interval-seconds 900 --json
+```
+
 ## Launch The GUI
 
 ```sh

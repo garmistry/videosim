@@ -96,6 +96,43 @@ class LiveSrtTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertFalse(report["reachable"])
 
+    def test_short_soak_harness_validates_normal_feed(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "soak",
+                "--profile",
+                "profiles/srt-normal.yaml",
+                "--port",
+                "9990",
+                "--width",
+                "320",
+                "--height",
+                "180",
+                "--framerate",
+                "10",
+                "--duration-seconds",
+                "8",
+                "--validation-interval-seconds",
+                "3",
+                "--startup-seconds",
+                "4",
+                "--json",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=35,
+        )
+        report = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(report["passed"])
+        self.assertGreaterEqual(report["validations"], 1)
+        self.assertEqual(report["crashes"], 0)
+
     def test_gui_starts_normal_feed_that_validates(self):
         http_port = 18080
         feed_port = 9950

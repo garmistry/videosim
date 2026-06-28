@@ -91,3 +91,10 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 47 tests.
 - Docker live validation run: `docker compose run --build --rm live-srt` passed, 8 tests.
 - Completed Milestone 11 receiver-compatibility gate at 100% weighted coverage for applicable tests.
+- Added `python3 -m videosim soak` timed soak harness with periodic validation, crash detection, and RSS memory sampling.
+- Added short Docker live normal-feed soak proof; full 24-hour and outage soak evidence remains pending.
+- Added `STABILITY_REPORT.md` with current evidence, resource notes, and pending M12 gate items.
+- Validation run: `python3 -m unittest discover -s tests` passed, 52 tests with 9 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 52 tests.
+- Docker live validation run: `docker compose run --build --rm live-srt` passed, 9 tests.
+- Milestone 12 remains open at 42.3% weighted coverage pending long-run soak evidence.

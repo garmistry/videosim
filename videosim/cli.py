@@ -8,6 +8,8 @@ from dataclasses import replace
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .gui import GuiState, run_gui
 from .profile import ProfileError, load_profile
+from .soak import human_summary as soak_summary
+from .soak import run_soak
 from .validator import human_summary, validate_config
 
 
@@ -43,6 +45,17 @@ def build_parser() -> argparse.ArgumentParser:
     gui.add_argument("--height", type=int, default=720)
     gui.add_argument("--framerate", type=int, default=30)
 
+    soak = subparsers.add_parser("soak", help="run a timed feed soak with periodic validation")
+    soak.add_argument("--profile", required=True, help="profile describing expected stream state")
+    soak.add_argument("--port", type=int, default=9000)
+    soak.add_argument("--width", type=int, default=1280)
+    soak.add_argument("--height", type=int, default=720)
+    soak.add_argument("--framerate", type=int, default=30)
+    soak.add_argument("--duration-seconds", type=float, default=60)
+    soak.add_argument("--validation-interval-seconds", type=float, default=15)
+    soak.add_argument("--startup-seconds", type=float, default=4)
+    soak.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
     return parser
 
 
@@ -75,6 +88,26 @@ def main(argv: list[str] | None = None) -> int:
                 config = replace(config, **overrides)
             report = validate_config(config)
             print(report.to_json() if args.json else human_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "soak":
+            if args.duration_seconds <= 0:
+                raise ValueError("duration_seconds must be greater than 0")
+            if args.validation_interval_seconds <= 0:
+                raise ValueError("validation_interval_seconds must be greater than 0")
+            if args.startup_seconds < 0:
+                raise ValueError("startup_seconds must be zero or greater")
+            report = run_soak(
+                args.profile,
+                args.port,
+                args.width,
+                args.height,
+                args.framerate,
+                args.duration_seconds,
+                args.validation_interval_seconds,
+                args.startup_seconds,
+            )
+            print(report.to_json() if args.json else soak_summary(report))
             return 0 if report.passed else 1
 
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()

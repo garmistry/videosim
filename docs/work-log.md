@@ -205,3 +205,9 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 90 tests with 11 live tests skipped locally by default.
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP/live smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18137 --feed-port 9912`, created two feeds, confirmed `/state.json` includes metrics, and started `stream-2` on UDP 9913; uptime, outbound bytes, and frame count increased across two polls while status stayed `running`.
+- Fixed SRT feeds auto-stopping after a receiver disconnect by setting `srtsink wait-for-connection=false`.
+- Added unit and live regression coverage for the listener staying up after a short receiver exits.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed` passed, 17 tests.
+- Validation run: `python3 -m unittest tests.test_live_srt` passed with 11 live tests skipped locally by default.
+- Live regression run: `VIDEOSIM_LIVE_SRT=1 python3 -m unittest tests.test_live_srt.LiveSrtTest.test_receiver_detects_audio_video_captions_and_feed_restarts` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 90 tests with 11 live tests skipped locally by default.

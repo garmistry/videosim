@@ -35,6 +35,7 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("srtsink", args)
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
         self.assertIn("uri=srt://:9910?mode=listener", args)
+        self.assertIn("wait-for-connection=false", args)
         self.assertFalse(any("maxconn=" in arg for arg in args))
         self.assertLess(args.index("video/x-raw,framerate=10/1"), args.index("cccombiner"))
 

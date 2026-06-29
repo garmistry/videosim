@@ -15,7 +15,7 @@ class FeedError(Exception):
     pass
 
 
-SRT_CALLER_LIMIT = "unbounded-by-gstreamer-srtsink"
+SRT_CALLER_LIMIT = "unbounded-by-gstreamer-srtsink; listener-stays-up-without-callers"
 DASH_MANIFEST = "manifest.mpd"
 DASH_SEGMENT_DURATION_SECONDS = 2
 DASH_CAPTION_FILE = "captions.vtt"
@@ -87,6 +87,7 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "!",
         "srtsink",
         f"uri=srt://:{config.port}?mode=listener",
+        "wait-for-connection=false",
     ]
     if config.video:
         args.extend(["videotestsrc", "is-live=true", f"pattern={config.pattern}"])

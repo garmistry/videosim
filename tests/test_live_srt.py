@@ -488,6 +488,10 @@ class LiveSrtTest(unittest.TestCase):
                 timeout=15,
             )
             self.assertEqual(receiver.returncode, 0, receiver.stdout)
+            time.sleep(1)
+            if sender.poll() is not None:
+                output = sender.stdout.read() if sender.stdout else ""
+                self.fail(f"sender exited after receiver disconnect with {sender.returncode}: {output}")
 
             if not expect_captions:
                 caption_receiver = [

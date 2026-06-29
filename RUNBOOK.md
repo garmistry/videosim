@@ -184,9 +184,10 @@ inside the `videosim-app-1` container. Override the primary host ports with
 `VIDEOSIM_HTTP_PORT` and `VIDEOSIM_FEED_PORT`.
 
 Generated SRT listener pipelines accept receiver clients at
-`srt://127.0.0.1:9000?mode=caller`. Do not add a `maxconn` URI option to the
-GStreamer `srtsink` command in this Docker image; the packaged plugin does not
-expose that as a supported property and it can crash the listener.
+`srt://127.0.0.1:9000?mode=caller` and keep running when receivers disconnect.
+Do not add a `maxconn` URI option to the GStreamer `srtsink` command in this
+Docker image; the packaged plugin does not expose that as a supported property
+and it can crash the listener.
 
 Generated DASH feeds are served by the same GUI HTTP server at
 `http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd`.

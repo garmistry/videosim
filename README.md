@@ -176,10 +176,10 @@ DASH feeds are served by the GUI at:
 http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd
 ```
 
-The SRT listener accepts receiver clients at that caller URL. This Docker image
-does not pass a `maxconn` URI option to GStreamer's `srtsink`; inspection showed
-that option is not a supported property in the packaged plugin and it can crash
-the listener.
+The SRT listener accepts receiver clients at that caller URL and keeps running
+when a receiver disconnects. This Docker image does not pass a `maxconn` URI
+option to GStreamer's `srtsink`; inspection showed that option is not a
+supported property in the packaged plugin and it can crash the listener.
 
 Stop the feed with Ctrl-C.
 

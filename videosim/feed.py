@@ -106,7 +106,7 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
             ]
         )
         if config.captions:
-            args.extend(["cccombiner", "name=cc", "!", f"video/x-raw,framerate={config.framerate}/1", "!"])
+            args.extend([f"video/x-raw,framerate={config.framerate}/1", "!", "cccombiner", "name=cc", "!"])
         args.extend(
             [
                 "x264enc",

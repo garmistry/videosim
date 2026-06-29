@@ -183,3 +183,7 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 88 tests with 11 live tests skipped locally by default.
 - Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Docker runtime smoke: copied patched GUI/static files into `videosim-app-1`, restarted the app, confirmed `/` exposed the create workflow with no selected feed, created `Deep SRT`, confirmed redirect to `/feeds/stream-1`, confirmed that feed detail link rendered, and confirmed the feed detail page omitted `action="/streams/create"`.
+- Fixed SRT caption pipeline instability by moving the caption framerate caps before `cccombiner`, eliminating the `Missing valid caption framerate in video caps` warning that preceded Docker stack-smash exits.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed` passed, 17 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 88 tests with 11 live tests skipped locally by default.
+- Docker runtime smoke: copied patched `videosim/feed.py` into `videosim-app-1`, restarted the app, started a normal SRT feed, validated `profiles/srt-normal.yaml` on port 9000 with video/audio/captions present, and confirmed no fresh `stack smashing`, `Feed process exited`, or missing-caption-framerate warnings.

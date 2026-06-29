@@ -36,6 +36,7 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
         self.assertIn("uri=srt://:9910?mode=listener", args)
         self.assertFalse(any("maxconn=" in arg for arg in args))
+        self.assertLess(args.index("video/x-raw,framerate=10/1"), args.index("cccombiner"))
 
     def test_dash_endpoint_uses_manifest_file_by_default(self):
         config = VideoFeedConfig(protocol="dash", dash_dir="/tmp/videosim-test-dash")

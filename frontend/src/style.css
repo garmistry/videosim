@@ -1,14 +1,77 @@
 :root {
-  color: #17212b;
+  color: #f5f5f1;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
+  background: var(--page-bg);
+  color: var(--text);
   margin: 0;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 10% 0%, rgba(37, 99, 235, 0.12), transparent 25rem),
-    linear-gradient(135deg, #f4f7fb 0%, #edf3f6 45%, #f8faf7 100%);
+}
+
+body[data-theme="dark"] {
+  color-scheme: dark;
+  --accent: #e50914;
+  --accent-hover: #f6121d;
+  --accent-soft: rgba(229, 9, 20, 0.18);
+  --accent-text: #fff;
+  --border: #2c2c2c;
+  --button-secondary: #2b2b2b;
+  --button-secondary-hover: #3a3a3a;
+  --button-secondary-text: #f5f5f1;
+  --empty-bg: #101010;
+  --input-bg: #080808;
+  --log-bg: #050505;
+  --muted: #b3b3b3;
+  --nav-bg: #050505;
+  --nav-border: #202020;
+  --nav-item-bg: #181818;
+  --nav-muted: #9a9a9a;
+  --nav-text: #f5f5f1;
+  --page-bg: #050505;
+  --preview-bg: #111;
+  --shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.4);
+  --soft: #8a8a8a;
+  --status-running-bg: #0d3a1f;
+  --status-running-text: #73e69a;
+  --status-stopped-bg: #262626;
+  --status-stopped-text: #d6d6d6;
+  --surface: #141414;
+  --surface-muted: #1f1f1f;
+  --text: #f5f5f1;
+}
+
+body[data-theme="light"] {
+  color-scheme: light;
+  --accent: #e50914;
+  --accent-hover: #b80710;
+  --accent-soft: rgba(229, 9, 20, 0.12);
+  --accent-text: #fff;
+  --border: #dedede;
+  --button-secondary: #ececec;
+  --button-secondary-hover: #dedede;
+  --button-secondary-text: #171717;
+  --empty-bg: #f7f7f4;
+  --input-bg: #fff;
+  --log-bg: #171717;
+  --muted: #606060;
+  --nav-bg: #111;
+  --nav-border: #282828;
+  --nav-item-bg: #242424;
+  --nav-muted: #b8b8b8;
+  --nav-text: #f5f5f1;
+  --page-bg: #f6f6f3;
+  --preview-bg: #111;
+  --shadow: 0 1rem 2.5rem rgba(23, 23, 23, 0.1);
+  --soft: #767676;
+  --status-running-bg: #d9f6df;
+  --status-running-text: #176c32;
+  --status-stopped-bg: #ececec;
+  --status-stopped-text: #4a4a4a;
+  --surface: #fff;
+  --surface-muted: #f1f1ef;
+  --text: #171717;
 }
 
 body.react-ready > main {
@@ -22,23 +85,24 @@ body.react-ready > main {
 }
 
 .nav {
+  background: var(--nav-bg);
+  border-right: 1px solid var(--nav-border);
+  color: var(--nav-text);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
   padding: 1.25rem;
-  background: #111b24;
-  color: white;
 }
 
 .nav h1, .hero h2 {
-  margin: 0;
   letter-spacing: 0;
+  margin: 0;
 }
 
 .eyebrow {
-  color: #6bb9c8;
+  color: var(--accent);
   font-size: 0.75rem;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0;
   margin: 0 0 0.35rem;
   text-transform: uppercase;
@@ -50,19 +114,19 @@ body.react-ready > main {
 }
 
 .stream-nav {
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-top: 1px solid var(--nav-border);
   padding-top: 1rem;
 }
 
 .stream-nav a {
-  color: white;
+  color: var(--nav-text);
   display: grid;
   gap: 0.15rem;
   text-decoration: none;
 }
 
 .stream-nav small {
-  color: #b8c7d3;
+  color: var(--nav-muted);
   font-size: 0.72rem;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -74,24 +138,46 @@ button, select, input {
 
 button, .download, .stream-nav a {
   border: 0;
-  border-radius: 0.45rem;
+  border-radius: 0.5rem;
   cursor: pointer;
   font-weight: 800;
   min-height: 2.65rem;
   padding: 0.7rem 0.95rem;
 }
 
+button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
 .nav button, .download, .stream-nav a {
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
+  background: var(--nav-item-bg);
+  color: var(--nav-text);
   text-align: left;
   text-decoration: none;
   transition: background 160ms ease, transform 160ms ease;
 }
 
 .nav button:hover, .download:hover, .stream-nav a:hover, .nav button.active, .stream-nav a.active {
-  background: #176b87;
+  background: var(--accent);
+  color: var(--accent-text);
   transform: translateX(0.2rem);
+}
+
+.theme-toggle {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.65rem;
+  justify-content: flex-start;
+}
+
+.theme-dot {
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 0 0 0.22rem var(--accent-soft);
+  flex: 0 0 0.7rem;
+  height: 0.7rem;
+  width: 0.7rem;
 }
 
 .workspace {
@@ -102,10 +188,10 @@ button, .download, .stream-nav a {
 
 .hero, .panel, .metric {
   animation: rise 260ms ease both;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid #d8e2e8;
-  border-radius: 0.65rem;
-  box-shadow: 0 1rem 2.5rem rgba(23, 33, 43, 0.08);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: var(--shadow);
 }
 
 .hero {
@@ -115,14 +201,18 @@ button, .download, .stream-nav a {
   padding: 1rem;
 }
 
+.hero span {
+  color: var(--muted);
+}
+
 .preview-pop {
   animation: rise 260ms ease both;
-  background: #0f1821;
-  border: 1px solid #263747;
-  border-radius: 0.65rem;
+  background: var(--preview-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
   bottom: 1rem;
-  box-shadow: 0 1rem 2.5rem rgba(15, 24, 33, 0.28);
-  color: white;
+  box-shadow: var(--shadow);
+  color: #f5f5f1;
   display: grid;
   gap: 0.75rem;
   max-width: min(34rem, calc(100vw - 2rem));
@@ -145,8 +235,8 @@ button, .download, .stream-nav a {
 
 .preview-pop img, .preview-empty {
   aspect-ratio: 16 / 9;
-  background: #101820;
-  border-radius: 0.45rem;
+  background: #050505;
+  border-radius: 0.5rem;
   display: block;
   object-fit: cover;
   width: 100%;
@@ -154,19 +244,23 @@ button, .download, .stream-nav a {
 
 .preview-empty {
   align-items: center;
-  color: #9fb3c1;
+  color: #b3b3b3;
   display: grid;
   font-weight: 800;
   place-items: center;
 }
 
 .preview-tab {
-  background: #176b87;
+  background: var(--accent);
   bottom: 1rem;
-  color: white;
+  color: var(--accent-text);
   position: fixed;
   right: 1rem;
   z-index: 10;
+}
+
+.preview-tab:hover, .control-row button:hover, .toggles button:hover {
+  background: var(--accent-hover);
 }
 
 .status {
@@ -177,13 +271,13 @@ button, .download, .stream-nav a {
 }
 
 .status.running {
-  background: #d8f3dc;
-  color: #1b6b36;
+  background: var(--status-running-bg);
+  color: var(--status-running-text);
 }
 
 .status.stopped {
-  background: #edf2f4;
-  color: #4b5963;
+  background: var(--status-stopped-bg);
+  color: var(--status-stopped-text);
 }
 
 .metrics {
@@ -199,7 +293,7 @@ button, .download, .stream-nav a {
 }
 
 .metric span {
-  color: #657380;
+  color: var(--muted);
   font-size: 0.8rem;
   font-weight: 800;
 }
@@ -222,15 +316,15 @@ button, .download, .stream-nav a {
 }
 
 .create-feed {
-  border-bottom: 1px solid #d8e2e8;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 1rem;
 }
 
 .empty-state {
-  background: #f3f7f9;
-  border: 1px dashed #b7c6d1;
-  border-radius: 0.45rem;
-  color: #596a76;
+  background: var(--empty-bg);
+  border: 1px dashed var(--border);
+  border-radius: 0.5rem;
+  color: var(--muted);
   font-weight: 800;
   padding: 1rem;
 }
@@ -242,21 +336,31 @@ button, .download, .stream-nav a {
 }
 
 select, input {
-  background: white;
-  border: 1px solid #bfccd6;
-  border-radius: 0.45rem;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--text);
   min-height: 2.65rem;
   padding: 0.55rem 0.7rem;
 }
 
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  min-height: auto;
+}
+
 .control-row button, .toggles button {
-  background: #176b87;
-  color: white;
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 button.secondary {
-  background: #dbe4ea;
-  color: #17212b;
+  background: var(--button-secondary);
+  color: var(--button-secondary-text);
+}
+
+button.secondary:hover {
+  background: var(--button-secondary-hover);
 }
 
 .toggles {
@@ -267,9 +371,9 @@ button.secondary {
 
 .toggles label {
   align-items: center;
-  background: #f3f7f9;
-  border: 1px solid #d8e2e8;
-  border-radius: 0.45rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
   display: inline-flex;
   gap: 0.45rem;
   min-height: 2.65rem;
@@ -277,9 +381,9 @@ button.secondary {
 }
 
 pre {
-  background: #101820;
-  border-radius: 0.55rem;
-  color: #eef6f9;
+  background: var(--log-bg);
+  border-radius: 0.5rem;
+  color: #f5f5f1;
   margin: 0;
   min-height: 16rem;
   overflow: auto;
@@ -312,6 +416,10 @@ pre {
 
   .nav button {
     text-align: center;
+  }
+
+  .theme-toggle {
+    justify-content: center;
   }
 
   .metrics {

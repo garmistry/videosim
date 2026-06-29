@@ -187,3 +187,10 @@
 - Validation run: `python3 -m unittest tests.test_cli_video_feed` passed, 17 tests.
 - Validation run: `python3 -m unittest discover -s tests` passed, 88 tests with 11 live tests skipped locally by default.
 - Docker runtime smoke: copied patched `videosim/feed.py` into `videosim-app-1`, restarted the app, started a normal SRT feed, validated `profiles/srt-normal.yaml` on port 9000 with video/audio/captions present, and confirmed no fresh `stack smashing`, `Feed process exited`, or missing-caption-framerate warnings.
+- Added Netflix-inspired dark/light GUI theming with a persisted React theme toggle and matching no-JavaScript fallback colors.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.js` and `videosim/static/app.css`.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 32 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 88 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18137 --feed-port 9912` served `/`, `/static/app.css`, and `/static/app.js` with dark/light theme assets.
+- Skipped check: browser click verification could not run because the in-app browser runtime reported no available browser backends.

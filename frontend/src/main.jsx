@@ -3,15 +3,33 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 
 const tabs = ["Control", "Validation", "Logs"];
+const themeKey = "videosim-theme";
 
 function readState() {
   const node = document.getElementById("initial-state");
   return JSON.parse(node?.textContent || "{}");
 }
 
+function readTheme() {
+  try {
+    return localStorage.getItem(themeKey) === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+function applyTheme(theme) {
+  document.body.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+}
+
+const initialTheme = readTheme();
+applyTheme(initialTheme);
+
 function App() {
   const state = readState();
   const [tab, setTab] = useState("Control");
+  const [theme, setTheme] = useState(initialTheme);
   const [copied, setCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(state.status === "running");
   const [previewTick, setPreviewTick] = useState(Date.now());
@@ -30,6 +48,19 @@ function App() {
     setTimeout(() => setCopied(false), 1200);
   }
 
+  function toggleTheme() {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }
+
+  useEffect(() => {
+    applyTheme(theme);
+    try {
+      localStorage.setItem(themeKey, theme);
+    } catch {
+      return;
+    }
+  }, [theme]);
+
   useEffect(() => {
     if (!previewOpen || state.status !== "running" || !state.previewAvailable) {
       return undefined;
@@ -45,6 +76,10 @@ function App() {
           <p className="eyebrow">VideoSim</p>
           <h1>Feed Console</h1>
         </div>
+        <button aria-pressed={theme === "light"} className="theme-toggle" onClick={toggleTheme} type="button">
+          <span aria-hidden="true" className="theme-dot" />
+          {theme === "dark" ? "Light mode" : "Dark mode"}
+        </button>
         <nav aria-label="Main">
           {tabs.map((item) => (
             <button className={item === tab ? "active" : ""} key={item} onClick={() => setTab(item)} type="button">

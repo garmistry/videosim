@@ -68,6 +68,12 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
                 "!",
                 f"video/x-raw,width={config.width},height={config.height},framerate={config.framerate}/1",
                 "!",
+                "clockoverlay",
+                "halignment=right",
+                "valignment=top",
+                "shaded-background=true",
+                'time-format=%Y-%m-%d %H:%M:%S',
+                "!",
             ]
         )
         if config.captions:

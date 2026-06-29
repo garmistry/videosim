@@ -42,6 +42,7 @@ install_apt() {
     python3-venv \
     ffmpeg \
     gstreamer1.0-tools \
+    gstreamer1.0-x \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
@@ -124,6 +125,7 @@ if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   require_gst_element srtsink
   require_gst_element srtsrc
   require_gst_element mpegtsmux
+  require_gst_element clockoverlay
   require_gst_element x264enc
   require_gst_element h264ccinserter
 fi

@@ -9,6 +9,7 @@ from videosim.gui import (
     mode_from_controls,
     mode_from_form,
     render_page,
+    state_payload,
 )
 
 
@@ -30,6 +31,19 @@ class GuiTest(unittest.TestCase):
             self.assertIn(label, page)
         for label in ("Video", "Audio", "Captions", "Black video", "Frozen video", "Apply controls"):
             self.assertIn(label, page)
+        self.assertIn('id="app"', page)
+        self.assertIn('/static/app.js', page)
+
+    def test_react_state_payload_exposes_gui_state(self):
+        state = GuiState(feed_port=9912, mode="video_only")
+        state.log("ready")
+
+        payload = state_payload(state)
+
+        self.assertEqual(payload["endpoint"], "srt://127.0.0.1:9912?mode=caller")
+        self.assertEqual(payload["mode"], "video_only")
+        self.assertEqual(payload["logs"], ["ready"])
+        self.assertFalse(payload["controls"]["audio"])
 
     def test_start_launches_normal_profile_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)

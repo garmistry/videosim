@@ -133,6 +133,19 @@ Use the Validate button to run the current profile validation from the GUI.
 Use Download diagnostics to export status, mode, endpoint, last error,
 validation output, and recent logs as text.
 
+Video-present modes include a running clock overlay in the encoded SRT video so
+receivers can visually prove live motion and timing.
+
+## Deploy With Docker Compose
+
+```sh
+docker compose up --build app
+```
+
+Open `http://127.0.0.1:8080`. The app service publishes the GUI on TCP 8080 and
+the SRT listener on UDP 9000. Override host ports with `VIDEOSIM_HTTP_PORT` and
+`VIDEOSIM_FEED_PORT`.
+
 Print the GStreamer command without starting a feed:
 
 ```sh

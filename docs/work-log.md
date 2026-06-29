@@ -123,3 +123,15 @@
 - Shortened Docker GUI soak smoke passed: `GUI_DURATION_SECONDS=8 GUI_VALIDATION_INTERVAL_SECONDS=3 GUI_POLL_INTERVAL_SECONDS=2 docker compose run --build --rm m12-gui-soak`.
 - 2026-06-29: Skipped additional soak reruns per user request.
 - Full 24-hour GUI responsiveness evidence remains pending; the new command is the collection path.
+
+## 2026-06-29
+
+- Added React/Vite frontend assets for the browser GUI with modular control, validation, and log navigation while preserving the existing form POST controls.
+- Added Docker Compose `app` deployment for the GUI and SRT listener, plus a multi-stage Docker UI build.
+- Added a GStreamer `clockoverlay` running clock to video-present SRT feeds and added `gstreamer1.0-x` to Debian/Docker dependency paths.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed tests.test_gui` passed, 26 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 62 tests with 11 live tests skipped locally by default.
+- Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Docker app smoke: `docker compose up -d app`, `curl -fsS http://127.0.0.1:8080/state.json`, and `curl -fsS http://127.0.0.1:8080/static/app.js` passed.
+- Docker dependency proof: installing `gstreamer1.0-x` in the running app container made `gst-inspect-1.0 clockoverlay` pass.
+- Skipped check: final Docker image rebuild after adding `gstreamer1.0-x` could not complete because Docker repeatedly hung resolving base-image metadata before reaching project layers; package-level proof above verifies the added dependency.

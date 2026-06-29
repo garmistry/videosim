@@ -1,0 +1,233 @@
+:root {
+  color: #17212b;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(37, 99, 235, 0.12), transparent 25rem),
+    linear-gradient(135deg, #f4f7fb 0%, #edf3f6 45%, #f8faf7 100%);
+}
+
+body.react-ready > main {
+  display: none;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 17rem 1fr;
+  min-height: 100vh;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  background: #111b24;
+  color: white;
+}
+
+.nav h1, .hero h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.eyebrow {
+  color: #6bb9c8;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  margin: 0 0 0.35rem;
+  text-transform: uppercase;
+}
+
+.nav nav {
+  display: grid;
+  gap: 0.5rem;
+}
+
+button, select, input {
+  font: inherit;
+}
+
+button, .download {
+  border: 0;
+  border-radius: 0.45rem;
+  cursor: pointer;
+  font-weight: 800;
+  min-height: 2.65rem;
+  padding: 0.7rem 0.95rem;
+}
+
+.nav button, .download {
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+  text-align: left;
+  text-decoration: none;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.nav button:hover, .download:hover, .nav button.active {
+  background: #176b87;
+  transform: translateX(0.2rem);
+}
+
+.workspace {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+}
+
+.hero, .panel, .metric {
+  animation: rise 260ms ease both;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #d8e2e8;
+  border-radius: 0.65rem;
+  box-shadow: 0 1rem 2.5rem rgba(23, 33, 43, 0.08);
+}
+
+.hero {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem;
+}
+
+.status {
+  border-radius: 999px;
+  font-weight: 900;
+  padding: 0.45rem 0.8rem;
+  text-transform: uppercase;
+}
+
+.status.running {
+  background: #d8f3dc;
+  color: #1b6b36;
+}
+
+.status.stopped {
+  background: #edf2f4;
+  color: #4b5963;
+}
+
+.metrics {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem;
+}
+
+.metric span {
+  color: #657380;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.metric strong {
+  overflow-wrap: anywhere;
+}
+
+.panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.control-row, .actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.control-row label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: min(100%, 18rem);
+}
+
+select {
+  background: white;
+  border: 1px solid #bfccd6;
+  border-radius: 0.45rem;
+  min-height: 2.65rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.control-row button, .toggles button {
+  background: #176b87;
+  color: white;
+}
+
+button.secondary {
+  background: #dbe4ea;
+  color: #17212b;
+}
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.toggles label {
+  align-items: center;
+  background: #f3f7f9;
+  border: 1px solid #d8e2e8;
+  border-radius: 0.45rem;
+  display: inline-flex;
+  gap: 0.45rem;
+  min-height: 2.65rem;
+  padding: 0 0.75rem;
+}
+
+pre {
+  background: #101820;
+  border-radius: 0.55rem;
+  color: #eef6f9;
+  margin: 0;
+  min-height: 16rem;
+  overflow: auto;
+  padding: 1rem;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.45rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 780px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    position: static;
+  }
+
+  .nav nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .nav button {
+    text-align: center;
+  }
+
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+}

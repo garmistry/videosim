@@ -6,11 +6,10 @@ stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
-Milestones 0 through 11 are complete. The CLI and local browser GUI can start,
-stop, restart, and validate a
-synthetic audio/video/caption SRT listener feed through GStreamer, and Docker
-live tests prove GStreamer, ffprobe, and ffplay receiver compatibility for the
-required modes.
+Milestones 0 through 11 are complete. The CLI and React-enhanced local browser
+GUI can start, stop, restart, and validate a synthetic audio/video/caption SRT
+listener feed through GStreamer, and Docker live tests prove GStreamer, ffprobe,
+and ffplay receiver compatibility for the required modes.
 
 ## MVP Scope
 
@@ -18,7 +17,7 @@ The critical MVP must support:
 
 - Linux runtime, with macOS development support where practical.
 - Visual GUI.
-- Local SRT feed generation.
+- Local SRT feed generation with a running clock overlay on video modes.
 - Normal feed with video, audio, and closed captions.
 - Fault modes: audio only, video only, no captions, black video, frozen video.
 - Copyable SRT endpoint URL.
@@ -123,7 +122,17 @@ video-only, no-captions, black-video, and frozen-video feeds. Changing fault
 controls while a feed is running uses a controlled stream restart.
 
 The GUI also shows status, intentional outage state, last error, logs,
-validation output, and a downloadable diagnostics text file.
+validation output, a copyable endpoint, and a downloadable diagnostics text
+file. Video-present SRT modes include a visible running clock overlay for
+receiver testing.
+
+Deploy the GUI and SRT listener together with Docker Compose:
+
+```sh
+docker compose up --build app
+```
+
+Open `http://127.0.0.1:8080`.
 
 Receiver URL:
 

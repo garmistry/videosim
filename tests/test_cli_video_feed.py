@@ -22,6 +22,8 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("videotestsrc", args)
         self.assertIn("audiotestsrc", args)
         self.assertIn("x264enc", args)
+        self.assertIn("clockoverlay", args)
+        self.assertIn("time-format=%Y-%m-%d %H:%M:%S", args)
         self.assertIn("avenc_aac", args)
         self.assertIn("freq=440", args)
         self.assertIn("cccombiner", args)

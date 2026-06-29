@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import html
+import json
+import mimetypes
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
 import threading
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 
 PROFILE_OPTIONS = {
@@ -31,6 +34,8 @@ MODE_CONTROLS = {
     "black_video": {"video": True, "audio": True, "captions": True, "black_video": True, "frozen_video": False},
     "frozen_video": {"video": True, "audio": True, "captions": True, "black_video": False, "frozen_video": True},
 }
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def controls_for_mode(mode: str) -> dict[str, bool]:
@@ -212,10 +217,17 @@ class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
     def do_GET(self):
-        if self.path == "/diagnostics.txt":
+        path = urlparse(self.path).path
+        if path == "/diagnostics.txt":
             self._send_text(diagnostics_text(self.state))
             return
-        if self.path != "/":
+        if path == "/state.json":
+            self._send_json(state_payload(self.state))
+            return
+        if path.startswith("/static/"):
+            self._send_static(path.removeprefix("/static/"))
+            return
+        if path != "/":
             self.send_error(404)
             return
         self._send_html(render_page(self.state))
@@ -259,6 +271,33 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _send_json(self, payload):
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _send_static(self, relative_path: str):
+        path = (STATIC_DIR / relative_path).resolve()
+        try:
+            path.relative_to(STATIC_DIR)
+        except ValueError:
+            self.send_error(404)
+            return
+        if not path.is_file():
+            self.send_error(404)
+            return
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _redirect_home(self):
         self.send_response(303)
         self.send_header("Location", "/")
@@ -289,19 +328,25 @@ def render_page(state: GuiState) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Feed Simulator</title>
+  <link rel="stylesheet" href="/static/app.css">
   <style>
-    body {{ font-family: system-ui, sans-serif; margin: 2rem; max-width: 56rem; }}
-    main {{ display: grid; gap: 1rem; }}
-    button {{ padding: 0.6rem 0.9rem; }}
-    #endpoint {{ width: min(100%, 32rem); padding: 0.55rem; }}
-    fieldset {{ border: 1px solid #bbb; padding: 0.75rem; }}
+    body {{ font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f5f7fb; color: #16202a; }}
+    main {{ display: grid; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
+    button, .button {{ border: 0; border-radius: 0.45rem; background: #176b87; color: white; padding: 0.7rem 0.95rem; text-decoration: none; font-weight: 700; }}
+    button.secondary, .button.secondary {{ background: #dbe4ea; color: #16202a; }}
+    #endpoint {{ width: min(100%, 34rem); padding: 0.65rem; border: 1px solid #bfccd6; border-radius: 0.45rem; }}
+    fieldset {{ border: 1px solid #cfdae3; border-radius: 0.5rem; padding: 0.75rem; }}
     label.control {{ display: inline-flex; gap: 0.35rem; align-items: center; margin-right: 0.75rem; }}
-    pre {{ background: #111; color: #eee; min-height: 12rem; padding: 1rem; overflow: auto; }}
+    pre {{ background: #101820; color: #eef6f9; min-height: 12rem; padding: 1rem; overflow: auto; border-radius: 0.5rem; }}
     .row {{ display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }}
+    .shell {{ background: white; border: 1px solid #d9e3ea; border-radius: 0.65rem; padding: 1rem; box-shadow: 0 1rem 2.5rem rgba(22, 32, 42, 0.08); }}
   </style>
 </head>
 <body>
+<div id="app"></div>
+<script id="initial-state" type="application/json">{script_json(state_payload(state))}</script>
 <main>
+  <div id="app-fallback" class="shell">
   <h1>Video Feed Simulator</h1>
   <div>Status: <strong>{status}</strong></div>
   <div>Intentional outage: <strong>{outage}</strong></div>
@@ -335,9 +380,33 @@ def render_page(state: GuiState) -> str:
   <pre>{validation}</pre>
   <h2>Logs</h2>
   <pre>{logs}</pre>
+  </div>
 </main>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>"""
+
+
+def state_payload(state: GuiState) -> dict:
+    controls = controls_for_mode(state.mode)
+    return {
+        "status": state.status,
+        "mode": state.mode,
+        "intentionalOutage": state.intentional_outage,
+        "endpoint": state.endpoint,
+        "lastError": state.last_error or "none",
+        "validationOutput": state.validation_output or "not run",
+        "logs": state.logs[-80:],
+        "modes": [
+            {"value": mode, "label": label, "controls": MODE_CONTROLS[mode]}
+            for mode, (label, _) in PROFILE_OPTIONS.items()
+        ],
+        "controls": controls,
+    }
+
+
+def script_json(payload) -> str:
+    return json.dumps(payload).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 
 
 def diagnostics_text(state: GuiState) -> str:

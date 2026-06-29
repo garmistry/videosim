@@ -138,9 +138,10 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Open `http://127.0.0.1:8080`.
 
-Use the stream list in the left navigation for CRUDL operations:
+The GUI starts with zero configured feeds. Use the create-feed form first, then
+use the stream list in the left navigation for CRUDL operations:
 
-- Create a named SRT or DASH stream.
+- Create a named SRT or DASH feed.
 - List all configured streams.
 - Open/read a stream to see endpoint, status, logs, and validation output.
 - Update the selected stream name, protocol, or mode.
@@ -148,7 +149,7 @@ Use the stream list in the left navigation for CRUDL operations:
 
 Use the protocol selector to choose SRT or DASH, then use the mode selector to
 start normal, audio-only, video-only, no-captions, black-video, or frozen-video
-feeds. Each stream has independent start, stop, validate, and copy URL actions.
+feeds. Each feed has independent start, stop, validate, and copy URL actions.
 Use the runtime fault controls to toggle video, audio, captions, black video, or
 frozen video while the GUI is running; the MVP applies those changes with a
 controlled stream restart.

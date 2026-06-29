@@ -60,8 +60,8 @@ function App() {
         <section className="hero">
           <div>
             <p className="eyebrow">Current profile</p>
-            <h2>{selectedStream?.name || "Feed"}</h2>
-            <span>{mode?.label || state.mode} · {state.protocol.toUpperCase()}</span>
+            <h2>{selectedStream?.name || "Create feed"}</h2>
+            <span>{selectedStream ? `${mode?.label || state.mode} · ${state.protocol.toUpperCase()}` : "No feeds configured"}</span>
           </div>
           <StatusPill status={state.status} />
         </section>
@@ -79,7 +79,7 @@ function App() {
         <section className="metrics">
           <Metric label="Outage" value={state.intentionalOutage ? "Intentional" : "Normal"} />
           <Metric label="Last error" value={state.lastError} />
-          <Metric label="Endpoint" value={state.endpoint} wide />
+          <Metric label="Endpoint" value={state.endpoint || "Create a feed"} wide />
         </section>
 
         {tab === "Control" && <ControlPanel state={state} copied={copied} onCopy={copyEndpoint} />}
@@ -94,6 +94,7 @@ function StreamNav({ streams, selectedStreamId }) {
   return (
     <section className="stream-nav" aria-label="Streams">
       <p className="eyebrow">Streams</p>
+      {streams.length === 0 && <small>No feeds</small>}
       {streams.map((stream) => (
         <form action="/streams/select" method="post" key={stream.id}>
           <input name="stream_id" type="hidden" value={stream.id} />
@@ -149,31 +150,44 @@ function Metric({ label, value, wide }) {
 
 function ControlPanel({ state, copied, onCopy }) {
   const selected = state.streams.find((stream) => stream.id === state.selectedStreamId) || state.streams[0];
+  const createForm = (
+    <form action="/streams/create" className="control-row create-feed" method="post">
+      <label>
+        New feed
+        <input defaultValue={`Feed ${state.streams.length + 1}`} name="name" />
+      </label>
+      <label>
+        Protocol
+        <select defaultValue={state.protocol} name="protocol">
+          {state.protocols.map((protocol) => (
+            <option key={protocol.value} value={protocol.value}>{protocol.label}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Mode
+        <select defaultValue={state.mode} name="mode">
+          {state.modes.map((mode) => (
+            <option key={mode.value} value={mode.value}>{mode.label}</option>
+          ))}
+        </select>
+      </label>
+      <button type="submit">Create feed</button>
+    </form>
+  );
+
+  if (!selected) {
+    return (
+      <section className="panel">
+        {createForm}
+        <div className="empty-state">No feeds configured.</div>
+      </section>
+    );
+  }
+
   return (
     <section className="panel">
-      <form action="/streams/create" className="control-row" method="post">
-        <label>
-          New stream
-          <input defaultValue={`Feed ${state.streams.length + 1}`} name="name" />
-        </label>
-        <label>
-          Protocol
-          <select defaultValue={state.protocol} name="protocol">
-            {state.protocols.map((protocol) => (
-              <option key={protocol.value} value={protocol.value}>{protocol.label}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Mode
-          <select defaultValue={state.mode} name="mode">
-            {state.modes.map((mode) => (
-              <option key={mode.value} value={mode.value}>{mode.label}</option>
-            ))}
-          </select>
-        </label>
-        <button type="submit">Create</button>
-      </form>
+      {createForm}
 
       <form action="/streams/update" className="control-row" method="post">
         <input name="stream_id" type="hidden" value={state.selectedStreamId} />

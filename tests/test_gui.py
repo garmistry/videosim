@@ -19,8 +19,31 @@ from videosim.gui import (
 
 
 class GuiTest(unittest.TestCase):
+    def create_feed(self, state: GuiState, name: str = "Primary feed"):
+        return state.create_stream(
+            name=name,
+            protocol=state.protocol,
+            mode=state.mode if state.mode in PROFILE_OPTIONS else "normal",
+            feed_port=state.feed_port,
+            width=state.width,
+            height=state.height,
+            framerate=state.framerate,
+        )
+
+    def test_default_gui_state_has_no_feeds(self):
+        state = GuiState(feed_port=9912)
+
+        payload = state_payload(state)
+
+        self.assertEqual(payload["streams"], [])
+        self.assertEqual(payload["selectedStreamId"], "")
+        self.assertEqual(payload["status"], "stopped")
+        self.assertEqual(payload["endpoint"], "")
+        self.assertFalse(payload["previewAvailable"])
+
     def test_page_has_start_stop_copyable_endpoint_and_logs(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
         state.log("hello")
 
         page = render_page(state)
@@ -44,6 +67,7 @@ class GuiTest(unittest.TestCase):
 
     def test_react_state_payload_exposes_gui_state(self):
         state = GuiState(feed_port=9912, mode="video_only")
+        self.create_feed(state)
         state.log("ready")
 
         payload = state_payload(state)
@@ -59,6 +83,7 @@ class GuiTest(unittest.TestCase):
 
     def test_dash_state_payload_exposes_http_manifest_endpoint(self):
         state = GuiState(protocol="dash", http_port=18100)
+        self.create_feed(state)
 
         payload = state_payload(state)
 
@@ -67,6 +92,7 @@ class GuiTest(unittest.TestCase):
 
     def test_streams_can_be_created_listed_and_selected(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
         created = state.create_stream(name="Dash B", protocol="dash", mode="black_video")
 
         payload = state_payload(state)
@@ -83,6 +109,7 @@ class GuiTest(unittest.TestCase):
 
     def test_stream_update_changes_selected_stream_configuration(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
 
         updated = state.update_stream("stream-1", name="Updated", protocol="dash", mode="video_only")
 
@@ -93,6 +120,7 @@ class GuiTest(unittest.TestCase):
 
     def test_stream_delete_stops_and_removes_record(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
         state.create_stream(name="Delete me", protocol="srt", mode="normal")
 
         deleted = state.delete_stream("stream-2")
@@ -103,6 +131,7 @@ class GuiTest(unittest.TestCase):
 
     def test_multiple_streams_start_independent_processes(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        self.create_feed(state)
         state.create_stream(name="Dash", protocol="dash", mode="normal")
 
         first = Mock()
@@ -126,6 +155,7 @@ class GuiTest(unittest.TestCase):
 
     def test_react_state_marks_running_video_feed_preview_available(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
         state.process = Mock()
         state.process.poll.return_value = None
 
@@ -135,6 +165,7 @@ class GuiTest(unittest.TestCase):
 
     def test_react_state_blocks_preview_for_audio_only_feed(self):
         state = GuiState(feed_port=9912, mode="audio_only")
+        self.create_feed(state)
         state.process = Mock()
         state.process.poll.return_value = None
 
@@ -144,6 +175,7 @@ class GuiTest(unittest.TestCase):
 
     def test_preview_image_grabs_jpeg_frame_from_running_srt_feed(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
         state.process = Mock()
         state.process.poll.return_value = None
 
@@ -165,7 +197,9 @@ class GuiTest(unittest.TestCase):
         self.assertIn("filesink", cmd)
 
     def test_preview_image_returns_placeholder_when_not_video_available(self):
-        body, content_type = preview_image(GuiState(mode="audio_only"))
+        state = GuiState(mode="audio_only")
+        self.create_feed(state)
+        body, content_type = preview_image(state)
 
         self.assertEqual(content_type, "image/svg+xml")
         self.assertIn(b"Feed Preview", body)
@@ -179,6 +213,7 @@ class GuiTest(unittest.TestCase):
 
     def test_start_launches_normal_profile_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        self.create_feed(state)
 
         with patch("videosim.gui.subprocess.Popen") as popen:
             popen.return_value.stdout = []
@@ -198,6 +233,7 @@ class GuiTest(unittest.TestCase):
 
     def test_start_launches_dash_profile_feed(self):
         state = GuiState(protocol="dash", http_port=18100, feed_port=9912, width=320, height=180, framerate=10)
+        self.create_feed(state)
 
         with patch("videosim.gui.subprocess.Popen") as popen:
             popen.return_value.stdout = []
@@ -216,6 +252,7 @@ class GuiTest(unittest.TestCase):
 
     def test_verbose_gui_logs_feed_launch_command(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
 
         with patch.dict("videosim.gui.os.environ", {"VIDEOSIM_VERBOSE": "1"}), patch(
             "videosim.gui.subprocess.Popen"
@@ -229,6 +266,7 @@ class GuiTest(unittest.TestCase):
 
     def test_start_launches_selected_outage_profile(self):
         state = GuiState(feed_port=9912, mode="black_video")
+        self.create_feed(state)
 
         with patch("videosim.gui.subprocess.Popen") as popen:
             popen.return_value.stdout = []
@@ -244,6 +282,9 @@ class GuiTest(unittest.TestCase):
 
     def test_unsupported_mode_does_not_start_feed(self):
         state = GuiState(mode="unknown")
+        state.create_stream(name="Bad", protocol="srt", mode="normal")
+        state.active_stream.mode = "unknown"
+        state._sync_from_active()
 
         with patch("videosim.gui.subprocess.Popen") as popen:
             state.start()
@@ -278,6 +319,7 @@ class GuiTest(unittest.TestCase):
 
     def test_apply_mode_restarts_running_feed(self):
         state = GuiState(feed_port=9912)
+        self.create_feed(state)
 
         with patch("videosim.gui.os.killpg") as killpg, patch("videosim.gui.subprocess.Popen") as popen:
             first = popen.return_value
@@ -304,6 +346,7 @@ class GuiTest(unittest.TestCase):
 
     def test_start_failure_leaves_feed_stopped_with_error_log(self):
         state = GuiState()
+        self.create_feed(state)
 
         with patch("videosim.gui.subprocess.Popen", side_effect=OSError("missing gst")):
             started = state.apply_mode("normal")
@@ -315,6 +358,7 @@ class GuiTest(unittest.TestCase):
 
     def test_intentional_outage_is_visible_without_error(self):
         state = GuiState(mode="audio_only")
+        self.create_feed(state)
 
         page = render_page(state)
 
@@ -323,6 +367,7 @@ class GuiTest(unittest.TestCase):
 
     def test_pipeline_exit_sets_last_error_and_keeps_logs(self):
         state = GuiState()
+        self.create_feed(state)
         process = Mock()
         process.stdout = ["pipeline failed"]
         process.poll.return_value = 2
@@ -334,6 +379,7 @@ class GuiTest(unittest.TestCase):
 
     def test_validation_output_visible_in_gui(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        self.create_feed(state)
         result = Mock(returncode=0, stdout="Validation PASS\nreachable=True\n")
 
         with patch("videosim.gui.subprocess.run", return_value=result) as run:
@@ -348,6 +394,7 @@ class GuiTest(unittest.TestCase):
 
     def test_dash_validation_command_uses_dash_profile_and_directory(self):
         state = GuiState(protocol="dash", http_port=18100, dash_dir="/tmp/gui-dash")
+        self.create_feed(state)
         result = Mock(returncode=0, stdout="Validation PASS\nreachable=True\n")
 
         with patch("videosim.gui.subprocess.run", return_value=result) as run:
@@ -363,6 +410,7 @@ class GuiTest(unittest.TestCase):
 
     def test_validation_failure_sets_actionable_error(self):
         state = GuiState()
+        self.create_feed(state)
         result = Mock(returncode=1, stdout="Validation FAIL\nerrors=feed unreachable\n")
 
         with patch("videosim.gui.subprocess.run", return_value=result):
@@ -374,6 +422,7 @@ class GuiTest(unittest.TestCase):
 
     def test_diagnostics_export_contains_state_validation_and_logs(self):
         state = GuiState(feed_port=9912, mode="black_video")
+        self.create_feed(state)
         state.validation_output = "Validation PASS"
         state.log("Started black_video feed")
 

@@ -173,3 +173,8 @@
 - Docker validation run: `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json`, `python -m videosim validate --profile profiles/srt-video-only.yaml --port 9001 --json`, and `python -m videosim validate --profile profiles/dash-black-video.yaml --dash-dir /tmp/videosim-dash/stream-3 --dash-base-url http://127.0.0.1:8080/dash/stream-3 --json` all passed.
 - Docker CRUDL smoke: created `stream-4`, updated it to SRT audio-only with name `Updated Temp`, confirmed it in `/state.json`, deleted it through `/streams/delete`, and confirmed it was absent while the three running streams remained listed.
 - Docker multi-DASH smoke: created and started `stream-5` as DASH normal while SRT streams and DASH black-video were still running; `python -m videosim validate --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash/stream-5 --dash-base-url http://127.0.0.1:8080/dash/stream-5 --json` passed.
+- Changed GUI startup to default to zero configured feeds and zero running feeds; users now enter through the create-feed workflow instead of an implicit primary feed.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 30 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 86 tests with 11 live tests skipped locally by default.
+- Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Docker runtime smoke: copied patched GUI/static files into `videosim-app-1`, restarted the app, confirmed `/state.json` reported `streams: []`, created `Created SRT` via `/streams/create`, started it via `/start`, and validated `profiles/srt-normal.yaml` on port 9000 successfully.

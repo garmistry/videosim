@@ -64,6 +64,7 @@
 | Delete stream. | GUI can stop and remove a selected stream record. |
 | List streams. | GUI payload and left navigation expose all configured stream records. |
 | Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
+| Start empty. | Fresh GUI state has no configured streams, no endpoint, and no running feed until the user creates one. |
 
 ## Milestone Status
 

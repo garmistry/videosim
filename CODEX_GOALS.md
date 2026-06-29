@@ -29,6 +29,8 @@ The GUI should manage multiple feed instances for every supported protocol. A
 user should be able to create, list, open/read, update, delete, start, stop, and
 validate independent SRT or DASH streams from clear navigation. Each stream owns
 its endpoint, subprocess, logs, validation output, and selected simulation mode.
+The GUI should start with zero configured/running feeds; feed records are created
+only through the create-feed workflow.
 
 ## Global Milestone Gate
 

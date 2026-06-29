@@ -224,6 +224,20 @@ button, .download {
   gap: 0.65rem;
 }
 
+.create-feed {
+  border-bottom: 1px solid #d8e2e8;
+  padding-bottom: 1rem;
+}
+
+.empty-state {
+  background: #f3f7f9;
+  border: 1px dashed #b7c6d1;
+  border-radius: 0.45rem;
+  color: #596a76;
+  font-weight: 800;
+  padding: 1rem;
+}
+
 .control-row label {
   display: grid;
   gap: 0.35rem;

@@ -54,14 +54,11 @@ body.react-ready > main {
   padding-top: 1rem;
 }
 
-.stream-nav form {
-  margin: 0;
-}
-
-.stream-nav button {
+.stream-nav a {
+  color: white;
   display: grid;
   gap: 0.15rem;
-  width: 100%;
+  text-decoration: none;
 }
 
 .stream-nav small {
@@ -75,7 +72,7 @@ button, select, input {
   font: inherit;
 }
 
-button, .download {
+button, .download, .stream-nav a {
   border: 0;
   border-radius: 0.45rem;
   cursor: pointer;
@@ -84,7 +81,7 @@ button, .download {
   padding: 0.7rem 0.95rem;
 }
 
-.nav button, .download {
+.nav button, .download, .stream-nav a {
   background: rgba(255, 255, 255, 0.08);
   color: white;
   text-align: left;
@@ -92,7 +89,7 @@ button, .download {
   transition: background 160ms ease, transform 160ms ease;
 }
 
-.nav button:hover, .download:hover, .nav button.active {
+.nav button:hover, .download:hover, .stream-nav a:hover, .nav button.active, .stream-nav a.active {
   background: #176b87;
   transform: translateX(0.2rem);
 }

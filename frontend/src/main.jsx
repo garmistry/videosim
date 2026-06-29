@@ -20,7 +20,7 @@ function App() {
     [state.mode, state.modes]
   );
   const selectedStream = useMemo(
-    () => state.streams.find((item) => item.id === state.selectedStreamId) || state.streams[0],
+    () => state.streams.find((item) => item.id === state.selectedStreamId),
     [state.selectedStreamId, state.streams]
   );
 
@@ -94,15 +94,16 @@ function StreamNav({ streams, selectedStreamId }) {
   return (
     <section className="stream-nav" aria-label="Streams">
       <p className="eyebrow">Streams</p>
+      <a className={!selectedStreamId ? "active create-link" : "create-link"} href="/">
+        <span>{selectedStreamId ? "All feeds" : "Create feed"}</span>
+        <small>{selectedStreamId ? "List and add" : "New feed workflow"}</small>
+      </a>
       {streams.length === 0 && <small>No feeds</small>}
       {streams.map((stream) => (
-        <form action="/streams/select" method="post" key={stream.id}>
-          <input name="stream_id" type="hidden" value={stream.id} />
-          <button className={stream.id === selectedStreamId ? "active" : ""} type="submit">
-            <span>{stream.name}</span>
-            <small>{stream.protocol.toUpperCase()} · {stream.mode} · {stream.status}</small>
-          </button>
-        </form>
+        <a className={stream.id === selectedStreamId ? "active" : ""} href={stream.url} key={stream.id}>
+          <span>{stream.name}</span>
+          <small>{stream.protocol.toUpperCase()} · {stream.mode} · {stream.status}</small>
+        </a>
       ))}
     </section>
   );
@@ -149,7 +150,7 @@ function Metric({ label, value, wide }) {
 }
 
 function ControlPanel({ state, copied, onCopy }) {
-  const selected = state.streams.find((stream) => stream.id === state.selectedStreamId) || state.streams[0];
+  const selected = state.streams.find((stream) => stream.id === state.selectedStreamId);
   const createForm = (
     <form action="/streams/create" className="control-row create-feed" method="post">
       <label>
@@ -187,8 +188,6 @@ function ControlPanel({ state, copied, onCopy }) {
 
   return (
     <section className="panel">
-      {createForm}
-
       <form action="/streams/update" className="control-row" method="post">
         <input name="stream_id" type="hidden" value={state.selectedStreamId} />
         <label>

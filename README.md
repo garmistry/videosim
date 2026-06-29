@@ -129,14 +129,16 @@ point, then manage feeds from the stream list:
 
 - Create a named SRT or DASH feed.
 - List streams in the left navigation.
-- Read/open a stream to see endpoint, status, validation, and logs.
+- Read/open a stream at `/feeds/<stream-id>` to see endpoint, status, validation, and logs.
 - Update selected stream name, protocol, or mode.
 - Delete the selected stream.
 
-Each feed can be started, stopped, validated, and copied independently. The
-protocol and mode selectors support SRT or DASH for normal, audio-only,
-video-only, no-captions, black-video, and frozen-video feeds. Changing fault
-controls while a feed is running uses a controlled stream restart.
+Each feed detail page can be bookmarked directly and does not show the create
+feed form; return to `/` for the create/list workflow. Each feed can be started,
+stopped, validated, and copied independently. The protocol and mode selectors
+support SRT or DASH for normal, audio-only, video-only, no-captions,
+black-video, and frozen-video feeds. Changing fault controls while a feed is
+running uses a controlled stream restart.
 
 The GUI also shows status, intentional outage state, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text

@@ -59,10 +59,11 @@
 | Capability | Acceptance evidence |
 |---|---|
 | Create stream. | GUI state can add a named SRT or DASH stream record with an independent endpoint. |
-| Read/open stream. | GUI state exposes the selected stream detail, endpoint, status, logs, and validation output. |
+| Read/open stream. | GUI state exposes the selected stream detail, endpoint, status, logs, validation output, and `/feeds/<stream-id>` deep link. |
 | Update stream. | GUI can change selected stream name, protocol, or mode. |
 | Delete stream. | GUI can stop and remove a selected stream record. |
 | List streams. | GUI payload and left navigation expose all configured stream records. |
+| Separate create from detail. | `/` exposes the create/list workflow; selected feed detail pages omit the create-feed form. |
 | Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
 | Start empty. | Fresh GUI state has no configured streams, no endpoint, and no running feed until the user creates one. |
 

@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 PROFILE_OPTIONS = {
@@ -75,6 +75,10 @@ def running_in_container() -> bool:
     return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
 
 
+def feed_path(stream_id: str) -> str:
+    return f"/feeds/{quote(stream_id, safe='')}"
+
+
 @dataclass
 class FeedRecord:
     id: str
@@ -133,10 +137,11 @@ class GuiState:
 
     @property
     def active_stream(self) -> FeedRecord | None:
-        if not self.streams:
+        if not self.streams or not self.selected_stream_id:
             return None
         if self.selected_stream_id not in self.streams:
-            self.selected_stream_id = next(iter(self.streams))
+            self.selected_stream_id = ""
+            return None
         return self.streams[self.selected_stream_id]
 
     @property
@@ -207,6 +212,10 @@ class GuiState:
         self.selected_stream_id = stream_id
         self._sync_from_active()
         return True
+
+    def clear_selection(self):
+        self.selected_stream_id = ""
+        self._sync_from_active()
 
     def update_stream(self, stream_id: str, name: str | None = None, protocol: str | None = None, mode: str | None = None) -> bool:
         if stream_id not in self.streams:
@@ -506,39 +515,52 @@ class GuiHandler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             self._send_static(path.removeprefix("/static/"))
             return
+        if path.startswith("/feeds/"):
+            stream_id = unquote(path.removeprefix("/feeds/").strip("/"))
+            if not stream_id or not self.state.select_stream(stream_id):
+                self.send_error(404)
+                return
+            self._send_html(render_page(self.state))
+            return
         if path != "/":
             self.send_error(404)
             return
+        self.state.clear_selection()
         self._send_html(render_page(self.state))
 
     def do_POST(self):
+        redirect_stream_id = self.state.selected_stream_id
         if self.path == "/start":
             params = self._read_form()
             try:
                 stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
                 if stream_id:
                     self.state.select_stream(stream_id)
+                    redirect_stream_id = stream_id
                 mode = mode_from_form(params, self.state.mode)
                 protocol = params.get("protocol", [self.state.protocol])[0]
             except ValueError as exc:
                 self.state.log(str(exc))
-                self._redirect_home()
+                self._redirect_stream(redirect_stream_id)
                 return
             self.state.apply_mode(mode, protocol, stream_id)
         elif self.path == "/stop":
             params = self._read_form()
-            self.state.stop(params.get("stream_id", [self.state.selected_stream_id])[0] or None)
+            redirect_stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
+            self.state.stop(redirect_stream_id or None)
         elif self.path == "/validate":
             params = self._read_form()
-            self.state.validate(params.get("stream_id", [self.state.selected_stream_id])[0] or None)
+            redirect_stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
+            self.state.validate(redirect_stream_id or None)
         elif self.path == "/streams/create":
             params = self._read_form()
             try:
-                self.state.create_stream(
+                stream = self.state.create_stream(
                     name=params.get("name", [""])[0],
                     protocol=params.get("protocol", ["srt"])[0],
                     mode=params.get("mode", ["normal"])[0],
                 )
+                redirect_stream_id = stream.id
             except ValueError as exc:
                 self.state.log(str(exc))
         elif self.path == "/streams/select":
@@ -546,10 +568,12 @@ class GuiHandler(BaseHTTPRequestHandler):
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
                 self.state.select_stream(stream_id)
+                redirect_stream_id = stream_id
         elif self.path == "/streams/update":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
+                redirect_stream_id = stream_id
                 try:
                     self.state.update_stream(
                         stream_id,
@@ -564,10 +588,11 @@ class GuiHandler(BaseHTTPRequestHandler):
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
                 self.state.delete_stream(stream_id)
+                redirect_stream_id = self.state.selected_stream_id
         else:
             self.send_error(404)
             return
-        self._redirect_home()
+        self._redirect_stream(redirect_stream_id)
 
     def log_message(self, format, *args):
         return
@@ -660,6 +685,14 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.send_header("Location", "/")
         self.end_headers()
 
+    def _redirect_stream(self, stream_id: str | None = None):
+        if stream_id and stream_id in self.state.streams:
+            self.send_response(303)
+            self.send_header("Location", feed_path(stream_id))
+            self.end_headers()
+            return
+        self._redirect_home()
+
     def _read_form(self):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8") if length else ""
@@ -692,54 +725,30 @@ def render_page(state: GuiState) -> str:
     checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
     stream_rows = "\n".join(
         f"""<li>
-          <form method="post" action="/streams/select" class="row">
-            <input type="hidden" name="stream_id" value="{html.escape(stream.id)}">
-            <button class="secondary" type="submit">Open</button>
+          <div class="row">
+            <a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a>
             <strong>{html.escape(stream.name)}</strong>
             <span>{html.escape(stream.protocol.upper())}</span>
             <span>{html.escape(stream.mode)}</span>
             <span>{html.escape(stream.status)}</span>
-          </form>
+          </div>
         </li>"""
         for stream in state.streams.values()
     )
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Video Feed Simulator</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <style>
-    body {{ font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f5f7fb; color: #16202a; }}
-    main {{ display: grid; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
-    button, .button {{ border: 0; border-radius: 0.45rem; background: #176b87; color: white; padding: 0.7rem 0.95rem; text-decoration: none; font-weight: 700; }}
-    button.secondary, .button.secondary {{ background: #dbe4ea; color: #16202a; }}
-    #endpoint {{ width: min(100%, 34rem); padding: 0.65rem; border: 1px solid #bfccd6; border-radius: 0.45rem; }}
-    fieldset {{ border: 1px solid #cfdae3; border-radius: 0.5rem; padding: 0.75rem; }}
-    label.control {{ display: inline-flex; gap: 0.35rem; align-items: center; margin-right: 0.75rem; }}
-    pre {{ background: #101820; color: #eef6f9; min-height: 12rem; padding: 1rem; overflow: auto; border-radius: 0.5rem; }}
-    .row {{ display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }}
-    .shell {{ background: white; border: 1px solid #d9e3ea; border-radius: 0.65rem; padding: 1rem; box-shadow: 0 1rem 2.5rem rgba(22, 32, 42, 0.08); }}
-  </style>
-</head>
-<body>
-<div id="app"></div>
-<script id="initial-state" type="application/json">{script_json(state_payload(state))}</script>
-<main>
-  <div id="app-fallback" class="shell">
-  <h1>Video Feed Simulator</h1>
-  <h2>Streams</h2>
-  <ul>{stream_rows}</ul>
+    create_form = f"""
   <form method="post" action="/streams/create" class="row">
     <label>Name <input name="name" value="Feed {len(state.streams) + 1}"></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
     <button type="submit">Create stream</button>
   </form>
+  <div class="empty-state">Open an existing feed or create a new one.</div>"""
+    selected_detail = ""
+    if active:
+        selected_detail = f"""
   <form method="post" action="/streams/update" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
-    <label>Selected name <input name="name" value="{html.escape(active.name if active else '')}"></label>
+    <label>Selected name <input name="name" value="{html.escape(active.name)}"></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
     <button type="submit">Update stream</button>
@@ -784,7 +793,36 @@ def render_page(state: GuiState) -> str:
   <pre>{validation}</pre>
   {preview}
   <h2>Logs</h2>
-  <pre>{logs}</pre>
+  <pre>{logs}</pre>"""
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Feed Simulator</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    body {{ font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f5f7fb; color: #16202a; }}
+    main {{ display: grid; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
+    button, .button {{ border: 0; border-radius: 0.45rem; background: #176b87; color: white; padding: 0.7rem 0.95rem; text-decoration: none; font-weight: 700; }}
+    button.secondary, .button.secondary {{ background: #dbe4ea; color: #16202a; }}
+    #endpoint {{ width: min(100%, 34rem); padding: 0.65rem; border: 1px solid #bfccd6; border-radius: 0.45rem; }}
+    fieldset {{ border: 1px solid #cfdae3; border-radius: 0.5rem; padding: 0.75rem; }}
+    label.control {{ display: inline-flex; gap: 0.35rem; align-items: center; margin-right: 0.75rem; }}
+    pre {{ background: #101820; color: #eef6f9; min-height: 12rem; padding: 1rem; overflow: auto; border-radius: 0.5rem; }}
+    .row {{ display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }}
+    .shell {{ background: white; border: 1px solid #d9e3ea; border-radius: 0.65rem; padding: 1rem; box-shadow: 0 1rem 2.5rem rgba(22, 32, 42, 0.08); }}
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<script id="initial-state" type="application/json">{script_json(state_payload(state))}</script>
+<main>
+  <div id="app-fallback" class="shell">
+  <h1>Video Feed Simulator</h1>
+  <h2>Streams</h2>
+  <ul>{stream_rows}</ul>
+  {selected_detail if active else create_form}
   </div>
 </main>
 <script type="module" src="/static/app.js"></script>
@@ -797,6 +835,7 @@ def state_payload(state: GuiState) -> dict:
     controls = controls_for_mode(active.mode if active else state.mode)
     return {
         "selectedStreamId": state.selected_stream_id,
+        "feedListUrl": "/",
         "streams": [stream_payload(stream) for stream in state.streams.values()],
         "status": state.status,
         "protocol": state.protocol,
@@ -821,6 +860,7 @@ def stream_payload(stream: FeedRecord) -> dict:
     return {
         "id": stream.id,
         "name": stream.name,
+        "url": feed_path(stream.id),
         "protocol": stream.protocol,
         "mode": stream.mode,
         "status": stream.status,

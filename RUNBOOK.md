@@ -143,16 +143,17 @@ use the stream list in the left navigation for CRUDL operations:
 
 - Create a named SRT or DASH feed.
 - List all configured streams.
-- Open/read a stream to see endpoint, status, logs, and validation output.
+- Open/read a stream at `/feeds/<stream-id>` to see endpoint, status, logs, and validation output.
 - Update the selected stream name, protocol, or mode.
 - Delete the selected stream.
 
-Use the protocol selector to choose SRT or DASH, then use the mode selector to
-start normal, audio-only, video-only, no-captions, black-video, or frozen-video
-feeds. Each feed has independent start, stop, validate, and copy URL actions.
-Use the runtime fault controls to toggle video, audio, captions, black video, or
-frozen video while the GUI is running; the MVP applies those changes with a
-controlled stream restart.
+Feed detail pages are directly bookmarkable and do not include the create-feed
+form; use `/` for the create/list workflow. Use the protocol selector to choose
+SRT or DASH, then use the mode selector to start normal, audio-only, video-only,
+no-captions, black-video, or frozen-video feeds. Each feed has independent
+start, stop, validate, and copy URL actions. Use the runtime fault controls to
+toggle video, audio, captions, black video, or frozen video while the GUI is
+running; the MVP applies those changes with a controlled stream restart.
 
 Use the Validate button to run the current profile validation from the GUI.
 Use Download diagnostics to export status, mode, endpoint, last error,

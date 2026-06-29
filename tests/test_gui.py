@@ -40,6 +40,7 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(payload["status"], "stopped")
         self.assertEqual(payload["endpoint"], "")
         self.assertFalse(payload["previewAvailable"])
+        self.assertEqual(payload["feedListUrl"], "/")
 
     def test_page_has_start_stop_copyable_endpoint_and_logs(self):
         state = GuiState(feed_port=9912)
@@ -58,12 +59,23 @@ class GuiTest(unittest.TestCase):
         self.assertIn("Last error", page)
         self.assertIn("Validate", page)
         self.assertIn("Download diagnostics", page)
+        self.assertNotIn('action="/streams/create"', page)
         for label, _ in PROFILE_OPTIONS.values():
             self.assertIn(label, page)
         for label in ("Video", "Audio", "Captions", "Black video", "Frozen video", "Apply controls"):
             self.assertIn(label, page)
         self.assertIn('id="app"', page)
         self.assertIn('/static/app.js', page)
+
+    def test_page_has_create_feed_workflow_when_no_feed_selected(self):
+        state = GuiState(feed_port=9912)
+
+        page = render_page(state)
+
+        self.assertIn('action="/streams/create"', page)
+        self.assertIn("Create stream", page)
+        self.assertIn("Open an existing feed or create a new one.", page)
+        self.assertNotIn("srt://127.0.0.1:9912?mode=caller", page)
 
     def test_react_state_payload_exposes_gui_state(self):
         state = GuiState(feed_port=9912, mode="video_only")
@@ -101,11 +113,23 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(len(payload["streams"]), 2)
         self.assertEqual(payload["streams"][1]["name"], "Dash B")
         self.assertEqual(payload["streams"][1]["protocol"], "dash")
+        self.assertEqual(payload["streams"][1]["url"], "/feeds/stream-2")
         self.assertEqual(payload["endpoint"], f"http://127.0.0.1:8080/dash/{created.id}/manifest.mpd")
 
         state.select_stream("stream-1")
 
         self.assertEqual(state.endpoint, "srt://127.0.0.1:9912?mode=caller")
+
+    def test_render_page_links_to_feed_detail(self):
+        state = GuiState(feed_port=9912)
+        self.create_feed(state)
+        state.clear_selection()
+
+        page = render_page(state)
+
+        self.assertIn('href="/feeds/stream-1"', page)
+        self.assertIn('action="/streams/create"', page)
+        self.assertNotIn("Selected name", page)
 
     def test_stream_update_changes_selected_stream_configuration(self):
         state = GuiState(feed_port=9912)

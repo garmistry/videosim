@@ -178,3 +178,8 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 86 tests with 11 live tests skipped locally by default.
 - Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Docker runtime smoke: copied patched GUI/static files into `videosim-app-1`, restarted the app, confirmed `/state.json` reported `streams: []`, created `Created SRT` via `/streams/create`, started it via `/start`, and validated `profiles/srt-normal.yaml` on port 9000 successfully.
+- Added feed detail deep links at `/feeds/<stream-id>` and separated the root create/list page from selected feed detail pages so existing feed pages do not show the create-feed form.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 32 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 88 tests with 11 live tests skipped locally by default.
+- Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Docker runtime smoke: copied patched GUI/static files into `videosim-app-1`, restarted the app, confirmed `/` exposed the create workflow with no selected feed, created `Deep SRT`, confirmed redirect to `/feeds/stream-1`, confirmed that feed detail link rendered, and confirmed the feed detail page omitted `action="/streams/create"`.

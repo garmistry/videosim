@@ -35,6 +35,7 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 |---|---:|---|---|
 | Stream create/list/select payload | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Zero-feed startup state | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Feed detail deep links | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Stream update and delete | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Independent subprocess launch per stream | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Multi-stream Docker GUI smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |

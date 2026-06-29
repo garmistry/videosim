@@ -804,7 +804,7 @@ def render_page(state: GuiState) -> str:
   <style>
     body {{ font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; background: #050505; color: #f5f5f1; }}
     main {{ display: grid; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
-    button, .button {{ border: 0; border-radius: 0.45rem; background: #e50914; color: white; padding: 0.7rem 0.95rem; text-decoration: none; font-weight: 700; }}
+    button, .button {{ border: 0; border-radius: 0.45rem; background: #b81d24; color: white; padding: 0.7rem 0.95rem; text-decoration: none; font-weight: 700; }}
     button.secondary, .button.secondary {{ background: #2b2b2b; color: #f5f5f1; }}
     #endpoint {{ width: min(100%, 34rem); padding: 0.65rem; border: 1px solid #2c2c2c; border-radius: 0.45rem; background: #080808; color: #f5f5f1; }}
     fieldset {{ border: 1px solid #2c2c2c; border-radius: 0.5rem; padding: 0.75rem; }}

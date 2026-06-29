@@ -12,9 +12,9 @@ body {
 
 body[data-theme="dark"] {
   color-scheme: dark;
-  --accent: #e50914;
-  --accent-hover: #f6121d;
-  --accent-soft: rgba(229, 9, 20, 0.18);
+  --accent: #b81d24;
+  --accent-hover: #c52830;
+  --accent-soft: rgba(184, 29, 36, 0.18);
   --accent-text: #fff;
   --border: #2c2c2c;
   --button-secondary: #2b2b2b;
@@ -44,9 +44,9 @@ body[data-theme="dark"] {
 
 body[data-theme="light"] {
   color-scheme: light;
-  --accent: #e50914;
-  --accent-hover: #b80710;
-  --accent-soft: rgba(229, 9, 20, 0.12);
+  --accent: #b81d24;
+  --accent-hover: #991820;
+  --accent-soft: rgba(184, 29, 36, 0.12);
   --accent-text: #fff;
   --border: #dedede;
   --button-secondary: #ececec;

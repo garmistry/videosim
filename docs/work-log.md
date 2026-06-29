@@ -194,3 +194,7 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18137 --feed-port 9912` served `/`, `/static/app.css`, and `/static/app.js` with dark/light theme assets.
 - Skipped check: browser click verification could not run because the in-app browser runtime reported no available browser backends.
+- Muted the GUI theme red accent from bright Netflix red to a darker red across React CSS, generated static CSS, and the no-JavaScript fallback.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.css`.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 32 tests.
+- HTTP smoke: restarted `python3 -m videosim gui --host 127.0.0.1 --http-port 18137 --feed-port 9912`; `/` and `/static/app.css` served the muted `#b81d24` accent with no `#e50914` references.

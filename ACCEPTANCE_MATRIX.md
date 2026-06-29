@@ -45,6 +45,15 @@
 | Frozen video detected. | Frames sampled across at least 10 seconds are visually identical or nearly identical while timestamps advance. |
 | Feed stopped/unreachable. | Validator fails reachability with a clear stopped/unreachable result. |
 
+## Added DASH Protocol Option
+
+| Capability | Acceptance evidence |
+|---|---|
+| DASH feeds can be generated. | `videosim start --profile profiles/dash-normal.yaml --dash-dir ...` writes an MPD and media segments. |
+| DASH supports required simulation modes. | Live smoke validation passes for normal, audio_only, video_only, no_captions, black_video, and frozen_video DASH profiles. |
+| DASH captions are present when expected. | Validator detects a WebVTT subtitle adaptation and `captions.vtt` for caption-enabled DASH profiles. |
+| DASH endpoint is copyable in GUI. | GUI state exposes `http://127.0.0.1:<http-port>/dash/manifest.mpd` when protocol is DASH. |
+
 ## Milestone Status
 
 | Milestone | Status | Human-visible output |

@@ -1,15 +1,16 @@
 # Video Feed Simulator
 
-Video Feed Simulator will generate local SRT live video feeds for testing receivers,
+Video Feed Simulator generates local SRT and DASH live video feeds for testing receivers,
 monitoring systems, and outage handling. The MVP target is a GUI that can start,
 stop, and validate normal and fault-mode SRT feeds.
 
 ## Current Status
 
 Milestones 0 through 11 are complete. The CLI and React-enhanced local browser
-GUI can start, stop, restart, and validate a synthetic audio/video/caption SRT
-listener feed through GStreamer, and Docker live tests prove GStreamer, ffprobe,
-and ffplay receiver compatibility for the required modes.
+GUI can start, stop, restart, and validate synthetic audio/video/caption SRT
+listener feeds through GStreamer. DASH feed generation is also available for the
+same six simulation modes, with MPD/TS output and WebVTT captions served by the
+GUI.
 
 ## MVP Scope
 
@@ -26,10 +27,10 @@ The critical MVP must support:
 - Validation proving actual stream state.
 - Install/run documentation and tests for critical behavior.
 
-Out of scope until the critical MVP is done: protocols beyond SRT, multiple
-simultaneous feeds, local preview, packet/jitter simulation, REST API, metrics,
-and release packaging such as AppImage/Flatpak. Docker is present as a Linux
-test harness, not a release package.
+Still out of scope until the critical MVP is done: multiple simultaneous feeds,
+packet/jitter simulation, REST API, metrics, and release packaging such as
+AppImage/Flatpak. Docker is present as a Linux test harness, not a release
+package.
 
 ## Architecture
 
@@ -92,11 +93,18 @@ Start from the sample normal profile:
 python3 -m videosim start --profile profiles/srt-normal.yaml
 ```
 
+Start a DASH feed with the same normal/fault profile modes:
+
+```sh
+python3 -m videosim start --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash
+```
+
 Validate a running feed against a profile:
 
 ```sh
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
+python3 -m videosim validate --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash --json
 ```
 
 Run a timed soak with periodic validation:
@@ -117,16 +125,16 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Then open `http://127.0.0.1:8080`.
 
-The GUI mode selector and runtime fault controls support normal, audio-only,
+The GUI protocol and mode selectors support SRT or DASH for normal, audio-only,
 video-only, no-captions, black-video, and frozen-video feeds. Changing fault
 controls while a feed is running uses a controlled stream restart.
 
 The GUI also shows status, intentional outage state, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
-file. Video-present SRT modes include a visible running clock overlay for
-receiver testing. When a video-capable SRT feed is running, the React GUI opens
-a preview panel that refreshes a local frame matching the active mode. Use
-Validate to prove actual SRT stream state.
+file. Video-present modes include a visible running clock overlay for receiver
+testing. When a video-capable feed is running, the React GUI opens a preview
+panel that refreshes a local frame matching the active mode. Use Validate to
+prove actual stream state.
 
 Deploy the GUI and SRT listener together with Docker Compose:
 
@@ -146,6 +154,12 @@ Receiver URL:
 
 ```text
 srt://127.0.0.1:9000?mode=caller
+```
+
+DASH feeds are served by the GUI at:
+
+```text
+http://127.0.0.1:8080/dash/manifest.mpd
 ```
 
 The SRT listener accepts receiver clients at that caller URL. This Docker image

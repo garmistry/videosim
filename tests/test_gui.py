@@ -6,9 +6,11 @@ from videosim.gui import (
     GuiState,
     MODE_CONTROLS,
     PROFILE_OPTIONS,
+    PROTOCOL_OPTIONS,
     diagnostics_text,
     mode_from_controls,
     mode_from_form,
+    profile_for,
     preview_image,
     render_page,
     rgb_frame_to_bmp,
@@ -26,6 +28,9 @@ class GuiTest(unittest.TestCase):
         self.assertIn("Start", page)
         self.assertIn("Stop", page)
         self.assertIn("srt://127.0.0.1:9912?mode=caller", page)
+        self.assertIn("Protocol", page)
+        for label in PROTOCOL_OPTIONS.values():
+            self.assertIn(label, page)
         self.assertIn("hello", page)
         self.assertIn("Last error", page)
         self.assertIn("Validate", page)
@@ -44,11 +49,21 @@ class GuiTest(unittest.TestCase):
         payload = state_payload(state)
 
         self.assertEqual(payload["endpoint"], "srt://127.0.0.1:9912?mode=caller")
+        self.assertEqual(payload["protocol"], "srt")
+        self.assertIn({"value": "dash", "label": "DASH"}, payload["protocols"])
         self.assertEqual(payload["mode"], "video_only")
         self.assertEqual(payload["logs"], ["ready"])
         self.assertFalse(payload["controls"]["audio"])
         self.assertEqual(payload["previewUrl"], "/preview.jpg")
         self.assertFalse(payload["previewAvailable"])
+
+    def test_dash_state_payload_exposes_http_manifest_endpoint(self):
+        state = GuiState(protocol="dash", http_port=18100)
+
+        payload = state_payload(state)
+
+        self.assertEqual(payload["endpoint"], "http://127.0.0.1:18100/dash/manifest.mpd")
+        self.assertEqual(payload["protocol"], "dash")
 
     def test_react_state_marks_running_video_feed_preview_available(self):
         state = GuiState(feed_port=9912)
@@ -94,7 +109,7 @@ class GuiTest(unittest.TestCase):
         body, content_type = preview_image(GuiState(mode="audio_only"))
 
         self.assertEqual(content_type, "image/svg+xml")
-        self.assertIn(b"SRT Preview", body)
+        self.assertIn(b"Feed Preview", body)
 
     def test_rgb_frame_to_bmp_builds_browser_image(self):
         bmp = rgb_frame_to_bmp(bytes([255, 0, 0, 0, 255, 0]), 2, 1)
@@ -119,8 +134,26 @@ class GuiTest(unittest.TestCase):
         self.assertIn("--port", cmd)
         self.assertIn("9912", cmd)
         self.assertEqual(state.status, "running")
-        self.assertTrue(any("Starting normal feed: profile=profiles/srt-normal.yaml" in line for line in state.logs))
-        self.assertIn("Started normal feed at srt://127.0.0.1:9912?mode=caller pid=1234", state.logs)
+        self.assertTrue(any("Starting srt normal feed: profile=profiles/srt-normal.yaml" in line for line in state.logs))
+        self.assertIn("Started srt normal feed at srt://127.0.0.1:9912?mode=caller pid=1234", state.logs)
+
+    def test_start_launches_dash_profile_feed(self):
+        state = GuiState(protocol="dash", http_port=18100, feed_port=9912, width=320, height=180, framerate=10)
+
+        with patch("videosim.gui.subprocess.Popen") as popen:
+            popen.return_value.stdout = []
+            popen.return_value.pid = 1234
+            popen.return_value.poll.return_value = None
+            state.start()
+
+        cmd = popen.call_args.args[0]
+        self.assertIn("profiles/dash-normal.yaml", cmd)
+        self.assertIn("--protocol", cmd)
+        self.assertIn("dash", cmd)
+        self.assertIn("--dash-dir", cmd)
+        self.assertIn("--dash-base-url", cmd)
+        self.assertEqual(state.endpoint, "http://127.0.0.1:18100/dash/manifest.mpd")
+        self.assertIn("Started dash normal feed at http://127.0.0.1:18100/dash/manifest.mpd pid=1234", state.logs)
 
     def test_verbose_gui_logs_feed_launch_command(self):
         state = GuiState(feed_port=9912)
@@ -145,6 +178,10 @@ class GuiTest(unittest.TestCase):
 
         cmd = popen.call_args.args[0]
         self.assertIn("profiles/srt-black-video.yaml", cmd)
+
+    def test_profile_for_returns_protocol_specific_profile(self):
+        self.assertEqual(profile_for("srt", "black_video"), "profiles/srt-black-video.yaml")
+        self.assertEqual(profile_for("dash", "black_video"), "profiles/dash-black-video.yaml")
 
     def test_unsupported_mode_does_not_start_feed(self):
         state = GuiState(mode="unknown")
@@ -197,13 +234,14 @@ class GuiTest(unittest.TestCase):
             second.poll.return_value = None
             second.wait.return_value = 0
             popen.return_value = second
-            state.apply_mode("no_captions")
+            state.apply_mode("no_captions", "dash")
 
         self.assertEqual(state.mode, "no_captions")
-        self.assertIn("Restarting feed for no_captions mode", state.logs)
+        self.assertEqual(state.protocol, "dash")
+        self.assertIn("Restarting feed for dash no_captions mode", state.logs)
         killpg.assert_called()
         cmd = popen.call_args.args[0]
-        self.assertIn("profiles/srt-no-captions.yaml", cmd)
+        self.assertIn("profiles/dash-no-captions.yaml", cmd)
 
     def test_start_failure_leaves_feed_stopped_with_error_log(self):
         state = GuiState()
@@ -249,6 +287,21 @@ class GuiTest(unittest.TestCase):
         self.assertIn("profiles/srt-normal.yaml", cmd)
         self.assertIn("9912", cmd)
 
+    def test_dash_validation_command_uses_dash_profile_and_directory(self):
+        state = GuiState(protocol="dash", http_port=18100, dash_dir="/tmp/gui-dash")
+        result = Mock(returncode=0, stdout="Validation PASS\nreachable=True\n")
+
+        with patch("videosim.gui.subprocess.run", return_value=result) as run:
+            passed = state.validate()
+
+        self.assertTrue(passed)
+        cmd = run.call_args.args[0]
+        self.assertIn("profiles/dash-normal.yaml", cmd)
+        self.assertIn("--protocol", cmd)
+        self.assertIn("dash", cmd)
+        self.assertIn("--dash-dir", cmd)
+        self.assertIn("/tmp/gui-dash", cmd)
+
     def test_validation_failure_sets_actionable_error(self):
         state = GuiState()
         result = Mock(returncode=1, stdout="Validation FAIL\nerrors=feed unreachable\n")
@@ -268,6 +321,7 @@ class GuiTest(unittest.TestCase):
         diagnostics = diagnostics_text(state)
 
         self.assertIn("status=stopped", diagnostics)
+        self.assertIn("protocol=srt", diagnostics)
         self.assertIn("mode=black_video", diagnostics)
         self.assertIn("intentional_outage=yes", diagnostics)
         self.assertIn("Validation PASS", diagnostics)

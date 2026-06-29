@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -35,6 +36,41 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
         self.assertIn("uri=srt://:9910?mode=listener", args)
         self.assertFalse(any("maxconn=" in arg for arg in args))
+
+    def test_dash_endpoint_uses_manifest_file_by_default(self):
+        config = VideoFeedConfig(protocol="dash", dash_dir="/tmp/videosim-test-dash")
+
+        self.assertTrue(config.endpoint.endswith("/videosim-test-dash/manifest.mpd"))
+        self.assertTrue(config.endpoint.startswith("file://"))
+
+    def test_dash_endpoint_uses_base_url_when_provided(self):
+        config = VideoFeedConfig(protocol="dash", dash_base_url="http://127.0.0.1:8080/dash")
+
+        self.assertEqual(config.endpoint, "http://127.0.0.1:8080/dash/manifest.mpd")
+
+    def test_pipeline_can_generate_dash_audio_video_and_caption_segments(self):
+        config = VideoFeedConfig(protocol="dash", port=9910, width=320, height=180, framerate=10, dash_dir="/tmp/dash")
+
+        with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+            args = video_pipeline_args(config)
+
+        self.assertIn("dashsink", args)
+        self.assertIn("dynamic=true", args)
+        self.assertIn("mpd-root-path=/tmp/dash", args)
+        self.assertIn("mpd-filename=manifest.mpd", args)
+        self.assertIn("dash.video_0", args)
+        self.assertIn("dash.audio_0", args)
+        self.assertNotIn("h264ccinserter", args)
+        self.assertNotIn("srtsink", args)
+
+    def test_dash_pipeline_supports_audio_only_fault(self):
+        config = VideoFeedConfig(protocol="dash", audio=True, video=False, captions=False)
+
+        with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+            args = video_pipeline_args(config)
+
+        self.assertIn("dash.audio_0", args)
+        self.assertNotIn("dash.video_0", args)
 
     def test_pipeline_can_disable_audio(self):
         config = VideoFeedConfig(port=9910, audio=False)
@@ -114,6 +150,27 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn(f"srt_caller_limit={SRT_CALLER_LIMIT}", stdout.getvalue())
         self.assertIn("GStreamer command:", stdout.getvalue())
         self.assertIn("SRT feed subprocess pid=1234", stdout.getvalue())
+
+    def test_dash_feed_prepares_output_directory_before_launch(self):
+        class FakeProcess:
+            pid = 1234
+            stdin = None
+
+            def wait(self, timeout=None):
+                return 0
+
+        with tempfile.TemporaryDirectory() as dash_dir:
+            stale = f"{dash_dir}/video_0_1.ts"
+            with open(stale, "wb") as handle:
+                handle.write(b"old")
+            stdout = StringIO()
+            with redirect_stdout(stdout), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
+                "videosim.feed.subprocess.Popen", return_value=FakeProcess()
+            ):
+                code = run_video_feed(VideoFeedConfig(protocol="dash", dash_dir=dash_dir, captions=False))
+
+        self.assertEqual(code, 0)
+        self.assertIn("Starting DASH video feed", stdout.getvalue())
 
     def test_keyboard_interrupt_stops_feed_cleanly(self):
         class FakeProcess:

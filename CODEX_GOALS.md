@@ -15,6 +15,14 @@ The MVP is complete when a user can launch a GUI, create an SRT feed, consume it
 5. Black-video feed: video track present, black frames.
 6. Frozen-video feed: video track present, static/repeated video frames.
 
+## Additive Protocol Goal: DASH
+
+After the SRT MVP baseline, the app should also let a user create DASH feeds
+with the same six simulation modes. DASH output is generated as an MPD plus
+media segments, served by the GUI HTTP server, and validated through the same
+track/fault reporting interface. DASH captions are represented as a WebVTT
+subtitle adaptation.
+
 ## Global Milestone Gate
 
 A milestone may close only when:

@@ -1,0 +1,5 @@
+schema_version: 1
+mode: audio_only
+protocol: dash
+audio_frequency: 440
+dash_dir: /tmp/videosim-dash

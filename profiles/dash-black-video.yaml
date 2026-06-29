@@ -1,0 +1,8 @@
+schema_version: 1
+mode: black_video
+protocol: dash
+width: 1280
+height: 720
+framerate: 30
+audio_frequency: 440
+dash_dir: /tmp/videosim-dash

@@ -155,3 +155,12 @@
 - Docker multi-receiver smoke: two simultaneous `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json` clients both passed against the same SRT listener.
 - Recent Docker log check: `docker compose logs --since 1m app | grep -i 'stack smashing\|Feed process exited'` returned no matches while GUI state stayed `running`.
 - Skipped check: `docker compose build app` was stopped after Docker stalled resolving `node:20-slim` metadata; the running app container was patched and validated, and the source tree contains the durable fix for the next successful build.
+- Added DASH as a GUI/CLI protocol option with six matching simulation profiles: normal, audio-only, video-only, no-captions, black-video, and frozen-video.
+- Added DASH generation through GStreamer `dashsink`, serving `manifest.mpd`, TS segments, and WebVTT captions through the GUI HTTP server.
+- Added DASH validation for MPD reachability, video/audio track presence and absence, WebVTT caption presence and absence, black-video detection, and frozen-video detection.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed tests.test_profiles tests.test_gui tests.test_validator` passed, 55 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 81 tests with 11 live tests skipped locally by default.
+- Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Local DASH live smoke: all six DASH profiles started with `python3 -m videosim start --profile profiles/dash-*.yaml --dash-dir <tmp> --width 320 --height 180 --framerate 10` and validated with `python3 -m videosim validate --profile profiles/dash-*.yaml --dash-dir <tmp> --json`.
+- Docker runtime smoke: copied patched source into `videosim-app-1`, restarted the app, started DASH normal from `POST /start protocol=dash&mode=normal`, confirmed `/dash/manifest.mpd` and `/dash/captions.vtt` served, and `python -m videosim validate --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash --dash-base-url http://127.0.0.1:8080/dash --json` passed.
+- Skipped check: `docker compose build app` was stopped after Docker again stalled resolving `node:20-slim` metadata; runtime container was patched and validated, and committed source contains the durable build input.

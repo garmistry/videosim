@@ -1,0 +1,8 @@
+schema_version: 1
+mode: video_only
+protocol: dash
+width: 1280
+height: 720
+framerate: 30
+pattern: smpte
+dash_dir: /tmp/videosim-dash

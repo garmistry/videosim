@@ -2,7 +2,8 @@
 
 # Known Limitations
 
-- The CLI can start, stop, and restart an audio/video/caption SRT listener feed.
+- The CLI can start, stop, and restart audio/video/caption SRT listener feeds
+  and DASH MPD/segment feeds.
 - Runtime fault controls use a controlled stream restart; seamless in-place
   toggles are intentionally out of MVP scope.
 - Profile parsing supports only the flat YAML shape used by the current normal
@@ -18,6 +19,8 @@
   target.
 - Audio-only caption behavior is explicitly allowed to be absent/unsupported and
   must be reported clearly by validation.
+- SRT captions are embedded CEA-608 in H.264. DASH captions are currently
+  emitted as a WebVTT subtitle adaptation in the MPD, not embedded CEA-608.
 - ffprobe and ffplay compatibility tests are receiver smoke checks; semantic
   caption, black-video, and frozen-video proof remains in `videosim validate`.
 - VLC is not tested in the minimal headless Docker harness.

@@ -1,7 +1,11 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from videosim.validator import ValidationReport, human_summary
+from videosim.feed import VideoFeedConfig
+from videosim.validator import ValidationReport, human_summary, validate_config
 
 
 class ValidatorOutputTest(unittest.TestCase):
@@ -20,6 +24,52 @@ class ValidatorOutputTest(unittest.TestCase):
 
         self.assertIn("Validation FAIL", summary)
         self.assertIn("feed unreachable", summary)
+
+    def test_dash_validation_reads_manifest_and_segments(self):
+        with tempfile.TemporaryDirectory() as dash_dir:
+            Path(dash_dir, "manifest.mpd").write_text(
+                """<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet contentType="video"><Representation id="video_0"/></AdaptationSet>
+    <AdaptationSet contentType="audio"><Representation id="audio_0"/></AdaptationSet>
+    <AdaptationSet contentType="text"><Representation id="caption_0"/></AdaptationSet>
+  </Period>
+</MPD>""",
+                encoding="utf-8",
+            )
+            Path(dash_dir, "video_0_1.ts").write_bytes(b"video")
+            Path(dash_dir, "audio_0_1.ts").write_bytes(b"audio")
+            Path(dash_dir, "captions.vtt").write_text("WEBVTT\n\n00:00.000 --> 00:01.000\nVIDEOSIM\n")
+            config = VideoFeedConfig(protocol="dash", dash_dir=dash_dir, width=1, height=1)
+
+            with patch("videosim.validator._read_dash_rgb_frames", return_value=bytes([255, 255, 255] * 3)):
+                report = validate_config(config)
+
+        self.assertTrue(report.passed)
+        self.assertTrue(report.reachable)
+        self.assertTrue(report.video_present)
+        self.assertTrue(report.audio_present)
+        self.assertTrue(report.captions_present)
+
+    def test_dash_validation_detects_audio_only_profile(self):
+        with tempfile.TemporaryDirectory() as dash_dir:
+            Path(dash_dir, "manifest.mpd").write_text(
+                """<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period><AdaptationSet contentType="audio"><Representation id="audio_0"/></AdaptationSet></Period>
+</MPD>""",
+                encoding="utf-8",
+            )
+            Path(dash_dir, "audio_0_1.ts").write_bytes(b"audio")
+            config = VideoFeedConfig(protocol="dash", dash_dir=dash_dir, video=False, audio=True, captions=False)
+
+            report = validate_config(config)
+
+        self.assertTrue(report.passed)
+        self.assertFalse(report.video_present)
+        self.assertTrue(report.audio_present)
+        self.assertFalse(report.captions_present)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,24 @@ class ProfileTest(unittest.TestCase):
                 for field, value in expected.items():
                     self.assertEqual(getattr(config, field), value)
 
+    def test_dash_profiles_map_to_expected_protocol_and_state(self):
+        cases = {
+            "dash-normal.yaml": {"video": True, "audio": True, "captions": True},
+            "dash-audio-only.yaml": {"video": False, "audio": True, "captions": False},
+            "dash-video-only.yaml": {"video": True, "audio": False, "captions": True},
+            "dash-no-captions.yaml": {"video": True, "audio": True, "captions": False},
+            "dash-black-video.yaml": {"video": True, "audio": True, "captions": True, "pattern": "black"},
+            "dash-frozen-video.yaml": {"video": True, "audio": True, "captions": True, "frozen": True},
+        }
+
+        for filename, expected in cases.items():
+            with self.subTest(profile=filename):
+                config = load_profile(ROOT / "profiles" / filename)
+                self.assertEqual(config.protocol, "dash")
+                self.assertEqual(config.dash_dir, "/tmp/videosim-dash")
+                for field, value in expected.items():
+                    self.assertEqual(getattr(config, field), value)
+
     def test_required_static_profiles_build_expected_pipeline_branches(self):
         with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
             audio_only = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-audio-only.yaml"))
@@ -45,6 +63,7 @@ class ProfileTest(unittest.TestCase):
             no_captions = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-no-captions.yaml"))
             black_video = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-black-video.yaml"))
             frozen_video = video_pipeline_args(load_profile(ROOT / "profiles" / "srt-frozen-video.yaml"))
+            dash_normal = video_pipeline_args(load_profile(ROOT / "profiles" / "dash-normal.yaml"))
 
         self.assertNotIn("videotestsrc", audio_only)
         self.assertIn("audiotestsrc", audio_only)
@@ -53,6 +72,9 @@ class ProfileTest(unittest.TestCase):
         self.assertNotIn("h264ccinserter", no_captions)
         self.assertIn("pattern=black", black_video)
         self.assertIn("imagefreeze", frozen_video)
+        self.assertIn("dashsink", dash_normal)
+        self.assertIn("dash.video_0", dash_normal)
+        self.assertIn("dash.audio_0", dash_normal)
 
     def test_cli_print_command_uses_profile(self):
         stdout = StringIO()

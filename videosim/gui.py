@@ -25,6 +25,8 @@ PROFILE_OPTIONS = {
     "frozen_video": ("Frozen video", "profiles/srt-frozen-video.yaml"),
 }
 
+PROTOCOL_OPTIONS = {"srt": "SRT", "dash": "DASH"}
+
 CONTROL_FIELDS = ("video", "audio", "captions", "black_video", "frozen_video")
 CONTROL_FORM_FIELD = "controls"
 
@@ -75,10 +77,13 @@ def running_in_container() -> bool:
 
 @dataclass
 class GuiState:
+    protocol: str = "srt"
+    http_port: int = 8080
     feed_port: int = 9000
     width: int = 1280
     height: int = 720
     framerate: int = 30
+    dash_dir: str = "/tmp/videosim-dash"
     mode: str = "normal"
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
@@ -87,6 +92,8 @@ class GuiState:
 
     @property
     def endpoint(self) -> str:
+        if self.protocol == "dash":
+            return f"http://127.0.0.1:{self.http_port}/dash/manifest.mpd"
         return f"srt://127.0.0.1:{self.feed_port}?mode=caller"
 
     @property
@@ -106,7 +113,7 @@ class GuiState:
         if self.mode not in PROFILE_OPTIONS:
             self.fail(f"Unsupported mode: {self.mode}")
             return False
-        _, profile = PROFILE_OPTIONS[self.mode]
+        profile = profile_for(self.protocol, self.mode)
         cmd = [
             sys.executable,
             "-m",
@@ -123,9 +130,15 @@ class GuiState:
             "--framerate",
             str(self.framerate),
         ]
+        if self.protocol == "dash":
+            cmd.extend(
+                ["--protocol", "dash", "--dash-dir", self.dash_dir, "--dash-base-url", f"http://127.0.0.1:{self.http_port}/dash"]
+            )
         self.last_error = ""
         container = "yes" if running_in_container() else "no"
-        self.log(f"Starting {self.mode} feed: profile={profile} endpoint={self.endpoint} container={container}")
+        self.log(
+            f"Starting {self.protocol} {self.mode} feed: profile={profile} endpoint={self.endpoint} container={container}"
+        )
         if verbose_enabled():
             self.log(f"Feed launch command: {shlex.join(cmd)}")
         try:
@@ -134,46 +147,56 @@ class GuiState:
             self.process = None
             self.fail(f"Failed to start {self.mode} feed: {exc}")
             return False
-        self.log(f"Started {self.mode} feed at {self.endpoint} pid={self.process.pid}")
+        self.log(f"Started {self.protocol} {self.mode} feed at {self.endpoint} pid={self.process.pid}")
         threading.Thread(target=self._capture_logs, args=(self.process,), daemon=True).start()
         return True
 
-    def apply_mode(self, mode: str):
+    def apply_mode(self, mode: str, protocol: str | None = None):
+        protocol = protocol or self.protocol
+        if protocol not in PROTOCOL_OPTIONS:
+            self.fail(f"Unsupported protocol: {protocol}")
+            return False
         if mode not in PROFILE_OPTIONS:
             self.fail(f"Unsupported mode: {mode}")
             return False
-        if self.status == "running" and mode == self.mode:
+        if self.status == "running" and mode == self.mode and protocol == self.protocol:
             self.log("Feed already running")
             return True
         if self.status == "running":
-            self.log(f"Restarting feed for {mode} mode")
+            self.log(f"Restarting feed for {protocol} {mode} mode")
             self.stop()
         self.mode = mode
+        self.protocol = protocol
         return self.start()
 
     def validate(self):
         if self.mode not in PROFILE_OPTIONS:
             self.fail(f"Unsupported mode: {self.mode}")
             return False
-        _, profile = PROFILE_OPTIONS[self.mode]
+        profile = profile_for(self.protocol, self.mode)
+        cmd = [
+            sys.executable,
+            "-m",
+            "videosim",
+            "validate",
+            "--profile",
+            profile,
+            "--port",
+            str(self.feed_port),
+            "--width",
+            str(self.width),
+            "--height",
+            str(self.height),
+            "--framerate",
+            str(self.framerate),
+        ]
+        if self.protocol == "dash":
+            cmd.extend(
+                ["--protocol", "dash", "--dash-dir", self.dash_dir, "--dash-base-url", f"http://127.0.0.1:{self.http_port}/dash"]
+            )
         try:
             result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "videosim",
-                    "validate",
-                    "--profile",
-                    profile,
-                    "--port",
-                    str(self.feed_port),
-                    "--width",
-                    str(self.width),
-                    "--height",
-                    str(self.height),
-                    "--framerate",
-                    str(self.framerate),
-                ],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -229,6 +252,14 @@ class GuiState:
             self.fail(f"Feed process exited with code {code}{detail}")
 
 
+def profile_for(protocol: str, mode: str) -> str:
+    if protocol == "srt":
+        return PROFILE_OPTIONS[mode][1]
+    if protocol == "dash":
+        return f"profiles/dash-{mode.replace('_', '-')}.yaml"
+    raise ValueError(f"Unsupported protocol: {protocol}")
+
+
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
@@ -244,6 +275,9 @@ class GuiHandler(BaseHTTPRequestHandler):
             body, content_type = preview_image(self.state)
             self._send_bytes(body, content_type)
             return
+        if path.startswith("/dash/"):
+            self._send_dash(path.removeprefix("/dash/"))
+            return
         if path.startswith("/static/"):
             self._send_static(path.removeprefix("/static/"))
             return
@@ -257,11 +291,12 @@ class GuiHandler(BaseHTTPRequestHandler):
             params = self._read_form()
             try:
                 mode = mode_from_form(params, self.state.mode)
+                protocol = params.get("protocol", [self.state.protocol])[0]
             except ValueError as exc:
                 self.state.log(str(exc))
                 self._redirect_home()
                 return
-            self.state.apply_mode(mode)
+            self.state.apply_mode(mode, protocol)
         elif self.path == "/stop":
             self.state.stop()
         elif self.path == "/validate":
@@ -326,6 +361,28 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_dash(self, relative_path: str):
+        path = (Path(self.state.dash_dir) / relative_path).resolve()
+        root = Path(self.state.dash_dir).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            self.send_error(404)
+            return
+        if not path.is_file():
+            self.send_error(404)
+            return
+        content_type = "application/dash+xml" if path.suffix == ".mpd" else mimetypes.guess_type(path.name)[0]
+        if path.suffix == ".ts":
+            content_type = "video/mp2t"
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type or "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _redirect_home(self):
         self.send_response(303)
         self.send_header("Location", "/")
@@ -352,6 +409,10 @@ def render_page(state: GuiState) -> str:
     options = "\n".join(
         f'<option value="{html.escape(mode)}"{" selected" if mode == state.mode else ""}>{html.escape(label)}</option>'
         for mode, (label, _) in PROFILE_OPTIONS.items()
+    )
+    protocol_options = "\n".join(
+        f'<option value="{html.escape(protocol)}"{" selected" if protocol == state.protocol else ""}>{html.escape(label)}</option>'
+        for protocol, label in PROTOCOL_OPTIONS.items()
     )
     controls = controls_for_mode(state.mode)
     checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
@@ -384,8 +445,9 @@ def render_page(state: GuiState) -> str:
   <div>Status: <strong>{status}</strong></div>
   <div>Intentional outage: <strong>{outage}</strong></div>
   <div>Last error: <strong>{last_error}</strong></div>
-  <label>SRT endpoint<br><input id="endpoint" value="{endpoint}" readonly></label>
+  <label>Endpoint<br><input id="endpoint" value="{endpoint}" readonly></label>
   <form method="post" action="/start" class="row">
+    <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
     <button type="submit">Start</button>
   </form>
@@ -393,6 +455,7 @@ def render_page(state: GuiState) -> str:
     <fieldset>
       <legend>Runtime fault controls</legend>
       <input type="hidden" name="{CONTROL_FORM_FIELD}" value="1">
+      <input type="hidden" name="protocol" value="{html.escape(state.protocol)}">
       <div class="row">
         <label class="control"><input type="checkbox" name="video"{checked["video"]}> Video</label>
         <label class="control"><input type="checkbox" name="audio"{checked["audio"]}> Audio</label>
@@ -425,6 +488,8 @@ def state_payload(state: GuiState) -> dict:
     controls = controls_for_mode(state.mode)
     return {
         "status": state.status,
+        "protocol": state.protocol,
+        "protocols": [{"value": value, "label": label} for value, label in PROTOCOL_OPTIONS.items()],
         "mode": state.mode,
         "intentionalOutage": state.intentional_outage,
         "endpoint": state.endpoint,
@@ -532,7 +597,7 @@ def preview_placeholder(message: str) -> bytes:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
   <rect width="640" height="360" fill="#101820"/>
   <rect x="18" y="18" width="604" height="324" rx="8" fill="none" stroke="#314455"/>
-  <text x="320" y="176" fill="#eef6f9" font-family="system-ui, sans-serif" font-size="24" font-weight="700" text-anchor="middle">SRT Preview</text>
+  <text x="320" y="176" fill="#eef6f9" font-family="system-ui, sans-serif" font-size="24" font-weight="700" text-anchor="middle">Feed Preview</text>
   <text x="320" y="212" fill="#9fb3c1" font-family="system-ui, sans-serif" font-size="16" text-anchor="middle">{safe}</text>
 </svg>""".encode("utf-8")
 
@@ -542,6 +607,7 @@ def diagnostics_text(state: GuiState) -> str:
         [
             "Video Feed Simulator diagnostics",
             f"status={state.status}",
+            f"protocol={state.protocol}",
             f"mode={state.mode}",
             f"intentional_outage={'yes' if state.intentional_outage else 'no'}",
             f"endpoint={state.endpoint}",
@@ -558,6 +624,7 @@ def diagnostics_text(state: GuiState) -> str:
 
 
 def run_gui(host: str, port: int, state: GuiState):
+    state.http_port = port
     handler = type("VideoSimGuiHandler", (GuiHandler,), {"state": state})
     server = ThreadingHTTPServer((host, port), handler)
     print(f"Video Feed Simulator GUI: http://{host}:{port}", flush=True)

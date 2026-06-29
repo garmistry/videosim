@@ -13,6 +13,20 @@
 
 Weighted coverage is `covered test weight / total expected test weight`.
 
+## Added DASH Protocol Coverage
+
+DASH is an added protocol option beyond the original SRT MVP. It reuses the six
+required simulation modes and is covered by profile, CLI pipeline, GUI protocol,
+validator, and live smoke checks:
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| DASH profile mapping for all six modes | P1 | implemented | `python3 -m unittest tests.test_profiles` |
+| DASH pipeline command generation | P1 | implemented | `python3 -m unittest tests.test_cli_video_feed` |
+| GUI protocol selection and DASH endpoint | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| DASH manifest/segment validation | P1 | implemented | `python3 -m unittest tests.test_validator` |
+| DASH live six-mode smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |
+
 ## Milestone Gates
 
 Each milestone may advance only when all P0 tests for that milestone are

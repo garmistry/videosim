@@ -21,8 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="videosim")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    start = subparsers.add_parser("start", help="start a synthetic SRT video feed")
+    start = subparsers.add_parser("start", help="start a synthetic video feed")
     start.add_argument("--profile", help="load feed settings from a flat YAML profile")
+    start.add_argument("--protocol", choices=["srt", "dash"], help="feed protocol")
     start.add_argument("--port", type=int)
     start.add_argument("--width", type=int)
     start.add_argument("--height", type=int)
@@ -31,14 +32,19 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--no-audio", action="store_true", help="disable generated audio")
     start.add_argument("--audio-frequency", type=int, help="generated audio tone frequency in Hz")
     start.add_argument("--no-captions", action="store_true", help="disable generated CEA-608 captions")
+    start.add_argument("--dash-dir", help="directory for DASH MPD and media segments")
+    start.add_argument("--dash-base-url", help="base URL used when printing DASH endpoint")
     start.add_argument("--print-command", action="store_true", help="print GStreamer command and exit")
 
-    validate = subparsers.add_parser("validate", help="validate a running SRT feed against a profile")
+    validate = subparsers.add_parser("validate", help="validate a running feed against a profile")
     validate.add_argument("--profile", required=True, help="profile describing expected stream state")
+    validate.add_argument("--protocol", choices=["srt", "dash"], help="override the profile protocol")
     validate.add_argument("--port", type=int, help="override the profile port")
     validate.add_argument("--width", type=int, help="override the profile width")
     validate.add_argument("--height", type=int, help="override the profile height")
     validate.add_argument("--framerate", type=int, help="override the profile framerate")
+    validate.add_argument("--dash-dir", help="directory containing DASH MPD and media segments")
+    validate.add_argument("--dash-base-url", help="base URL used when reporting DASH endpoint")
     validate.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
@@ -89,7 +95,13 @@ def main(argv: list[str] | None = None) -> int:
             run_gui(
                 args.host,
                 args.http_port,
-                GuiState(feed_port=args.feed_port, width=args.width, height=args.height, framerate=args.framerate),
+                GuiState(
+                    http_port=args.http_port,
+                    feed_port=args.feed_port,
+                    width=args.width,
+                    height=args.height,
+                    framerate=args.framerate,
+                ),
             )
             return 0
 
@@ -102,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
                     "width": args.width,
                     "height": args.height,
                     "framerate": args.framerate,
+                    "protocol": args.protocol,
+                    "dash_dir": args.dash_dir,
+                    "dash_base_url": args.dash_base_url,
                 }.items()
                 if value is not None
             }
@@ -169,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
                 "framerate": args.framerate,
                 "pattern": args.pattern,
                 "audio_frequency": args.audio_frequency,
+                "protocol": args.protocol,
+                "dash_dir": args.dash_dir,
+                "dash_base_url": args.dash_base_url,
             }.items()
             if value is not None
         }

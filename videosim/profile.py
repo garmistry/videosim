@@ -13,6 +13,7 @@ REQUIRED_KEYS = {"schema_version", "mode"}
 ALLOWED_KEYS = {
     "schema_version",
     "mode",
+    "protocol",
     "port",
     "width",
     "height",
@@ -23,6 +24,9 @@ ALLOWED_KEYS = {
     "audio_frequency",
     "captions",
     "frozen",
+    "dash_dir",
+    "dash_base_url",
+    "dash_manifest",
 }
 INT_KEYS = {"schema_version", "port", "width", "height", "framerate", "audio_frequency"}
 BOOL_KEYS = {"video", "audio", "captions", "frozen"}

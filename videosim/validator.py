@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
+import time
 from dataclasses import asdict, dataclass, field
+from xml.etree import ElementTree
 
 from .feed import VideoFeedConfig
 
@@ -25,6 +28,12 @@ class ValidationReport:
 
 def validate_config(config: VideoFeedConfig) -> ValidationReport:
     report = ValidationReport(endpoint=config.endpoint)
+    if config.protocol == "dash":
+        return _validate_dash(config, report)
+    return _validate_srt(config, report)
+
+
+def _validate_srt(config: VideoFeedConfig, report: ValidationReport) -> ValidationReport:
     expected = {"video": config.video, "audio": config.audio, "captions": config.captions}
     report.reachable = _expected_tracks_present(config.endpoint, expected)
     if not report.reachable:
@@ -53,6 +62,41 @@ def validate_config(config: VideoFeedConfig) -> ValidationReport:
         frames = _read_rgb_frames(config, 3)
         frame_size = config.width * config.height * 3
         report.frozen_video = _near_identical_ratio(frames[:frame_size], frames[-frame_size:]) >= 0.95
+
+    _check_expectations(config, report)
+    report.passed = not report.errors
+    return report
+
+
+def _validate_dash(config: VideoFeedConfig, report: ValidationReport) -> ValidationReport:
+    manifest = _wait_for_dash_manifest(config)
+    if not manifest:
+        report.errors.append("DASH manifest unreachable")
+        return report
+
+    try:
+        adaptations = _wait_for_dash_adaptations(config, manifest)
+    except ElementTree.ParseError as exc:
+        report.errors.append(f"DASH manifest parse failed: {exc}")
+        return report
+
+    report.video_present = "video" in adaptations and bool(_wait_for_dash_segment(config, "video"))
+    report.audio_present = "audio" in adaptations and bool(_wait_for_dash_segment(config, "audio"))
+    report.reachable = (report.video_present if config.video else True) and (report.audio_present if config.audio else True)
+    if not report.reachable:
+        report.errors.append("DASH feed unreachable or expected segments missing")
+        return report
+
+    if config.video:
+        video_segment = _wait_for_dash_segment(config, "video")
+        report.captions_present = "text" in adaptations and _dash_captions_present(config)
+        if config.pattern == "black" and video_segment:
+            frames = _read_dash_rgb_frames(config, video_segment, 3)
+            report.black_video = _black_pixel_ratio(frames) >= 0.95
+        if config.frozen and video_segment:
+            frames = _read_dash_rgb_frames(config, video_segment, 3)
+            frame_size = config.width * config.height * 3
+            report.frozen_video = _near_identical_ratio(frames[:frame_size], frames[-frame_size:]) >= 0.95
 
     _check_expectations(config, report)
     report.passed = not report.errors
@@ -215,6 +259,99 @@ def _read_rgb_frames(config: VideoFeedConfig, count: int):
             if config.audio
             else []
         ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=12,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.decode("utf-8", errors="replace"))
+    if len(result.stdout) < frame_size * count:
+        raise RuntimeError("not enough decoded video frames")
+    return result.stdout[: frame_size * count]
+
+
+def _wait_for_dash_manifest(config: VideoFeedConfig, timeout: float = 15) -> Path | None:
+    manifest = Path(config.dash_dir) / config.dash_manifest
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if manifest.is_file() and manifest.stat().st_size > 0:
+            return manifest
+        time.sleep(0.25)
+    return None
+
+
+def _dash_adaptations(manifest: Path) -> set[str]:
+    root = ElementTree.parse(manifest).getroot()
+    adaptations = set()
+    for element in root.iter():
+        if element.tag.endswith("AdaptationSet"):
+            content_type = element.attrib.get("contentType")
+            if content_type:
+                adaptations.add(content_type)
+    return adaptations
+
+
+def _wait_for_dash_adaptations(config: VideoFeedConfig, manifest: Path, timeout: float = 8) -> set[str]:
+    deadline = time.monotonic() + timeout
+    adaptations = _dash_adaptations(manifest)
+    while config.captions and "text" not in adaptations and time.monotonic() < deadline:
+        time.sleep(0.25)
+        adaptations = _dash_adaptations(manifest)
+    return adaptations
+
+
+def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, timeout: float = 15) -> Path | None:
+    pattern = f"{kind}_0_*.ts"
+    root = Path(config.dash_dir)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        segments = sorted(root.glob(pattern), key=lambda path: (path.stat().st_mtime, path.name))
+        segments = [path for path in segments if path.stat().st_size > 0]
+        if segments:
+            if kind == "video" and len(segments) > 1:
+                return segments[-2]
+            return segments[-1]
+        time.sleep(0.25)
+    return None
+
+
+def _dash_captions_present(config: VideoFeedConfig) -> bool:
+    caption_file = Path(config.dash_dir) / "captions.vtt"
+    if not caption_file.is_file():
+        return False
+    text = caption_file.read_text(encoding="utf-8", errors="replace")
+    return text.startswith("WEBVTT") and "VIDEOSIM" in text
+
+
+def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path, count: int):
+    frame_size = config.width * config.height * 3
+    result = subprocess.run(
+        [
+            "gst-launch-1.0",
+            "-q",
+            "filesrc",
+            f"location={segment}",
+            "!",
+            "tsdemux",
+            "name=demux",
+            "demux.",
+            "!",
+            "queue",
+            "!",
+            "h264parse",
+            "!",
+            "avdec_h264",
+            "!",
+            "videoconvert",
+            "!",
+            f"video/x-raw,format=RGB,width={config.width},height={config.height}",
+            "!",
+            "identity",
+            f"eos-after={count}",
+            "!",
+            "fdsink",
+            "fd=1",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=12,

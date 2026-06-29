@@ -39,7 +39,7 @@ function App() {
       <aside className="nav">
         <div>
           <p className="eyebrow">VideoSim</p>
-          <h1>SRT Feed Console</h1>
+          <h1>Feed Console</h1>
         </div>
         <nav aria-label="Main">
           {tabs.map((item) => (
@@ -94,16 +94,16 @@ function PreviewPopup({ open, previewAvailable, previewUrl, onClose, onOpen }) {
   }
 
   return (
-    <section className="preview-pop" role="dialog" aria-label="SRT stream preview">
+    <section className="preview-pop" role="dialog" aria-label="stream preview">
       <header>
         <div>
-          <p className="eyebrow">Live SRT</p>
+          <p className="eyebrow">Live Feed</p>
           <h3>Preview</h3>
         </div>
         <button className="secondary" onClick={onClose} type="button">Hide</button>
       </header>
       {previewAvailable ? (
-        <img alt="Live SRT stream preview" src={previewUrl} />
+        <img alt="Live stream preview" src={previewUrl} />
       ) : (
         <div className="preview-empty">No video track in this mode.</div>
       )}
@@ -129,6 +129,14 @@ function ControlPanel({ state, copied, onCopy }) {
     <section className="panel">
       <form action="/start" className="control-row" method="post">
         <label>
+          Protocol
+          <select defaultValue={state.protocol} name="protocol">
+            {state.protocols.map((protocol) => (
+              <option key={protocol.value} value={protocol.value}>{protocol.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
           Mode
           <select defaultValue={state.mode} name="mode">
             {state.modes.map((mode) => (
@@ -141,6 +149,7 @@ function ControlPanel({ state, copied, onCopy }) {
 
       <form action="/start" className="toggles" method="post">
         <input name="controls" type="hidden" value="1" />
+        <input name="protocol" type="hidden" value={state.protocol} />
         {[
           ["video", "Video"],
           ["audio", "Audio"],

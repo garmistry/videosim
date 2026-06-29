@@ -64,6 +64,13 @@ Start from the sample normal profile:
 python3 -m videosim start --profile profiles/srt-normal.yaml
 ```
 
+Start a DASH feed. The process writes `manifest.mpd`, MPEG-TS segments, and
+`captions.vtt` when captions are enabled:
+
+```sh
+python3 -m videosim start --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash
+```
+
 Available static profiles:
 
 ```text
@@ -73,6 +80,12 @@ profiles/srt-video-only.yaml
 profiles/srt-no-captions.yaml
 profiles/srt-black-video.yaml
 profiles/srt-frozen-video.yaml
+profiles/dash-normal.yaml
+profiles/dash-audio-only.yaml
+profiles/dash-video-only.yaml
+profiles/dash-no-captions.yaml
+profiles/dash-black-video.yaml
+profiles/dash-frozen-video.yaml
 ```
 
 ## Validate A Running Feed
@@ -80,6 +93,7 @@ profiles/srt-frozen-video.yaml
 ```sh
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
 python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
+python3 -m videosim validate --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash --json
 ```
 
 ## Run A Soak
@@ -124,21 +138,22 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Open `http://127.0.0.1:8080`.
 
-Use the mode selector to start normal, audio-only, video-only, no-captions,
-black-video, or frozen-video feeds. Use the runtime fault controls to toggle
-video, audio, captions, black video, or frozen video while the GUI is running;
-the MVP applies those changes with a controlled stream restart.
+Use the protocol selector to choose SRT or DASH, then use the mode selector to
+start normal, audio-only, video-only, no-captions, black-video, or frozen-video
+feeds. Use the runtime fault controls to toggle video, audio, captions, black
+video, or frozen video while the GUI is running; the MVP applies those changes
+with a controlled stream restart.
 
 Use the Validate button to run the current profile validation from the GUI.
 Use Download diagnostics to export status, mode, endpoint, last error,
 validation output, and recent logs as text.
 
-Video-present modes include a running clock overlay in the encoded SRT video so
+Video-present modes include a running clock overlay in the encoded video so
 receivers can visually prove live motion and timing.
 
 When a running mode has video, the GUI opens a preview panel automatically. The
 preview uses GStreamer to render a local frame matching the active mode without
-attaching another receiver to the SRT listener. Use Validate to prove actual SRT
+attaching another receiver to the SRT listener. Use Validate to prove actual
 stream state.
 
 ## Deploy With Docker Compose
@@ -156,6 +171,9 @@ Generated SRT listener pipelines accept receiver clients at
 `srt://127.0.0.1:9000?mode=caller`. Do not add a `maxconn` URI option to the
 GStreamer `srtsink` command in this Docker image; the packaged plugin does not
 expose that as a supported property and it can crash the listener.
+
+Generated DASH feeds are served by the same GUI HTTP server at
+`http://127.0.0.1:8080/dash/manifest.mpd`.
 
 Verbose logging is enabled by default for the Compose app. Watch feed creation,
 container status, subprocess PID, and the exact GStreamer pipeline:
@@ -178,6 +196,7 @@ Stop a running feed with Ctrl-C.
 ffplay "srt://127.0.0.1:9000?mode=caller"
 ffprobe -hide_banner "srt://127.0.0.1:9000?mode=caller"
 gst-launch-1.0 srtsrc uri="srt://127.0.0.1:9000?mode=caller" ! tsdemux ! fakesink
+ffprobe -hide_banner "http://127.0.0.1:8080/dash/manifest.mpd"
 ```
 
 Receiver compatibility evidence is maintained in

@@ -145,7 +145,7 @@ button, .download, .stream-nav a {
   padding: 0.7rem 0.95rem;
 }
 
-button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, select:focus-visible, input:focus-visible {
+button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, .small-action:focus-visible, select:focus-visible, input:focus-visible {
   outline: 3px solid var(--accent-soft);
   outline-offset: 2px;
 }
@@ -186,7 +186,7 @@ button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, sele
   padding: 1.25rem;
 }
 
-.hero, .panel, .metric, .stream-metric-card {
+.hero, .panel, .metric, .stream-metric-card, .feed-table-panel {
   animation: rise 260ms ease both;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -261,6 +261,151 @@ button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, sele
 
 .preview-tab:hover, .control-row button:hover, .toggles button:hover {
   background: var(--accent-hover);
+}
+
+.feed-table-panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.table-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.table-toolbar h3 {
+  margin: 0;
+}
+
+.feed-table-wrap {
+  overflow-x: auto;
+}
+
+.feed-table {
+  border-collapse: collapse;
+  min-width: 68rem;
+  width: 100%;
+}
+
+.feed-table th, .feed-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.feed-table th {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.feed-table td small, .metric-stack {
+  color: var(--muted);
+  display: grid;
+  gap: 0.2rem;
+}
+
+.feed-table code, .preview-details code {
+  overflow-wrap: anywhere;
+}
+
+.preview-thumb {
+  background: #050505;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  width: 8.5rem;
+}
+
+.preview-thumb img {
+  aspect-ratio: 16 / 9;
+  display: block;
+  object-fit: cover;
+  width: 100%;
+}
+
+.row-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.small-action {
+  background: var(--button-secondary);
+  border: 0;
+  border-radius: 0.4rem;
+  color: var(--button-secondary-text);
+  display: inline-flex;
+  font-weight: 800;
+  min-height: 2.1rem;
+  padding: 0.45rem 0.6rem;
+  text-decoration: none;
+}
+
+.small-action:hover {
+  background: var(--button-secondary-hover);
+}
+
+.small-action.secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: var(--shadow);
+  color: var(--text);
+  max-width: min(42rem, calc(100vw - 2rem));
+  padding: 1rem;
+  width: 100%;
+}
+
+.modal::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.modal header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.modal h3 {
+  margin: 0;
+}
+
+.preview-modal {
+  max-width: min(64rem, calc(100vw - 2rem));
+}
+
+.preview-full {
+  aspect-ratio: 16 / 9;
+  background: #050505;
+  border-radius: 0.5rem;
+  display: block;
+  object-fit: cover;
+  width: 100%;
+}
+
+.preview-details {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.85rem 0;
 }
 
 .status {
@@ -472,6 +617,11 @@ pre {
 
   .metrics {
     grid-template-columns: 1fr;
+  }
+
+  .table-toolbar {
+    align-items: stretch;
+    display: grid;
   }
 
   .stream-stat-grid {

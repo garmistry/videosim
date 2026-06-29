@@ -133,12 +133,14 @@ point, then manage feeds from the stream list:
 - Update selected stream name, protocol, or mode.
 - Delete the selected stream.
 
-Each feed detail page can be bookmarked directly and does not show the create
-feed form; return to `/` for the create/list workflow. Each feed can be started,
-stopped, validated, and copied independently. The protocol and mode selectors
-support SRT or DASH for normal, audio-only, video-only, no-captions,
-black-video, and frozen-video feeds. Changing fault controls while a feed is
-running uses a controlled stream restart.
+The primary GUI view is an active-feed table with status, endpoint, metrics,
+actions, and a small preview thumbnail for each feed. Create feed opens a modal.
+Clicking a row preview opens a full preview dialog, and each feed detail page
+can still be bookmarked directly. Each feed can be started, stopped, validated,
+and copied independently. The protocol and mode selectors support SRT or DASH
+for normal, audio-only, video-only, no-captions, black-video, and frozen-video
+feeds. Changing fault controls while a feed is running uses a controlled stream
+restart.
 
 The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,

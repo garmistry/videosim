@@ -183,6 +183,9 @@ SRT listeners on UDP 9000-9010 by default. The GUI and feed subprocesses run
 inside the `videosim-app-1` container. Override the primary host ports with
 `VIDEOSIM_HTTP_PORT` and `VIDEOSIM_FEED_PORT`.
 
+The GUI root view is an active-feed table. Use Create feed to open the modal,
+and click a row preview thumbnail to open the larger feed preview.
+
 Generated SRT listener pipelines accept receiver clients at
 `srt://127.0.0.1:9000?mode=caller` and keep running when receivers disconnect.
 Do not add a `maxconn` URI option to the GStreamer `srtsink` command in this

@@ -94,6 +94,8 @@ class GuiTest(unittest.TestCase):
         self.assertFalse(payload["previewAvailable"])
         self.assertIn("metrics", payload)
         self.assertIn("bitrateBps", payload["streams"][0]["metrics"])
+        self.assertEqual(payload["streams"][0]["previewUrl"], "/feeds/stream-1/preview.jpg")
+        self.assertFalse(payload["streams"][0]["previewAvailable"])
 
     def test_stream_metrics_payload_updates_for_each_running_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
@@ -120,13 +122,18 @@ class GuiTest(unittest.TestCase):
         self.assertGreater(first_metrics["bitrateBps"], second_metrics["bitrateBps"])
         self.assertEqual(first_metrics["outboundBytes"], int(first_metrics["bitrateBps"] * 10 / 8))
         self.assertEqual(second_metrics["videoFrames"], 0)
+        self.assertTrue(payload["streams"][0]["previewAvailable"])
+        self.assertFalse(payload["streams"][1]["previewAvailable"])
 
-    def test_frontend_polls_state_for_real_time_metrics(self):
+    def test_frontend_renders_feed_table_modal_and_full_preview(self):
         source = Path("frontend/src/main.jsx").read_text()
 
         self.assertIn('fetch("/state.json"', source)
         self.assertIn("setInterval(refreshState, 1000)", source)
-        self.assertIn("StreamMetrics", source)
+        self.assertIn("FeedTable", source)
+        self.assertIn("CreateFeedDialog", source)
+        self.assertIn("FullPreviewDialog", source)
+        self.assertIn("preview-thumb", source)
 
     def test_dash_state_payload_exposes_http_manifest_endpoint(self):
         state = GuiState(protocol="dash", http_port=18100)
@@ -163,6 +170,8 @@ class GuiTest(unittest.TestCase):
         page = render_page(state)
 
         self.assertIn('href="/feeds/stream-1"', page)
+        self.assertIn('src="/feeds/stream-1/preview.jpg"', page)
+        self.assertIn("Active feeds", page)
         self.assertIn('action="/streams/create"', page)
         self.assertNotIn("Selected name", page)
 
@@ -262,6 +271,25 @@ class GuiTest(unittest.TestCase):
 
         self.assertEqual(content_type, "image/svg+xml")
         self.assertIn(b"Feed Preview", body)
+
+    def test_preview_image_can_target_non_selected_stream(self):
+        state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        self.create_feed(state)
+        state.create_stream(name="Selected", protocol="srt", mode="audio_only")
+        state.streams["stream-1"].process = Mock()
+        state.streams["stream-1"].process.poll.return_value = None
+
+        def write_preview(cmd, **kwargs):
+            location = next(part.removeprefix("location=") for part in cmd if part.startswith("location="))
+            Path(location).write_bytes(b"\x00\x00\x00" * 320 * 180)
+            return Mock(returncode=0, stdout=b"", stderr=b"")
+
+        with patch("videosim.gui.subprocess.run", side_effect=write_preview) as run:
+            body, content_type = preview_image(state, "stream-1")
+
+        self.assertEqual(content_type, "image/bmp")
+        self.assertTrue(body.startswith(b"BM"))
+        self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", run.call_args.args[0])
 
     def test_rgb_frame_to_bmp_builds_browser_image(self):
         bmp = rgb_frame_to_bmp(bytes([255, 0, 0, 0, 255, 0]), 2, 1)

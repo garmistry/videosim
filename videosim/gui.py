@@ -574,6 +574,11 @@ class GuiHandler(BaseHTTPRequestHandler):
             body, content_type = preview_image(self.state)
             self._send_bytes(body, content_type)
             return
+        if path.startswith("/feeds/") and path.endswith("/preview.jpg"):
+            stream_id = unquote(path.removeprefix("/feeds/").removesuffix("/preview.jpg").strip("/"))
+            body, content_type = preview_image(self.state, stream_id)
+            self._send_bytes(body, content_type)
+            return
         if path.startswith("/dash/"):
             self._send_dash(path.removeprefix("/dash/"))
             return
@@ -789,17 +794,14 @@ def render_page(state: GuiState) -> str:
     controls = controls_for_mode(active.mode if active else state.mode)
     checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
     stream_rows = "\n".join(
-        f"""<li>
-          <div class="row">
-            <a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a>
-            <strong>{html.escape(stream.name)}</strong>
-            <span>{html.escape(stream.protocol.upper())}</span>
-            <span>{html.escape(stream.mode)}</span>
-            <span>{html.escape(stream.status)}</span>
-            <span>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}</span>
-            <span>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}</span>
-          </div>
-        </li>"""
+        f"""<tr>
+          <td><a href="{html.escape(feed_path(stream.id))}"><img alt="{html.escape(stream.name)} preview" src="{html.escape(feed_path(stream.id))}/preview.jpg" style="width:8.5rem;aspect-ratio:16/9;object-fit:cover;border-radius:0.45rem;background:#050505;"></a></td>
+          <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(stream.protocol.upper())} · {html.escape(stream.mode)}</td>
+          <td>{html.escape(stream.status)}</td>
+          <td>{html.escape(stream.endpoint)}</td>
+          <td>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
+          <td><a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a></td>
+        </tr>"""
         for stream in state.streams.values()
     )
     create_form = f"""
@@ -892,8 +894,11 @@ def render_page(state: GuiState) -> str:
 <main>
   <div id="app-fallback" class="shell">
   <h1>Video Feed Simulator</h1>
-  <h2>Streams</h2>
-  <ul>{stream_rows}</ul>
+  <h2>Active feeds</h2>
+  <table class="feed-table">
+    <thead><tr><th>Preview</th><th>Feed</th><th>Status</th><th>Endpoint</th><th>Metrics</th><th>Actions</th></tr></thead>
+    <tbody>{stream_rows}</tbody>
+  </table>
   {selected_detail if active else create_form}
   </div>
 </main>
@@ -942,6 +947,8 @@ def stream_payload(stream: FeedRecord) -> dict:
         "lastError": stream.last_error or "none",
         "validationOutput": stream.validation_output or "not run",
         "metrics": stream.metrics(),
+        "previewAvailable": stream.status == "running" and controls_for_mode(stream.mode)["video"],
+        "previewUrl": f"{feed_path(stream.id)}/preview.jpg",
         "logs": stream.logs[-80:],
     }
 
@@ -950,18 +957,19 @@ def script_json(payload) -> str:
     return json.dumps(payload).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 
 
-def preview_image(state: GuiState) -> tuple[bytes, str]:
-    active = state.active_stream
-    if not active:
+def preview_image(state: GuiState, stream_id: str | None = None) -> tuple[bytes, str]:
+    stream = state.streams.get(stream_id) if stream_id else state.active_stream
+    if not stream:
         return preview_placeholder("Create a feed"), "image/svg+xml"
-    controls = controls_for_mode(active.mode)
-    if state.status != "running":
+    controls = controls_for_mode(stream.mode)
+    running = stream.status == "running" or (stream.id == state.selected_stream_id and state.status == "running")
+    if not running:
         return preview_placeholder("Feed stopped"), "image/svg+xml"
     if not controls["video"]:
         return preview_placeholder("No video track"), "image/svg+xml"
 
-    preview_width = min(640, state.width)
-    preview_height = max(1, round(state.height * preview_width / state.width))
+    preview_width = min(640, stream.width)
+    preview_height = max(1, round(stream.height * preview_width / stream.width))
     pattern = "black" if controls["black_video"] else "smpte"
     overlay = [] if controls["frozen_video"] else ["!", "clockoverlay", "halignment=right", "valignment=top", "shaded-background=true"]
     tmp = tempfile.NamedTemporaryFile(prefix="videosim-preview-", suffix=".rgb", delete=False)
@@ -976,7 +984,7 @@ def preview_image(state: GuiState) -> tuple[bytes, str]:
                 "num-buffers=1",
                 f"pattern={pattern}",
                 "!",
-                f"video/x-raw,width={state.width},height={state.height},framerate={state.framerate}/1",
+                f"video/x-raw,width={stream.width},height={stream.height},framerate={stream.framerate}/1",
             ]
             + overlay
             + [

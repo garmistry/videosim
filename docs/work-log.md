@@ -211,3 +211,12 @@
 - Validation run: `python3 -m unittest tests.test_live_srt` passed with 11 live tests skipped locally by default.
 - Live regression run: `VIDEOSIM_LIVE_SRT=1 python3 -m unittest tests.test_live_srt.LiveSrtTest.test_receiver_detects_audio_video_captions_and_feed_restarts` passed.
 - Validation run: `python3 -m unittest discover -s tests` passed, 90 tests with 11 live tests skipped locally by default.
+- Changed the React GUI primary view to an active-feed table with endpoint, status, metrics, actions, and per-row preview thumbnails.
+- Moved feed creation into a modal and added a full preview dialog opened from row thumbnails.
+- Added per-stream preview URLs at `/feeds/<stream-id>/preview.jpg` without changing selected GUI state.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.js` and `videosim/static/app.css`.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 35 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 91 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18138 --feed-port 9912`, created feeds, confirmed root table HTML and `/state.json` preview URLs, and started `stream-2` on UDP 9913; `/feeds/stream-2/preview.jpg` returned a 640x360 BMP while status was `running`.
+- Skipped check: browser click verification could not run because the browser runtime reported no available browser backends.

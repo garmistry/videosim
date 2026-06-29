@@ -137,7 +137,7 @@ Video-present modes include a running clock overlay in the encoded SRT video so
 receivers can visually prove live motion and timing.
 
 When a running mode has video, the GUI opens a preview panel automatically. The
-preview uses FFmpeg to pull refreshed frames from the active SRT endpoint.
+preview uses GStreamer to pull refreshed frames from the active SRT endpoint.
 
 ## Deploy With Docker Compose
 

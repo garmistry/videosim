@@ -78,9 +78,11 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(content_type, "image/jpeg")
         self.assertEqual(body, b"\xff\xd8jpeg")
         cmd = run.call_args.args[0]
-        self.assertIn("ffmpeg", cmd)
-        self.assertIn("srt://127.0.0.1:9912?mode=caller", cmd)
-        self.assertIn("pipe:1", cmd)
+        self.assertIn("gst-launch-1.0", cmd)
+        self.assertIn("uri=srt://127.0.0.1:9912?mode=caller", cmd)
+        self.assertIn("jpegenc", cmd)
+        self.assertIn("snapshot=true", cmd)
+        self.assertIn("fdsink", cmd)
 
     def test_preview_image_returns_placeholder_when_not_video_available(self):
         body, content_type = preview_image(GuiState(mode="audio_only"))

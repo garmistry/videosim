@@ -140,3 +140,4 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 66 tests with 11 live tests skipped locally by default.
 - Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18100 --feed-port 9912` plus `curl -fsS http://127.0.0.1:18100/preview.jpg` returned the stopped-feed preview placeholder.
+- Fixed preview frame capture to use GStreamer instead of FFmpeg so local FFmpeg builds without `srt://` protocol support do not show `Protocol not found`.

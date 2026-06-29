@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -79,6 +80,24 @@ def feed_path(stream_id: str) -> str:
     return f"/feeds/{quote(stream_id, safe='')}"
 
 
+def format_bitrate(bits_per_second: int) -> str:
+    if bits_per_second >= 1_000_000:
+        return f"{bits_per_second / 1_000_000:.1f} Mbps"
+    if bits_per_second >= 1_000:
+        return f"{bits_per_second / 1_000:.0f} kbps"
+    return f"{bits_per_second} bps"
+
+
+def format_bytes(byte_count: int) -> str:
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(byte_count)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{byte_count} B"
+
+
 @dataclass
 class FeedRecord:
     id: str
@@ -95,6 +114,9 @@ class FeedRecord:
     logs: list[str] = field(default_factory=list)
     last_error: str = ""
     validation_output: str = ""
+    started_at: float | None = None
+    last_run_seconds: float = 0
+    last_outbound_bytes: int = 0
 
     @property
     def endpoint(self) -> str:
@@ -111,6 +133,41 @@ class FeedRecord:
     @property
     def intentional_outage(self) -> bool:
         return self.mode != "normal"
+
+    def bitrate_bps(self) -> int:
+        controls = controls_for_mode(self.mode)
+        video_bps = 0
+        if controls["video"]:
+            scale = (self.width * self.height * self.framerate) / (1280 * 720 * 30)
+            video_bps = int(4_000_000 * scale)
+            if controls["black_video"] or controls["frozen_video"]:
+                video_bps = int(video_bps * 0.35)
+        audio_bps = 128_000 if controls["audio"] else 0
+        caption_bps = 8_000 if controls["captions"] else 0
+        return int((video_bps + audio_bps + caption_bps) * 1.05)
+
+    def metrics(self, now: float | None = None) -> dict:
+        now = time.monotonic() if now is None else now
+        running = self.status == "running"
+        uptime = max(0.0, now - self.started_at) if running and self.started_at is not None else self.last_run_seconds
+        bitrate_bps = self.bitrate_bps() if running else 0
+        outbound_bytes = int(bitrate_bps * uptime / 8) if running else self.last_outbound_bytes
+        video_frames = int(uptime * self.framerate) if controls_for_mode(self.mode)["video"] else 0
+        return {
+            "uptimeSeconds": round(uptime, 1),
+            "bitrateBps": bitrate_bps,
+            "bitrateLabel": format_bitrate(bitrate_bps),
+            "outboundBytes": outbound_bytes,
+            "outboundLabel": format_bytes(outbound_bytes),
+            "videoFrames": video_frames,
+            "videoFramesLabel": f"{video_frames:,}",
+        }
+
+    def finish_run(self):
+        if self.started_at is not None:
+            self.last_run_seconds = round(max(0.0, time.monotonic() - self.started_at), 1)
+            self.last_outbound_bytes = int(self.bitrate_bps() * self.last_run_seconds / 8)
+        self.started_at = None
 
 
 @dataclass
@@ -334,6 +391,9 @@ class GuiState:
             stream.process = None
             self.fail(f"Failed to start {stream.mode} feed: {exc}", stream.id)
             return False
+        stream.started_at = time.monotonic()
+        stream.last_run_seconds = 0
+        stream.last_outbound_bytes = 0
         self._sync_from_active()
         self.log(f"Started {stream.protocol} {stream.mode} feed at {stream.endpoint} pid={stream.process.pid}", stream.id)
         threading.Thread(target=self._capture_logs, args=(stream.id, stream.process), daemon=True).start()
@@ -429,6 +489,7 @@ class GuiState:
             self.log("No feeds configured")
             return
         if not stream.process or stream.process.poll() is not None:
+            stream.finish_run()
             stream.process = None
             self._sync_from_active()
             self.log("Feed already stopped", stream.id)
@@ -442,6 +503,7 @@ class GuiState:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
             self.log("Killed stuck feed", stream.id)
+        stream.finish_run()
         stream.process = None
         self._sync_from_active()
         self.log("Feed stopped", stream.id)
@@ -482,6 +544,9 @@ class GuiState:
             self.log(last_line, stream_id)
         code = process.poll()
         if code not in (None, 0):
+            stream = self.streams.get(stream_id)
+            if stream:
+                stream.finish_run()
             detail = f": {last_line}" if last_line else ""
             self.fail(f"Feed process exited with code {code}{detail}", stream_id)
 
@@ -731,6 +796,8 @@ def render_page(state: GuiState) -> str:
             <span>{html.escape(stream.protocol.upper())}</span>
             <span>{html.escape(stream.mode)}</span>
             <span>{html.escape(stream.status)}</span>
+            <span>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}</span>
+            <span>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}</span>
           </div>
         </li>"""
         for stream in state.streams.values()
@@ -745,6 +812,7 @@ def render_page(state: GuiState) -> str:
   <div class="empty-state">Open an existing feed or create a new one.</div>"""
     selected_detail = ""
     if active:
+        metrics = active.metrics()
         selected_detail = f"""
   <form method="post" action="/streams/update" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
@@ -760,6 +828,10 @@ def render_page(state: GuiState) -> str:
   <div>Status: <strong>{status}</strong></div>
   <div>Intentional outage: <strong>{outage}</strong></div>
   <div>Last error: <strong>{last_error}</strong></div>
+  <div>Bit rate (est.): <strong>{html.escape(metrics["bitrateLabel"])}</strong></div>
+  <div>Outbound total (est.): <strong>{html.escape(metrics["outboundLabel"])}</strong></div>
+  <div>Uptime: <strong>{html.escape(str(metrics["uptimeSeconds"]))}s</strong></div>
+  <div>Video frames: <strong>{html.escape(metrics["videoFramesLabel"])}</strong></div>
   <label>Endpoint<br><input id="endpoint" value="{endpoint}" readonly></label>
   <form method="post" action="/start" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
@@ -845,6 +917,7 @@ def state_payload(state: GuiState) -> dict:
         "endpoint": state.endpoint,
         "lastError": state.last_error or (active.last_error if active else "") or "none",
         "validationOutput": state.validation_output or (active.validation_output if active else "") or "not run",
+        "metrics": active.metrics() if active else None,
         "previewAvailable": bool(active) and state.status == "running" and controls["video"],
         "previewUrl": "/preview.jpg",
         "logs": (state.logs or (active.logs if active else []))[-80:],
@@ -868,6 +941,7 @@ def stream_payload(stream: FeedRecord) -> dict:
         "intentionalOutage": stream.intentional_outage,
         "lastError": stream.last_error or "none",
         "validationOutput": stream.validation_output or "not run",
+        "metrics": stream.metrics(),
         "logs": stream.logs[-80:],
     }
 
@@ -993,7 +1067,12 @@ def diagnostics_text(state: GuiState) -> str:
             "",
             "streams:",
             *[
-                f"{stream.id} name={stream.name} protocol={stream.protocol} mode={stream.mode} status={stream.status} endpoint={stream.endpoint}"
+                (
+                    f"{stream.id} name={stream.name} protocol={stream.protocol} mode={stream.mode} "
+                    f"status={stream.status} bitrate={stream.metrics()['bitrateLabel']} "
+                    f"outbound={stream.metrics()['outboundLabel']} uptime={stream.metrics()['uptimeSeconds']}s "
+                    f"endpoint={stream.endpoint}"
+                )
                 for stream in state.streams.values()
             ],
             "",

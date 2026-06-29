@@ -198,3 +198,10 @@
 - Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.css`.
 - Validation run: `python3 -m unittest tests.test_gui` passed, 32 tests.
 - HTTP smoke: restarted `python3 -m videosim gui --host 127.0.0.1 --http-port 18137 --feed-port 9912`; `/` and `/static/app.css` served the muted `#b81d24` accent with no `#e50914` references.
+- Added per-feed estimated live GUI metrics: bit rate, outbound total data, uptime, and generated video frames, with React polling `/state.json` every second.
+- Updated README, RUNBOOK, KNOWN_LIMITATIONS, TEST_PLAN, and ACCEPTANCE_MATRIX for GUI metrics behavior and the estimate-vs-socket-counter limitation.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 34 tests.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.js` and `videosim/static/app.css`.
+- Validation run: `python3 -m unittest discover -s tests` passed, 90 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- HTTP/live smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18137 --feed-port 9912`, created two feeds, confirmed `/state.json` includes metrics, and started `stream-2` on UDP 9913; uptime, outbound bytes, and frame count increased across two polls while status stayed `running`.

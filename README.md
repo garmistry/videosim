@@ -28,8 +28,8 @@ The critical MVP must support:
 - Install/run documentation and tests for critical behavior.
 
 Still out of scope until the critical MVP is done: packet/jitter simulation,
-REST API, metrics, and release packaging such as AppImage/Flatpak. Docker is
-present as a Linux test harness, not a release package.
+REST API, Prometheus metrics, and release packaging such as AppImage/Flatpak.
+Docker is present as a Linux test harness, not a release package.
 
 ## Architecture
 
@@ -140,7 +140,8 @@ support SRT or DASH for normal, audio-only, video-only, no-captions,
 black-video, and frozen-video feeds. Changing fault controls while a feed is
 running uses a controlled stream restart.
 
-The GUI also shows status, intentional outage state, last error, logs,
+The GUI also shows status, intentional outage state, per-feed estimated bit
+rate, outbound total, uptime, generated video frame count, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
 file. Video-present modes include a visible running clock overlay for receiver
 testing. When a video-capable feed is running, the React GUI opens a preview

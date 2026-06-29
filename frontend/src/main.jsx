@@ -27,7 +27,7 @@ const initialTheme = readTheme();
 applyTheme(initialTheme);
 
 function App() {
-  const state = readState();
+  const [state, setState] = useState(() => readState());
   const [tab, setTab] = useState("Control");
   const [theme, setTheme] = useState(initialTheme);
   const [copied, setCopied] = useState(false);
@@ -60,6 +60,25 @@ function App() {
       return;
     }
   }, [theme]);
+
+  useEffect(() => {
+    let active = true;
+    async function refreshState() {
+      try {
+        const response = await fetch("/state.json", { cache: "no-store" });
+        if (active && response.ok) {
+          setState(await response.json());
+        }
+      } catch {
+        return;
+      }
+    }
+    const timer = setInterval(refreshState, 1000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (!previewOpen || state.status !== "running" || !state.previewAvailable) {
@@ -116,6 +135,8 @@ function App() {
           <Metric label="Last error" value={state.lastError} />
           <Metric label="Endpoint" value={state.endpoint || "Create a feed"} wide />
         </section>
+
+        <StreamMetrics streams={state.streams} />
 
         {tab === "Control" && <ControlPanel state={state} copied={copied} onCopy={copyEndpoint} />}
         {tab === "Validation" && <Output title="Validation" body={state.validationOutput} />}
@@ -181,6 +202,43 @@ function Metric({ label, value, wide }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
+  );
+}
+
+function StreamMetrics({ streams }) {
+  if (streams.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="stream-metrics" aria-label="Feed metrics">
+      {streams.map((stream) => (
+        <article className="stream-metric-card" key={stream.id}>
+          <header>
+            <div>
+              <p className="eyebrow">{stream.protocol.toUpperCase()} · {stream.mode}</p>
+              <h3>{stream.name}</h3>
+            </div>
+            <StatusPill status={stream.status} />
+          </header>
+          <div className="stream-stat-grid">
+            <MetricCell label="Bit rate (est.)" value={stream.metrics.bitrateLabel} />
+            <MetricCell label="Outbound total (est.)" value={stream.metrics.outboundLabel} />
+            <MetricCell label="Uptime" value={`${stream.metrics.uptimeSeconds}s`} />
+            <MetricCell label="Video frames" value={stream.metrics.videoFramesLabel} />
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function MetricCell({ label, value }) {
+  return (
+    <div className="stream-stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 

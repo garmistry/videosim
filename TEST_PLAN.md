@@ -38,6 +38,7 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 | Feed detail deep links | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Stream update and delete | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Independent subprocess launch per stream | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Real-time per-stream GUI metrics payload and polling | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 | Multi-stream Docker GUI smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |
 
 ## Milestone Gates

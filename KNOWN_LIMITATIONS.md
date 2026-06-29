@@ -32,3 +32,5 @@
 - The GUI preview is a local refreshed frame matching the active mode, not
   native browser SRT playback and not validation proof of the SRT output.
   Audio-only mode has no video preview.
+- GUI feed metrics are estimates from configured media tracks and elapsed run
+  time. They are not actual SRT socket byte counters or per-receiver telemetry.

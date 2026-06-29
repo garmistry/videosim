@@ -92,6 +92,41 @@ class GuiTest(unittest.TestCase):
         self.assertFalse(payload["controls"]["audio"])
         self.assertEqual(payload["previewUrl"], "/preview.jpg")
         self.assertFalse(payload["previewAvailable"])
+        self.assertIn("metrics", payload)
+        self.assertIn("bitrateBps", payload["streams"][0]["metrics"])
+
+    def test_stream_metrics_payload_updates_for_each_running_feed(self):
+        state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        self.create_feed(state)
+        state.create_stream(name="Audio", protocol="srt", mode="audio_only")
+        first = Mock(stdout=[], pid=123)
+        first.poll.return_value = None
+        second = Mock(stdout=[], pid=124)
+        second.poll.return_value = None
+
+        with patch("videosim.gui.subprocess.Popen", side_effect=[first, second]), patch(
+            "videosim.gui.time.monotonic", side_effect=[100.0, 100.0]
+        ):
+            state.start("stream-1")
+            state.start("stream-2")
+
+        with patch("videosim.gui.time.monotonic", return_value=110.0):
+            payload = state_payload(state)
+
+        first_metrics = payload["streams"][0]["metrics"]
+        second_metrics = payload["streams"][1]["metrics"]
+        self.assertEqual(first_metrics["uptimeSeconds"], 10.0)
+        self.assertEqual(second_metrics["uptimeSeconds"], 10.0)
+        self.assertGreater(first_metrics["bitrateBps"], second_metrics["bitrateBps"])
+        self.assertEqual(first_metrics["outboundBytes"], int(first_metrics["bitrateBps"] * 10 / 8))
+        self.assertEqual(second_metrics["videoFrames"], 0)
+
+    def test_frontend_polls_state_for_real_time_metrics(self):
+        source = Path("frontend/src/main.jsx").read_text()
+
+        self.assertIn('fetch("/state.json"', source)
+        self.assertIn("setInterval(refreshState, 1000)", source)
+        self.assertIn("StreamMetrics", source)
 
     def test_dash_state_payload_exposes_http_manifest_endpoint(self):
         state = GuiState(protocol="dash", http_port=18100)

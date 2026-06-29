@@ -186,7 +186,7 @@ button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, sele
   padding: 1.25rem;
 }
 
-.hero, .panel, .metric {
+.hero, .panel, .metric, .stream-metric-card {
   animation: rise 260ms ease both;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -299,6 +299,54 @@ button:focus-visible, .download:focus-visible, .stream-nav a:focus-visible, sele
 }
 
 .metric strong {
+  overflow-wrap: anywhere;
+}
+
+.stream-metrics {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.stream-metric-card {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem;
+}
+
+.stream-metric-card header {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.stream-metric-card h3 {
+  margin: 0;
+}
+
+.stream-stat-grid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stream-stat {
+  background: var(--surface-muted);
+  border-radius: 0.45rem;
+  display: grid;
+  gap: 0.2rem;
+  min-height: 4rem;
+  padding: 0.65rem;
+}
+
+.stream-stat span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.stream-stat strong {
   overflow-wrap: anywhere;
 }
 
@@ -423,6 +471,10 @@ pre {
   }
 
   .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .stream-stat-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -10,7 +10,9 @@ from .gui import GuiState, run_gui
 from .profile import ProfileError, load_profile
 from .soak import check_reports
 from .soak import check_summary
+from .soak import gui_summary
 from .soak import human_summary as soak_summary
+from .soak import run_gui_soak
 from .soak import run_soak
 from .validator import human_summary, validate_config
 
@@ -62,6 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
     soak_check.add_argument("--report-dir", required=True, help="directory containing normal.json and outage reports")
     soak_check.add_argument("--memory-growth-threshold-mb", type=float, default=200)
     soak_check.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    gui_soak = subparsers.add_parser("gui-soak", help="run a timed GUI responsiveness soak")
+    gui_soak.add_argument("--host", default="127.0.0.1")
+    gui_soak.add_argument("--http-port", type=int, default=8080)
+    gui_soak.add_argument("--feed-port", type=int, default=9000)
+    gui_soak.add_argument("--width", type=int, default=1280)
+    gui_soak.add_argument("--height", type=int, default=720)
+    gui_soak.add_argument("--framerate", type=int, default=30)
+    gui_soak.add_argument("--duration-seconds", type=float, default=60)
+    gui_soak.add_argument("--validation-interval-seconds", type=float, default=15)
+    gui_soak.add_argument("--poll-interval-seconds", type=float, default=5)
+    gui_soak.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     return parser
 
@@ -122,6 +136,27 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("memory_growth_threshold_mb must be zero or greater")
             report = check_reports(args.report_dir, args.memory_growth_threshold_mb)
             print(report.to_json() if args.json else check_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "gui-soak":
+            if args.duration_seconds <= 0:
+                raise ValueError("duration_seconds must be greater than 0")
+            if args.validation_interval_seconds <= 0:
+                raise ValueError("validation_interval_seconds must be greater than 0")
+            if args.poll_interval_seconds <= 0:
+                raise ValueError("poll_interval_seconds must be greater than 0")
+            report = run_gui_soak(
+                args.host,
+                args.http_port,
+                args.feed_port,
+                args.width,
+                args.height,
+                args.framerate,
+                args.duration_seconds,
+                args.validation_interval_seconds,
+                args.poll_interval_seconds,
+            )
+            print(report.to_json() if args.json else gui_summary(report))
             return 0 if report.passed else 1
 
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()

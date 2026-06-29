@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from videosim.cli import main
-from videosim.soak import REQUIRED_SOAK_REPORTS, SoakReport, check_reports, human_summary, run_soak
+from videosim.soak import REQUIRED_SOAK_REPORTS, SoakReport, check_reports, gui_summary, human_summary, run_gui_soak, run_soak
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -115,6 +115,41 @@ class SoakTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
 
+    def test_run_gui_soak_polls_page_and_triggers_validation(self):
+        gui = Mock(pid=456, returncode=None)
+        gui.stdout = Mock()
+        gui.poll.return_value = None
+        responses = []
+
+        def fake_urlopen(url, data=None, timeout=None):
+            responses.append((url, data, timeout))
+            body = b"Status: <strong>running</strong>"
+            response = Mock()
+            response.read.return_value = body
+            return response
+
+        with patch("videosim.soak.subprocess.Popen", return_value=gui), patch(
+            "videosim.soak.request.urlopen", side_effect=fake_urlopen
+        ), patch("videosim.soak.os.killpg") as killpg, patch("videosim.soak.time.sleep"), patch(
+            "videosim.soak.time.monotonic", side_effect=[0, 0, 0, 0, 0, 0, 0, 0, 2]
+        ):
+            report = run_gui_soak("127.0.0.1", 18080, 9910, 320, 180, 10, 1, 1, poll_interval_seconds=1)
+
+        self.assertTrue(report.passed)
+        self.assertEqual(report.page_checks, 1)
+        self.assertEqual(report.validation_requests, 1)
+        self.assertIn("GUI soak PASS", gui_summary(report))
+        self.assertTrue(any(call[0].endswith("/start") for call in responses))
+        self.assertTrue(any(call[0].endswith("/validate") for call in responses))
+        self.assertTrue(any(call[0].endswith("/stop") for call in responses))
+        killpg.assert_called()
+
+    def test_cli_rejects_invalid_gui_soak_interval(self):
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as raised:
+            main(["gui-soak", "--poll-interval-seconds", "0"])
+
+        self.assertEqual(raised.exception.code, 2)
+
     def test_m12_soak_script_covers_required_profiles(self):
         script = ROOT / "scripts" / "run-m12-soak.sh"
         result = subprocess.run(["bash", "-n", str(script)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -134,6 +169,15 @@ class SoakTest(unittest.TestCase):
         self.assertIn("OUTAGE_DURATION_SECONDS", text)
         self.assertIn("VALIDATION_INTERVAL_SECONDS", text)
         self.assertIn("soak-check", text)
+
+    def test_compose_exposes_m12_gui_soak_service(self):
+        text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn("m12-gui-soak:", text)
+        self.assertIn("python -m videosim gui-soak", text)
+        self.assertIn("GUI_DURATION_SECONDS", text)
+        self.assertIn("GUI_VALIDATION_INTERVAL_SECONDS", text)
+        self.assertIn("GUI_POLL_INTERVAL_SECONDS", text)
 
 
 if __name__ == "__main__":

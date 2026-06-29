@@ -224,7 +224,7 @@ Milestone 11 weighted coverage: 18 / 18 = 100% for applicable tests.
 | M12-P0-normal-feed-24-hour-soak | P0 | 5 | not implemented | tracked in `TEST_GAPS.md` |
 | M12-P0-required-outage-soak-tests | P0 | 5 | short proof implemented, long run pending | `docker compose run --build --rm live-srt`; tracked in `TEST_GAPS.md` |
 | M12-P0-repeated-start-stop-test | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
-| M12-P0-gui-remains-responsive-during-long-run | P0 | 5 | short proof implemented, long run pending | `docker compose run --build --rm live-srt`; tracked in `TEST_GAPS.md` |
+| M12-P0-gui-remains-responsive-during-long-run | P0 | 5 | short proof and runner implemented, long run pending | `docker compose run --build --rm live-srt`; `docker compose run --build --rm m12-gui-soak`; tracked in `TEST_GAPS.md` |
 | M12-P1-resource-usage-report | P1 | 3 | implemented | `python3 -m unittest tests.test_soak`; `python3 -m videosim soak-check --report-dir ...`; `STABILITY_REPORT.md` |
 | M12-P1-validation-every-15-minutes-during-soak | P1 | 3 | supported by harness and runner, long run pending | `python3 -m unittest tests.test_soak`; `scripts/run-m12-soak.sh` |
 

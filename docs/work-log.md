@@ -117,3 +117,9 @@
 - Docker validation run: `docker compose run --build --rm test` passed, 58 tests.
 - Shortened Docker M12 soak smoke with final report check passed: `NORMAL_DURATION_SECONDS=8 OUTAGE_DURATION_SECONDS=8 VALIDATION_INTERVAL_SECONDS=3 docker compose run --build --rm m12-soak`.
 - Full 24-hour soak evidence remains pending; completed reports now have an automated checker.
+- Added `python3 -m videosim gui-soak` and `docker compose run --build --rm m12-gui-soak` for long-run GUI responsiveness evidence collection.
+- Validation run: `python3 -m unittest discover -s tests` passed, 61 tests with 11 live tests skipped locally by default.
+- Docker validation run: `docker compose run --build --rm test` passed, 61 tests.
+- Shortened Docker GUI soak smoke passed: `GUI_DURATION_SECONDS=8 GUI_VALIDATION_INTERVAL_SECONDS=3 GUI_POLL_INTERVAL_SECONDS=2 docker compose run --build --rm m12-gui-soak`.
+- 2026-06-29: Skipped additional soak reruns per user request.
+- Full 24-hour GUI responsiveness evidence remains pending; the new command is the collection path.

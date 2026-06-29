@@ -18,3 +18,18 @@ services:
     volumes:
       - ./reports:/app/reports
     command: bash scripts/run-m12-soak.sh
+  m12-gui-soak:
+    build: .
+    environment:
+      GUI_DURATION_SECONDS: ${GUI_DURATION_SECONDS:-86400}
+      GUI_VALIDATION_INTERVAL_SECONDS: ${GUI_VALIDATION_INTERVAL_SECONDS:-900}
+      GUI_POLL_INTERVAL_SECONDS: ${GUI_POLL_INTERVAL_SECONDS:-30}
+    volumes:
+      - ./reports:/app/reports
+    command: >
+      bash -lc 'python -m videosim gui-soak --http-port 9200 --feed-port 9201
+      --width 320 --height 180 --framerate 10
+      --duration-seconds "$${GUI_DURATION_SECONDS}"
+      --validation-interval-seconds "$${GUI_VALIDATION_INTERVAL_SECONDS}"
+      --poll-interval-seconds "$${GUI_POLL_INTERVAL_SECONDS}"
+      --json | tee /app/reports/m12-gui-soak.json'

@@ -26,6 +26,13 @@ Check completed report files:
 python3 -m videosim soak-check --report-dir reports/m12-soak --memory-growth-threshold-mb 200
 ```
 
+Run GUI responsiveness soak:
+
+```sh
+python3 -m videosim gui-soak --duration-seconds 86400 --validation-interval-seconds 900 --poll-interval-seconds 30 --json
+docker compose run --build --rm m12-gui-soak
+```
+
 For fast Docker proof, the live suite runs the same harness with an 8-second
 duration for normal and outage profiles.
 
@@ -39,6 +46,7 @@ duration for normal and outage profiles.
 | Periodic validation support | pass | `videosim soak --validation-interval-seconds ...` |
 | One-command full feed soak runner | implemented | `scripts/run-m12-soak.sh`; `docker compose run --build --rm m12-soak` |
 | Soak report threshold checker | implemented | `python3 -m videosim soak-check --report-dir ...` |
+| One-command GUI responsiveness soak | implemented | `python3 -m videosim gui-soak ...`; `docker compose run --build --rm m12-gui-soak` |
 | Repeated start/stop | pass | Existing Docker live restart tests |
 | RSS memory sampling | implemented | `videosim soak --json` reports start/end/growth MB when available |
 
@@ -64,3 +72,5 @@ duration for normal and outage profiles.
 - `videosim soak-check` requires all six feed reports to pass, have zero
   crashes, include validation attempts, and stay under the memory-growth
   threshold when memory data is available.
+- `videosim gui-soak` starts the browser GUI, starts a feed through the GUI,
+  polls the page, and triggers GUI validation periodically.

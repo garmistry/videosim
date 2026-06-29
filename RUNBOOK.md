@@ -109,6 +109,13 @@ Check completed soak reports:
 python3 -m videosim soak-check --report-dir reports/m12-soak --memory-growth-threshold-mb 200
 ```
 
+Run GUI responsiveness soak:
+
+```sh
+python3 -m videosim gui-soak --duration-seconds 86400 --validation-interval-seconds 900 --poll-interval-seconds 30 --json
+docker compose run --build --rm m12-gui-soak
+```
+
 ## Launch The GUI
 
 ```sh

@@ -8,6 +8,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from urllib import request
 
 
 REQUIRED_SOAK_REPORTS = ("normal", "audio_only", "video_only", "no_captions", "black_video", "frozen_video")
@@ -36,6 +37,21 @@ class SoakCheckReport:
     report_dir: str
     memory_growth_threshold_mb: float
     checked_reports: int = 0
+    passed: bool = False
+    errors: list[str] = field(default_factory=list)
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), sort_keys=True)
+
+
+@dataclass
+class GuiSoakReport:
+    url: str
+    duration_seconds: float
+    validation_interval_seconds: float
+    page_checks: int = 0
+    validation_requests: int = 0
+    crashes: int = 0
     passed: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -140,6 +156,91 @@ def stop_sender(sender):
         sender.stdout.close()
 
 
+def run_gui_soak(
+    host: str,
+    http_port: int,
+    feed_port: int,
+    width: int,
+    height: int,
+    framerate: int,
+    duration_seconds: float,
+    validation_interval_seconds: float,
+    poll_interval_seconds: float = 5,
+) -> GuiSoakReport:
+    base_url = f"http://{host}:{http_port}"
+    report = GuiSoakReport(base_url, duration_seconds, validation_interval_seconds)
+    gui = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "videosim",
+            "gui",
+            "--host",
+            host,
+            "--http-port",
+            str(http_port),
+            "--feed-port",
+            str(feed_port),
+            "--width",
+            str(width),
+            "--height",
+            str(height),
+            "--framerate",
+            str(framerate),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        wait_for_http(base_url)
+        request.urlopen(f"{base_url}/start", data=b"", timeout=5).read()
+        deadline = time.monotonic() + duration_seconds
+        next_validation = time.monotonic()
+        while time.monotonic() < deadline:
+            if gui.poll() is not None:
+                report.crashes += 1
+                output = gui.stdout.read() if gui.stdout else ""
+                report.errors.append(f"gui exited early with {gui.returncode}: {output}".strip())
+                break
+            page = request.urlopen(f"{base_url}/", timeout=5).read().decode("utf-8")
+            report.page_checks += 1
+            if "Status: <strong>running</strong>" not in page:
+                report.errors.append("GUI did not show running status")
+            if time.monotonic() >= next_validation:
+                request.urlopen(f"{base_url}/validate", data=b"", timeout=60).read()
+                report.validation_requests += 1
+                next_validation = time.monotonic() + validation_interval_seconds
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(poll_interval_seconds, remaining))
+    except Exception as exc:
+        report.errors.append(str(exc))
+    finally:
+        try:
+            request.urlopen(f"{base_url}/stop", data=b"", timeout=5).read()
+        except Exception:
+            pass
+        stop_sender(gui)
+    report.passed = report.crashes == 0 and report.page_checks > 0 and report.validation_requests > 0 and not report.errors
+    return report
+
+
+def wait_for_http(base_url: str, timeout_seconds: float = 10):
+    deadline = time.monotonic() + timeout_seconds
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            request.urlopen(f"{base_url}/", timeout=1).read()
+            return
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.2)
+    raise TimeoutError(f"GUI did not start: {last_error}")
+
+
 def sample_rss_mb(pid: int) -> float | None:
     proc_status = f"/proc/{pid}/status"
     try:
@@ -170,6 +271,21 @@ def human_summary(report: SoakReport) -> str:
         f"memory_start_mb={report.memory_start_mb}",
         f"memory_end_mb={report.memory_end_mb}",
         f"memory_growth_mb={report.memory_growth_mb}",
+    ]
+    if report.errors:
+        fields.append("errors=" + "; ".join(report.errors))
+    return "\n".join(fields)
+
+
+def gui_summary(report: GuiSoakReport) -> str:
+    status = "PASS" if report.passed else "FAIL"
+    fields = [
+        f"GUI soak {status}: {report.url}",
+        f"duration_seconds={report.duration_seconds}",
+        f"validation_interval_seconds={report.validation_interval_seconds}",
+        f"page_checks={report.page_checks}",
+        f"validation_requests={report.validation_requests}",
+        f"crashes={report.crashes}",
     ]
     if report.errors:
         fields.append("errors=" + "; ".join(report.errors))

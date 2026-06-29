@@ -23,6 +23,13 @@ media segments, served by the GUI HTTP server, and validated through the same
 track/fault reporting interface. DASH captions are represented as a WebVTT
 subtitle adaptation.
 
+## Additive Multi-Feed Goal
+
+The GUI should manage multiple feed instances for every supported protocol. A
+user should be able to create, list, open/read, update, delete, start, stop, and
+validate independent SRT or DASH streams from clear navigation. Each stream owns
+its endpoint, subprocess, logs, validation output, and selected simulation mode.
+
 ## Global Milestone Gate
 
 A milestone may close only when:

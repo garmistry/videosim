@@ -27,6 +27,17 @@ validator, and live smoke checks:
 | DASH manifest/segment validation | P1 | implemented | `python3 -m unittest tests.test_validator` |
 | DASH live six-mode smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |
 
+## Added Multi-Feed GUI Coverage
+
+Multiple feed instances are additive beyond the original single-feed SRT MVP.
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| Stream create/list/select payload | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Stream update and delete | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Independent subprocess launch per stream | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Multi-stream Docker GUI smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |
+
 ## Milestone Gates
 
 Each milestone may advance only when all P0 tests for that milestone are

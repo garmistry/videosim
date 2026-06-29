@@ -62,8 +62,67 @@ class GuiTest(unittest.TestCase):
 
         payload = state_payload(state)
 
-        self.assertEqual(payload["endpoint"], "http://127.0.0.1:18100/dash/manifest.mpd")
+        self.assertEqual(payload["endpoint"], "http://127.0.0.1:18100/dash/stream-1/manifest.mpd")
         self.assertEqual(payload["protocol"], "dash")
+
+    def test_streams_can_be_created_listed_and_selected(self):
+        state = GuiState(feed_port=9912)
+        created = state.create_stream(name="Dash B", protocol="dash", mode="black_video")
+
+        payload = state_payload(state)
+
+        self.assertEqual(state.selected_stream_id, created.id)
+        self.assertEqual(len(payload["streams"]), 2)
+        self.assertEqual(payload["streams"][1]["name"], "Dash B")
+        self.assertEqual(payload["streams"][1]["protocol"], "dash")
+        self.assertEqual(payload["endpoint"], f"http://127.0.0.1:8080/dash/{created.id}/manifest.mpd")
+
+        state.select_stream("stream-1")
+
+        self.assertEqual(state.endpoint, "srt://127.0.0.1:9912?mode=caller")
+
+    def test_stream_update_changes_selected_stream_configuration(self):
+        state = GuiState(feed_port=9912)
+
+        updated = state.update_stream("stream-1", name="Updated", protocol="dash", mode="video_only")
+
+        self.assertTrue(updated)
+        self.assertEqual(state.active_stream.name, "Updated")
+        self.assertEqual(state.protocol, "dash")
+        self.assertEqual(state.mode, "video_only")
+
+    def test_stream_delete_stops_and_removes_record(self):
+        state = GuiState(feed_port=9912)
+        state.create_stream(name="Delete me", protocol="srt", mode="normal")
+
+        deleted = state.delete_stream("stream-2")
+
+        self.assertTrue(deleted)
+        self.assertNotIn("stream-2", state.streams)
+        self.assertEqual(state.selected_stream_id, "stream-1")
+
+    def test_multiple_streams_start_independent_processes(self):
+        state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
+        state.create_stream(name="Dash", protocol="dash", mode="normal")
+
+        first = Mock()
+        first.stdout = []
+        first.pid = 123
+        first.poll.return_value = None
+        second = Mock()
+        second.stdout = []
+        second.pid = 124
+        second.poll.return_value = None
+
+        with patch("videosim.gui.subprocess.Popen", side_effect=[first, second]) as popen:
+            state.start("stream-1")
+            state.start("stream-2")
+
+        self.assertEqual(state.streams["stream-1"].process, first)
+        self.assertEqual(state.streams["stream-2"].process, second)
+        self.assertEqual(popen.call_count, 2)
+        self.assertIn("9912", popen.call_args_list[0].args[0])
+        self.assertIn("--dash-dir", popen.call_args_list[1].args[0])
 
     def test_react_state_marks_running_video_feed_preview_available(self):
         state = GuiState(feed_port=9912)
@@ -152,8 +211,8 @@ class GuiTest(unittest.TestCase):
         self.assertIn("dash", cmd)
         self.assertIn("--dash-dir", cmd)
         self.assertIn("--dash-base-url", cmd)
-        self.assertEqual(state.endpoint, "http://127.0.0.1:18100/dash/manifest.mpd")
-        self.assertIn("Started dash normal feed at http://127.0.0.1:18100/dash/manifest.mpd pid=1234", state.logs)
+        self.assertEqual(state.endpoint, "http://127.0.0.1:18100/dash/stream-1/manifest.mpd")
+        self.assertIn("Started dash normal feed at http://127.0.0.1:18100/dash/stream-1/manifest.mpd pid=1234", state.logs)
 
     def test_verbose_gui_logs_feed_launch_command(self):
         state = GuiState(feed_port=9912)
@@ -300,7 +359,7 @@ class GuiTest(unittest.TestCase):
         self.assertIn("--protocol", cmd)
         self.assertIn("dash", cmd)
         self.assertIn("--dash-dir", cmd)
-        self.assertIn("/tmp/gui-dash", cmd)
+        self.assertIn("/tmp/gui-dash/stream-1", cmd)
 
     def test_validation_failure_sets_actionable_error(self):
         state = GuiState()

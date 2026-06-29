@@ -52,7 +52,18 @@
 | DASH feeds can be generated. | `videosim start --profile profiles/dash-normal.yaml --dash-dir ...` writes an MPD and media segments. |
 | DASH supports required simulation modes. | Live smoke validation passes for normal, audio_only, video_only, no_captions, black_video, and frozen_video DASH profiles. |
 | DASH captions are present when expected. | Validator detects a WebVTT subtitle adaptation and `captions.vtt` for caption-enabled DASH profiles. |
-| DASH endpoint is copyable in GUI. | GUI state exposes `http://127.0.0.1:<http-port>/dash/manifest.mpd` when protocol is DASH. |
+| DASH endpoint is copyable in GUI. | GUI state exposes `http://127.0.0.1:<http-port>/dash/<stream-id>/manifest.mpd` when protocol is DASH. |
+
+## Added Multi-Feed GUI Operations
+
+| Capability | Acceptance evidence |
+|---|---|
+| Create stream. | GUI state can add a named SRT or DASH stream record with an independent endpoint. |
+| Read/open stream. | GUI state exposes the selected stream detail, endpoint, status, logs, and validation output. |
+| Update stream. | GUI can change selected stream name, protocol, or mode. |
+| Delete stream. | GUI can stop and remove a selected stream record. |
+| List streams. | GUI payload and left navigation expose all configured stream records. |
+| Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
 
 ## Milestone Status
 

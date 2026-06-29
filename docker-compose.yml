@@ -6,6 +6,7 @@ services:
     ports:
       - "${VIDEOSIM_HTTP_PORT:-8080}:8080"
       - "${VIDEOSIM_FEED_PORT:-9000}:${VIDEOSIM_FEED_PORT:-9000}/udp"
+      - "9001-9010:9001-9010/udp"
     command: python -m videosim gui --host 0.0.0.0 --http-port 8080 --feed-port ${VIDEOSIM_FEED_PORT:-9000}
   test:
     build: .

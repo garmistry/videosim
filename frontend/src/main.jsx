@@ -19,6 +19,10 @@ function App() {
     () => state.modes.find((item) => item.value === state.mode) || state.modes[0],
     [state.mode, state.modes]
   );
+  const selectedStream = useMemo(
+    () => state.streams.find((item) => item.id === state.selectedStreamId) || state.streams[0],
+    [state.selectedStreamId, state.streams]
+  );
 
   async function copyEndpoint() {
     await navigator.clipboard.writeText(state.endpoint);
@@ -48,6 +52,7 @@ function App() {
             </button>
           ))}
         </nav>
+        <StreamNav streams={state.streams} selectedStreamId={state.selectedStreamId} />
         <a className="download" href="/diagnostics.txt">Download diagnostics</a>
       </aside>
 
@@ -55,7 +60,8 @@ function App() {
         <section className="hero">
           <div>
             <p className="eyebrow">Current profile</p>
-            <h2>{mode?.label || state.mode}</h2>
+            <h2>{selectedStream?.name || "Feed"}</h2>
+            <span>{mode?.label || state.mode} · {state.protocol.toUpperCase()}</span>
           </div>
           <StatusPill status={state.status} />
         </section>
@@ -81,6 +87,23 @@ function App() {
         {tab === "Logs" && <Output title="Logs" body={(state.logs || []).join("\n") || "No logs yet"} />}
       </main>
     </div>
+  );
+}
+
+function StreamNav({ streams, selectedStreamId }) {
+  return (
+    <section className="stream-nav" aria-label="Streams">
+      <p className="eyebrow">Streams</p>
+      {streams.map((stream) => (
+        <form action="/streams/select" method="post" key={stream.id}>
+          <input name="stream_id" type="hidden" value={stream.id} />
+          <button className={stream.id === selectedStreamId ? "active" : ""} type="submit">
+            <span>{stream.name}</span>
+            <small>{stream.protocol.toUpperCase()} · {stream.mode} · {stream.status}</small>
+          </button>
+        </form>
+      ))}
+    </section>
   );
 }
 
@@ -125,9 +148,60 @@ function Metric({ label, value, wide }) {
 }
 
 function ControlPanel({ state, copied, onCopy }) {
+  const selected = state.streams.find((stream) => stream.id === state.selectedStreamId) || state.streams[0];
   return (
     <section className="panel">
+      <form action="/streams/create" className="control-row" method="post">
+        <label>
+          New stream
+          <input defaultValue={`Feed ${state.streams.length + 1}`} name="name" />
+        </label>
+        <label>
+          Protocol
+          <select defaultValue={state.protocol} name="protocol">
+            {state.protocols.map((protocol) => (
+              <option key={protocol.value} value={protocol.value}>{protocol.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Mode
+          <select defaultValue={state.mode} name="mode">
+            {state.modes.map((mode) => (
+              <option key={mode.value} value={mode.value}>{mode.label}</option>
+            ))}
+          </select>
+        </label>
+        <button type="submit">Create</button>
+      </form>
+
+      <form action="/streams/update" className="control-row" method="post">
+        <input name="stream_id" type="hidden" value={state.selectedStreamId} />
+        <label>
+          Selected stream
+          <input defaultValue={selected?.name || ""} name="name" />
+        </label>
+        <label>
+          Protocol
+          <select defaultValue={state.protocol} name="protocol">
+            {state.protocols.map((protocol) => (
+              <option key={protocol.value} value={protocol.value}>{protocol.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Mode
+          <select defaultValue={state.mode} name="mode">
+            {state.modes.map((mode) => (
+              <option key={mode.value} value={mode.value}>{mode.label}</option>
+            ))}
+          </select>
+        </label>
+        <button className="secondary" type="submit">Update</button>
+      </form>
+
       <form action="/start" className="control-row" method="post">
+        <input name="stream_id" type="hidden" value={state.selectedStreamId} />
         <label>
           Protocol
           <select defaultValue={state.protocol} name="protocol">
@@ -150,6 +224,7 @@ function ControlPanel({ state, copied, onCopy }) {
       <form action="/start" className="toggles" method="post">
         <input name="controls" type="hidden" value="1" />
         <input name="protocol" type="hidden" value={state.protocol} />
+        <input name="stream_id" type="hidden" value={state.selectedStreamId} />
         {[
           ["video", "Video"],
           ["audio", "Audio"],
@@ -166,9 +241,19 @@ function ControlPanel({ state, copied, onCopy }) {
       </form>
 
       <div className="actions">
-        <form action="/stop" method="post"><button className="secondary" type="submit">Stop</button></form>
-        <form action="/validate" method="post"><button className="secondary" type="submit">Validate</button></form>
+        <form action="/stop" method="post">
+          <input name="stream_id" type="hidden" value={state.selectedStreamId} />
+          <button className="secondary" type="submit">Stop</button>
+        </form>
+        <form action="/validate" method="post">
+          <input name="stream_id" type="hidden" value={state.selectedStreamId} />
+          <button className="secondary" type="submit">Validate</button>
+        </form>
         <button className="secondary" onClick={onCopy} type="button">{copied ? "Copied" : "Copy URL"}</button>
+        <form action="/streams/delete" method="post">
+          <input name="stream_id" type="hidden" value={state.selectedStreamId} />
+          <button className="secondary" type="submit">Delete</button>
+        </form>
       </div>
     </section>
   );

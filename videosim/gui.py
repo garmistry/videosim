@@ -76,6 +76,40 @@ def running_in_container() -> bool:
 
 
 @dataclass
+class FeedRecord:
+    id: str
+    name: str
+    protocol: str
+    http_port: int
+    feed_port: int
+    width: int
+    height: int
+    framerate: int
+    dash_dir: str
+    mode: str
+    process: subprocess.Popen | None = None
+    logs: list[str] = field(default_factory=list)
+    last_error: str = ""
+    validation_output: str = ""
+
+    @property
+    def endpoint(self) -> str:
+        if self.protocol == "dash":
+            return f"http://127.0.0.1:{self.http_port}/dash/{self.id}/manifest.mpd"
+        return f"srt://127.0.0.1:{self.feed_port}?mode=caller"
+
+    @property
+    def status(self) -> str:
+        if self.process and self.process.poll() is None:
+            return "running"
+        return "stopped"
+
+    @property
+    def intentional_outage(self) -> bool:
+        return self.mode != "normal"
+
+
+@dataclass
 class GuiState:
     protocol: str = "srt"
     http_port: int = 8080
@@ -89,31 +123,163 @@ class GuiState:
     logs: list[str] = field(default_factory=list)
     last_error: str = ""
     validation_output: str = ""
+    streams: dict[str, FeedRecord] = field(default_factory=dict)
+    selected_stream_id: str = ""
+    _next_stream_number: int = 1
+
+    def __post_init__(self):
+        if not self.streams:
+            requested_mode = self.mode
+            initial_mode = requested_mode if requested_mode in PROFILE_OPTIONS else "normal"
+            self.create_stream(
+                name="Primary feed",
+                protocol=self.protocol,
+                mode=initial_mode,
+                feed_port=self.feed_port,
+                width=self.width,
+                height=self.height,
+                framerate=self.framerate,
+                select=True,
+            )
+            if requested_mode not in PROFILE_OPTIONS:
+                self.active_stream.mode = requested_mode
+                self._sync_from_active()
+
+    @property
+    def active_stream(self) -> FeedRecord:
+        if self.selected_stream_id not in self.streams:
+            self.selected_stream_id = next(iter(self.streams))
+        return self.streams[self.selected_stream_id]
 
     @property
     def endpoint(self) -> str:
-        if self.protocol == "dash":
-            return f"http://127.0.0.1:{self.http_port}/dash/manifest.mpd"
-        return f"srt://127.0.0.1:{self.feed_port}?mode=caller"
+        return self.active_stream.endpoint
 
     @property
     def status(self) -> str:
-        if self.process and self.process.poll() is None:
+        if self.active_stream.process is None and self.process and self.process.poll() is None:
             return "running"
-        return "stopped"
+        return self.active_stream.status
 
     @property
     def intentional_outage(self) -> bool:
-        return self.mode != "normal"
+        return self.active_stream.intentional_outage
 
-    def start(self):
-        if self.status == "running":
-            self.log("Feed already running")
+    def create_stream(
+        self,
+        name: str = "",
+        protocol: str = "srt",
+        mode: str = "normal",
+        feed_port: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        framerate: int | None = None,
+        select: bool = True,
+    ) -> FeedRecord:
+        if protocol not in PROTOCOL_OPTIONS:
+            raise ValueError(f"Unsupported protocol: {protocol}")
+        if mode not in PROFILE_OPTIONS:
+            raise ValueError(f"Unsupported mode: {mode}")
+        stream_id = f"stream-{self._next_stream_number}"
+        self._next_stream_number += 1
+        feed_port = feed_port or self.next_available_port()
+        stream = FeedRecord(
+            id=stream_id,
+            name=name.strip() or f"Feed {len(self.streams) + 1}",
+            protocol=protocol,
+            http_port=self.http_port,
+            feed_port=feed_port,
+            width=width or self.width,
+            height=height or self.height,
+            framerate=framerate or self.framerate,
+            dash_dir=str(Path(self.dash_dir) / stream_id),
+            mode=mode,
+        )
+        self.streams[stream_id] = stream
+        if select:
+            self.select_stream(stream_id)
+        return stream
+
+    def next_available_port(self) -> int:
+        used = {stream.feed_port for stream in self.streams.values()}
+        port = self.feed_port
+        while port in used:
+            port += 1
+        return port
+
+    def select_stream(self, stream_id: str) -> bool:
+        if stream_id not in self.streams:
+            self.fail(f"Unsupported stream: {stream_id}")
             return False
-        if self.mode not in PROFILE_OPTIONS:
-            self.fail(f"Unsupported mode: {self.mode}")
+        self.selected_stream_id = stream_id
+        self._sync_from_active()
+        return True
+
+    def update_stream(self, stream_id: str, name: str | None = None, protocol: str | None = None, mode: str | None = None) -> bool:
+        if stream_id not in self.streams:
+            self.fail(f"Unsupported stream: {stream_id}")
             return False
-        profile = profile_for(self.protocol, self.mode)
+        stream = self.streams[stream_id]
+        restart = stream.status == "running"
+        if restart:
+            self.stop(stream_id)
+        if name is not None and name.strip():
+            stream.name = name.strip()
+        if protocol is not None:
+            if protocol not in PROTOCOL_OPTIONS:
+                self.fail(f"Unsupported protocol: {protocol}")
+                return False
+            stream.protocol = protocol
+        if mode is not None:
+            if mode not in PROFILE_OPTIONS:
+                self.fail(f"Unsupported mode: {mode}")
+                return False
+            stream.mode = mode
+        self.select_stream(stream_id)
+        if restart:
+            return self.start(stream_id)
+        return True
+
+    def delete_stream(self, stream_id: str) -> bool:
+        if stream_id not in self.streams:
+            self.fail(f"Unsupported stream: {stream_id}")
+            return False
+        self.stop(stream_id)
+        del self.streams[stream_id]
+        if not self.streams:
+            self.create_stream(name="Primary feed", protocol=self.protocol, mode=self.mode, select=True)
+        elif self.selected_stream_id == stream_id:
+            self.select_stream(next(iter(self.streams)))
+        return True
+
+    def stop_all(self):
+        for stream_id in list(self.streams):
+            self.stop(stream_id)
+
+    def _sync_from_active(self):
+        stream = self.active_stream
+        self.protocol = stream.protocol
+        self.feed_port = stream.feed_port
+        self.width = stream.width
+        self.height = stream.height
+        self.framerate = stream.framerate
+        self.mode = stream.mode
+        self.process = stream.process
+        self.logs = stream.logs
+        self.last_error = stream.last_error
+        self.validation_output = stream.validation_output
+
+    def start(self, stream_id: str | None = None):
+        if stream_id:
+            self.select_stream(stream_id)
+        stream = self.active_stream
+        if stream.status == "running":
+            self.log("Feed already running", stream.id)
+            return False
+        if stream.mode not in PROFILE_OPTIONS:
+            self.fail(f"Unsupported mode: {stream.mode}", stream.id)
+            return False
+        profile = profile_for(stream.protocol, stream.mode)
         cmd = [
             sys.executable,
             "-m",
@@ -122,58 +288,74 @@ class GuiState:
             "--profile",
             profile,
             "--port",
-            str(self.feed_port),
+            str(stream.feed_port),
             "--width",
-            str(self.width),
+            str(stream.width),
             "--height",
-            str(self.height),
+            str(stream.height),
             "--framerate",
-            str(self.framerate),
+            str(stream.framerate),
         ]
-        if self.protocol == "dash":
+        if stream.protocol == "dash":
             cmd.extend(
-                ["--protocol", "dash", "--dash-dir", self.dash_dir, "--dash-base-url", f"http://127.0.0.1:{self.http_port}/dash"]
+                [
+                    "--protocol",
+                    "dash",
+                    "--dash-dir",
+                    stream.dash_dir,
+                    "--dash-base-url",
+                    f"http://127.0.0.1:{self.http_port}/dash/{stream.id}",
+                ]
             )
-        self.last_error = ""
+        stream.last_error = ""
         container = "yes" if running_in_container() else "no"
         self.log(
-            f"Starting {self.protocol} {self.mode} feed: profile={profile} endpoint={self.endpoint} container={container}"
+            f"Starting {stream.protocol} {stream.mode} feed: profile={profile} endpoint={stream.endpoint} container={container}",
+            stream.id,
         )
         if verbose_enabled():
-            self.log(f"Feed launch command: {shlex.join(cmd)}")
+            self.log(f"Feed launch command: {shlex.join(cmd)}", stream.id)
         try:
-            self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            stream.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         except OSError as exc:
-            self.process = None
-            self.fail(f"Failed to start {self.mode} feed: {exc}")
+            stream.process = None
+            self.fail(f"Failed to start {stream.mode} feed: {exc}", stream.id)
             return False
-        self.log(f"Started {self.protocol} {self.mode} feed at {self.endpoint} pid={self.process.pid}")
-        threading.Thread(target=self._capture_logs, args=(self.process,), daemon=True).start()
+        self._sync_from_active()
+        self.log(f"Started {stream.protocol} {stream.mode} feed at {stream.endpoint} pid={stream.process.pid}", stream.id)
+        threading.Thread(target=self._capture_logs, args=(stream.id, stream.process), daemon=True).start()
         return True
 
-    def apply_mode(self, mode: str, protocol: str | None = None):
+    def apply_mode(self, mode: str, protocol: str | None = None, stream_id: str | None = None):
+        if stream_id:
+            self.select_stream(stream_id)
+        stream = self.active_stream
         protocol = protocol or self.protocol
         if protocol not in PROTOCOL_OPTIONS:
-            self.fail(f"Unsupported protocol: {protocol}")
+            self.fail(f"Unsupported protocol: {protocol}", stream.id)
             return False
         if mode not in PROFILE_OPTIONS:
-            self.fail(f"Unsupported mode: {mode}")
+            self.fail(f"Unsupported mode: {mode}", stream.id)
             return False
-        if self.status == "running" and mode == self.mode and protocol == self.protocol:
-            self.log("Feed already running")
+        if stream.status == "running" and mode == stream.mode and protocol == stream.protocol:
+            self.log("Feed already running", stream.id)
             return True
-        if self.status == "running":
-            self.log(f"Restarting feed for {protocol} {mode} mode")
-            self.stop()
-        self.mode = mode
-        self.protocol = protocol
-        return self.start()
+        if stream.status == "running":
+            self.log(f"Restarting feed for {protocol} {mode} mode", stream.id)
+            self.stop(stream.id)
+        stream.mode = mode
+        stream.protocol = protocol
+        self._sync_from_active()
+        return self.start(stream.id)
 
-    def validate(self):
-        if self.mode not in PROFILE_OPTIONS:
-            self.fail(f"Unsupported mode: {self.mode}")
+    def validate(self, stream_id: str | None = None):
+        if stream_id:
+            self.select_stream(stream_id)
+        stream = self.active_stream
+        if stream.mode not in PROFILE_OPTIONS:
+            self.fail(f"Unsupported mode: {stream.mode}", stream.id)
             return False
-        profile = profile_for(self.protocol, self.mode)
+        profile = profile_for(stream.protocol, stream.mode)
         cmd = [
             sys.executable,
             "-m",
@@ -182,17 +364,24 @@ class GuiState:
             "--profile",
             profile,
             "--port",
-            str(self.feed_port),
+            str(stream.feed_port),
             "--width",
-            str(self.width),
+            str(stream.width),
             "--height",
-            str(self.height),
+            str(stream.height),
             "--framerate",
-            str(self.framerate),
+            str(stream.framerate),
         ]
-        if self.protocol == "dash":
+        if stream.protocol == "dash":
             cmd.extend(
-                ["--protocol", "dash", "--dash-dir", self.dash_dir, "--dash-base-url", f"http://127.0.0.1:{self.http_port}/dash"]
+                [
+                    "--protocol",
+                    "dash",
+                    "--dash-dir",
+                    stream.dash_dir,
+                    "--dash-base-url",
+                    f"http://127.0.0.1:{self.http_port}/dash/{stream.id}",
+                ]
             )
         try:
             result = subprocess.run(
@@ -203,53 +392,76 @@ class GuiState:
                 timeout=45,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            self.validation_output = ""
-            self.fail(f"Validation failed: {exc}")
+            stream.validation_output = ""
+            self.fail(f"Validation failed: {exc}", stream.id)
             return False
-        self.validation_output = result.stdout.strip()
-        self.log("Validation passed" if result.returncode == 0 else "Validation failed")
+        stream.validation_output = result.stdout.strip()
+        self.log("Validation passed" if result.returncode == 0 else "Validation failed", stream.id)
         if result.returncode != 0:
-            self.last_error = self.validation_output.splitlines()[-1] if self.validation_output else "Validation failed"
+            stream.last_error = stream.validation_output.splitlines()[-1] if stream.validation_output else "Validation failed"
+        self._sync_from_active()
         return result.returncode == 0
 
-    def stop(self):
-        if not self.process or self.process.poll() is not None:
-            self.process = None
-            self.log("Feed already stopped")
+    def stop(self, stream_id: str | None = None):
+        if stream_id:
+            self.select_stream(stream_id)
+        stream = self.active_stream
+        if not stream.process or stream.process.poll() is not None:
+            stream.process = None
+            self._sync_from_active()
+            self.log("Feed already stopped", stream.id)
             return
-        process = self.process
-        self.log("Stopping feed")
+        process = stream.process
+        self.log("Stopping feed", stream.id)
         os.killpg(process.pid, signal.SIGINT)
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
-            self.log("Killed stuck feed")
-        self.process = None
-        self.log("Feed stopped")
+            self.log("Killed stuck feed", stream.id)
+        stream.process = None
+        self._sync_from_active()
+        self.log("Feed stopped", stream.id)
 
-    def fail(self, message: str):
+    def fail(self, message: str, stream_id: str | None = None):
+        stream = self.streams.get(stream_id or self.selected_stream_id)
+        if stream:
+            stream.last_error = message
         self.last_error = message
-        self.log(message)
+        self.log(message, stream_id)
 
-    def log(self, message: str):
-        self.logs.append(message)
-        del self.logs[:-200]
+    def log(self, message: str, stream_id: str | None = None):
+        stream = self.streams.get(stream_id or self.selected_stream_id)
+        if stream:
+            if self.validation_output and not stream.validation_output:
+                stream.validation_output = self.validation_output
+            if self.last_error and not stream.last_error:
+                stream.last_error = self.last_error
+            stream.logs.append(message)
+            del stream.logs[:-200]
+            if stream.id == self.selected_stream_id:
+                self._sync_from_active()
+        else:
+            self.logs.append(message)
+            del self.logs[:-200]
         if verbose_enabled() or running_in_container():
             print(f"[videosim-gui] {message}", flush=True)
 
-    def _capture_logs(self, process):
+    def _capture_logs(self, stream_id: str | subprocess.Popen, process=None):
+        if process is None:
+            process = stream_id
+            stream_id = self.selected_stream_id
         if not process.stdout:
             return
         last_line = ""
         for line in process.stdout:
             last_line = line.rstrip()
-            self.log(last_line)
+            self.log(last_line, stream_id)
         code = process.poll()
         if code not in (None, 0):
             detail = f": {last_line}" if last_line else ""
-            self.fail(f"Feed process exited with code {code}{detail}")
+            self.fail(f"Feed process exited with code {code}{detail}", stream_id)
 
 
 def profile_for(protocol: str, mode: str) -> str:
@@ -290,17 +502,49 @@ class GuiHandler(BaseHTTPRequestHandler):
         if self.path == "/start":
             params = self._read_form()
             try:
+                stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
+                self.state.select_stream(stream_id)
                 mode = mode_from_form(params, self.state.mode)
                 protocol = params.get("protocol", [self.state.protocol])[0]
             except ValueError as exc:
                 self.state.log(str(exc))
                 self._redirect_home()
                 return
-            self.state.apply_mode(mode, protocol)
+            self.state.apply_mode(mode, protocol, stream_id)
         elif self.path == "/stop":
-            self.state.stop()
+            params = self._read_form()
+            self.state.stop(params.get("stream_id", [self.state.selected_stream_id])[0])
         elif self.path == "/validate":
-            self.state.validate()
+            params = self._read_form()
+            self.state.validate(params.get("stream_id", [self.state.selected_stream_id])[0])
+        elif self.path == "/streams/create":
+            params = self._read_form()
+            try:
+                self.state.create_stream(
+                    name=params.get("name", [""])[0],
+                    protocol=params.get("protocol", ["srt"])[0],
+                    mode=params.get("mode", ["normal"])[0],
+                )
+            except ValueError as exc:
+                self.state.log(str(exc))
+        elif self.path == "/streams/select":
+            params = self._read_form()
+            self.state.select_stream(params.get("stream_id", [self.state.selected_stream_id])[0])
+        elif self.path == "/streams/update":
+            params = self._read_form()
+            stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
+            try:
+                self.state.update_stream(
+                    stream_id,
+                    name=params.get("name", [None])[0],
+                    protocol=params.get("protocol", [None])[0],
+                    mode=params.get("mode", [None])[0],
+                )
+            except ValueError as exc:
+                self.state.log(str(exc))
+        elif self.path == "/streams/delete":
+            params = self._read_form()
+            self.state.delete_stream(params.get("stream_id", [self.state.selected_stream_id])[0])
         else:
             self.send_error(404)
             return
@@ -362,8 +606,14 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_dash(self, relative_path: str):
-        path = (Path(self.state.dash_dir) / relative_path).resolve()
-        root = Path(self.state.dash_dir).resolve()
+        parts = relative_path.split("/", 1)
+        stream = self.state.streams.get(parts[0])
+        if stream:
+            relative_path = parts[1] if len(parts) > 1 else ""
+        else:
+            stream = self.state.active_stream
+        path = (Path(stream.dash_dir) / relative_path).resolve()
+        root = Path(stream.dash_dir).resolve()
         try:
             path.relative_to(root)
         except ValueError:
@@ -399,8 +649,8 @@ def render_page(state: GuiState) -> str:
     status = html.escape(state.status)
     endpoint = html.escape(state.endpoint)
     outage = "yes" if state.intentional_outage else "no"
-    last_error = html.escape(state.last_error or "none")
-    validation = html.escape(state.validation_output or "not run")
+    last_error = html.escape(state.last_error or state.active_stream.last_error or "none")
+    validation = html.escape(state.validation_output or state.active_stream.validation_output or "not run")
     preview = (
         '<h2>Preview</h2><img alt="SRT stream preview" src="/preview.jpg" style="width:min(100%,40rem);border-radius:0.5rem;background:#101820;">'
         if state.status == "running"
@@ -416,6 +666,19 @@ def render_page(state: GuiState) -> str:
     )
     controls = controls_for_mode(state.mode)
     checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
+    stream_rows = "\n".join(
+        f"""<li>
+          <form method="post" action="/streams/select" class="row">
+            <input type="hidden" name="stream_id" value="{html.escape(stream.id)}">
+            <button class="secondary" type="submit">Open</button>
+            <strong>{html.escape(stream.name)}</strong>
+            <span>{html.escape(stream.protocol.upper())}</span>
+            <span>{html.escape(stream.mode)}</span>
+            <span>{html.escape(stream.status)}</span>
+          </form>
+        </li>"""
+        for stream in state.streams.values()
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -442,11 +705,31 @@ def render_page(state: GuiState) -> str:
 <main>
   <div id="app-fallback" class="shell">
   <h1>Video Feed Simulator</h1>
+  <h2>Streams</h2>
+  <ul>{stream_rows}</ul>
+  <form method="post" action="/streams/create" class="row">
+    <label>Name <input name="name" value="Feed {len(state.streams) + 1}"></label>
+    <label>Protocol <select name="protocol">{protocol_options}</select></label>
+    <label>Mode <select name="mode">{options}</select></label>
+    <button type="submit">Create stream</button>
+  </form>
+  <form method="post" action="/streams/update" class="row">
+    <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
+    <label>Selected name <input name="name" value="{html.escape(state.active_stream.name)}"></label>
+    <label>Protocol <select name="protocol">{protocol_options}</select></label>
+    <label>Mode <select name="mode">{options}</select></label>
+    <button type="submit">Update stream</button>
+  </form>
+  <form method="post" action="/streams/delete" class="row">
+    <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
+    <button class="secondary" type="submit">Delete selected stream</button>
+  </form>
   <div>Status: <strong>{status}</strong></div>
   <div>Intentional outage: <strong>{outage}</strong></div>
   <div>Last error: <strong>{last_error}</strong></div>
   <label>Endpoint<br><input id="endpoint" value="{endpoint}" readonly></label>
   <form method="post" action="/start" class="row">
+    <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
     <button type="submit">Start</button>
@@ -456,6 +739,7 @@ def render_page(state: GuiState) -> str:
       <legend>Runtime fault controls</legend>
       <input type="hidden" name="{CONTROL_FORM_FIELD}" value="1">
       <input type="hidden" name="protocol" value="{html.escape(state.protocol)}">
+      <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
       <div class="row">
         <label class="control"><input type="checkbox" name="video"{checked["video"]}> Video</label>
         <label class="control"><input type="checkbox" name="audio"{checked["audio"]}> Audio</label>
@@ -467,8 +751,8 @@ def render_page(state: GuiState) -> str:
     </fieldset>
   </form>
   <div class="row">
-    <form method="post" action="/stop"><button type="submit">Stop</button></form>
-    <form method="post" action="/validate"><button type="submit">Validate</button></form>
+    <form method="post" action="/stop"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Stop</button></form>
+    <form method="post" action="/validate"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Validate</button></form>
     <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('endpoint').value)">Copy URL</button>
     <a href="/diagnostics.txt">Download diagnostics</a>
   </div>
@@ -487,22 +771,39 @@ def render_page(state: GuiState) -> str:
 def state_payload(state: GuiState) -> dict:
     controls = controls_for_mode(state.mode)
     return {
+        "selectedStreamId": state.selected_stream_id,
+        "streams": [stream_payload(stream) for stream in state.streams.values()],
         "status": state.status,
         "protocol": state.protocol,
         "protocols": [{"value": value, "label": label} for value, label in PROTOCOL_OPTIONS.items()],
         "mode": state.mode,
         "intentionalOutage": state.intentional_outage,
         "endpoint": state.endpoint,
-        "lastError": state.last_error or "none",
-        "validationOutput": state.validation_output or "not run",
+        "lastError": state.last_error or state.active_stream.last_error or "none",
+        "validationOutput": state.validation_output or state.active_stream.validation_output or "not run",
         "previewAvailable": state.status == "running" and controls["video"],
         "previewUrl": "/preview.jpg",
-        "logs": state.logs[-80:],
+        "logs": (state.logs or state.active_stream.logs)[-80:],
         "modes": [
             {"value": mode, "label": label, "controls": MODE_CONTROLS[mode]}
             for mode, (label, _) in PROFILE_OPTIONS.items()
         ],
         "controls": controls,
+    }
+
+
+def stream_payload(stream: FeedRecord) -> dict:
+    return {
+        "id": stream.id,
+        "name": stream.name,
+        "protocol": stream.protocol,
+        "mode": stream.mode,
+        "status": stream.status,
+        "endpoint": stream.endpoint,
+        "intentionalOutage": stream.intentional_outage,
+        "lastError": stream.last_error or "none",
+        "validationOutput": stream.validation_output or "not run",
+        "logs": stream.logs[-80:],
     }
 
 
@@ -606,6 +907,7 @@ def diagnostics_text(state: GuiState) -> str:
     return "\n".join(
         [
             "Video Feed Simulator diagnostics",
+            f"selected_stream={state.selected_stream_id}",
             f"status={state.status}",
             f"protocol={state.protocol}",
             f"mode={state.mode}",
@@ -614,10 +916,16 @@ def diagnostics_text(state: GuiState) -> str:
             f"last_error={state.last_error or 'none'}",
             "",
             "validation:",
-            state.validation_output or "not run",
+            state.validation_output or state.active_stream.validation_output or "not run",
             "",
             "logs:",
             *state.logs[-200:],
+            "",
+            "streams:",
+            *[
+                f"{stream.id} name={stream.name} protocol={stream.protocol} mode={stream.mode} status={stream.status} endpoint={stream.endpoint}"
+                for stream in state.streams.values()
+            ],
             "",
         ]
     )
@@ -625,11 +933,14 @@ def diagnostics_text(state: GuiState) -> str:
 
 def run_gui(host: str, port: int, state: GuiState):
     state.http_port = port
+    for stream in state.streams.values():
+        stream.http_port = port
+    state._sync_from_active()
     handler = type("VideoSimGuiHandler", (GuiHandler,), {"state": state})
     server = ThreadingHTTPServer((host, port), handler)
     print(f"Video Feed Simulator GUI: http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     finally:
-        state.stop()
+        state.stop_all()
         server.server_close()

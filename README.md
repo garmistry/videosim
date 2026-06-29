@@ -7,10 +7,10 @@ stop, and validate normal and fault-mode SRT feeds.
 ## Current Status
 
 Milestones 0 through 11 are complete. The CLI and React-enhanced local browser
-GUI can start, stop, restart, and validate synthetic audio/video/caption SRT
-listener feeds through GStreamer. DASH feed generation is also available for the
-same six simulation modes, with MPD/TS output and WebVTT captions served by the
-GUI.
+GUI can create, list, open, update, delete, start, stop, restart, and validate
+multiple synthetic SRT or DASH feeds through GStreamer. DASH feed generation is
+available for the same six simulation modes, with MPD/TS output and WebVTT
+captions served by the GUI.
 
 ## MVP Scope
 
@@ -27,10 +27,9 @@ The critical MVP must support:
 - Validation proving actual stream state.
 - Install/run documentation and tests for critical behavior.
 
-Still out of scope until the critical MVP is done: multiple simultaneous feeds,
-packet/jitter simulation, REST API, metrics, and release packaging such as
-AppImage/Flatpak. Docker is present as a Linux test harness, not a release
-package.
+Still out of scope until the critical MVP is done: packet/jitter simulation,
+REST API, metrics, and release packaging such as AppImage/Flatpak. Docker is
+present as a Linux test harness, not a release package.
 
 ## Architecture
 
@@ -125,7 +124,16 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Then open `http://127.0.0.1:8080`.
 
-The GUI protocol and mode selectors support SRT or DASH for normal, audio-only,
+The GUI has a stream list for CRUDL operations:
+
+- Create a named SRT or DASH stream.
+- List streams in the left navigation.
+- Read/open a stream to see endpoint, status, validation, and logs.
+- Update selected stream name, protocol, or mode.
+- Delete the selected stream.
+
+Each stream can be started, stopped, validated, and copied independently. The
+protocol and mode selectors support SRT or DASH for normal, audio-only,
 video-only, no-captions, black-video, and frozen-video feeds. Changing fault
 controls while a feed is running uses a controlled stream restart.
 
@@ -142,9 +150,11 @@ Deploy the GUI and SRT listener together with Docker Compose:
 docker compose up --build app
 ```
 
-Open `http://127.0.0.1:8080`. The GUI and SRT feed process both run inside the
-`videosim-app-1` container. Verbose container logs show feed mode, profile,
-endpoint, subprocess PID, and the GStreamer pipeline:
+Open `http://127.0.0.1:8080`. The GUI and feed subprocesses run inside the
+`videosim-app-1` container. The default Compose file publishes UDP 9000-9010 for
+multiple SRT streams and TCP 8080 for the GUI/DASH server. Verbose container
+logs show feed mode, profile, endpoint, subprocess PID, and the GStreamer
+pipeline:
 
 ```sh
 docker compose logs -f app
@@ -159,7 +169,7 @@ srt://127.0.0.1:9000?mode=caller
 DASH feeds are served by the GUI at:
 
 ```text
-http://127.0.0.1:8080/dash/manifest.mpd
+http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd
 ```
 
 The SRT listener accepts receiver clients at that caller URL. This Docker image

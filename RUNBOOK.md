@@ -138,11 +138,20 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Open `http://127.0.0.1:8080`.
 
+Use the stream list in the left navigation for CRUDL operations:
+
+- Create a named SRT or DASH stream.
+- List all configured streams.
+- Open/read a stream to see endpoint, status, logs, and validation output.
+- Update the selected stream name, protocol, or mode.
+- Delete the selected stream.
+
 Use the protocol selector to choose SRT or DASH, then use the mode selector to
 start normal, audio-only, video-only, no-captions, black-video, or frozen-video
-feeds. Use the runtime fault controls to toggle video, audio, captions, black
-video, or frozen video while the GUI is running; the MVP applies those changes
-with a controlled stream restart.
+feeds. Each stream has independent start, stop, validate, and copy URL actions.
+Use the runtime fault controls to toggle video, audio, captions, black video, or
+frozen video while the GUI is running; the MVP applies those changes with a
+controlled stream restart.
 
 Use the Validate button to run the current profile validation from the GUI.
 Use Download diagnostics to export status, mode, endpoint, last error,
@@ -163,9 +172,9 @@ docker compose up --build app
 ```
 
 Open `http://127.0.0.1:8080`. The app service publishes the GUI on TCP 8080 and
-the SRT listener on UDP 9000. The GUI and SRT feed subprocess run inside the
-`videosim-app-1` container. Override host ports with `VIDEOSIM_HTTP_PORT` and
-`VIDEOSIM_FEED_PORT`.
+SRT listeners on UDP 9000-9010 by default. The GUI and feed subprocesses run
+inside the `videosim-app-1` container. Override the primary host ports with
+`VIDEOSIM_HTTP_PORT` and `VIDEOSIM_FEED_PORT`.
 
 Generated SRT listener pipelines accept receiver clients at
 `srt://127.0.0.1:9000?mode=caller`. Do not add a `maxconn` URI option to the
@@ -173,7 +182,7 @@ GStreamer `srtsink` command in this Docker image; the packaged plugin does not
 expose that as a supported property and it can crash the listener.
 
 Generated DASH feeds are served by the same GUI HTTP server at
-`http://127.0.0.1:8080/dash/manifest.mpd`.
+`http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd`.
 
 Verbose logging is enabled by default for the Compose app. Watch feed creation,
 container status, subprocess PID, and the exact GStreamer pipeline:

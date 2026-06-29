@@ -21,6 +21,8 @@
   must be reported clearly by validation.
 - SRT captions are embedded CEA-608 in H.264. DASH captions are currently
   emitted as a WebVTT subtitle adaptation in the MPD, not embedded CEA-608.
+- Docker Compose publishes UDP 9000-9010 for GUI-managed SRT streams by default.
+  Additional SRT streams need more host UDP ports published.
 - ffprobe and ffplay compatibility tests are receiver smoke checks; semantic
   caption, black-video, and frozen-video proof remains in `videosim validate`.
 - VLC is not tested in the minimal headless Docker harness.

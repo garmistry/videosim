@@ -44,9 +44,31 @@ body.react-ready > main {
   text-transform: uppercase;
 }
 
-.nav nav {
+.nav nav, .stream-nav {
   display: grid;
   gap: 0.5rem;
+}
+
+.stream-nav {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 1rem;
+}
+
+.stream-nav form {
+  margin: 0;
+}
+
+.stream-nav button {
+  display: grid;
+  gap: 0.15rem;
+  width: 100%;
+}
+
+.stream-nav small {
+  color: #b8c7d3;
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 button, select, input {
@@ -208,7 +230,7 @@ button, .download {
   min-width: min(100%, 18rem);
 }
 
-select {
+select, input {
   background: white;
   border: 1px solid #bfccd6;
   border-radius: 0.45rem;

@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from videosim.gui import (
@@ -10,6 +11,7 @@ from videosim.gui import (
     mode_from_form,
     preview_image,
     render_page,
+    rgb_frame_to_bmp,
     state_payload,
 )
 
@@ -70,19 +72,23 @@ class GuiTest(unittest.TestCase):
         state = GuiState(feed_port=9912)
         state.process = Mock()
         state.process.poll.return_value = None
-        result = Mock(returncode=0, stdout=b"\xff\xd8jpeg", stderr=b"")
 
-        with patch("videosim.gui.subprocess.run", return_value=result) as run:
+        def write_preview(cmd, **kwargs):
+            location = next(part.removeprefix("location=") for part in cmd if part.startswith("location="))
+            Path(location).write_bytes(b"\x00\x00\x00" * 640 * 360)
+            return Mock(returncode=0, stdout=b"", stderr=b"")
+
+        with patch("videosim.gui.subprocess.run", side_effect=write_preview) as run:
             body, content_type = preview_image(state)
 
-        self.assertEqual(content_type, "image/jpeg")
-        self.assertEqual(body, b"\xff\xd8jpeg")
+        self.assertEqual(content_type, "image/bmp")
+        self.assertTrue(body.startswith(b"BM"))
         cmd = run.call_args.args[0]
         self.assertIn("gst-launch-1.0", cmd)
-        self.assertIn("uri=srt://127.0.0.1:9912?mode=caller", cmd)
-        self.assertIn("jpegenc", cmd)
-        self.assertIn("snapshot=true", cmd)
-        self.assertIn("fdsink", cmd)
+        self.assertIn("videotestsrc", cmd)
+        self.assertNotIn("srtsrc", cmd)
+        self.assertIn("num-buffers=1", cmd)
+        self.assertIn("filesink", cmd)
 
     def test_preview_image_returns_placeholder_when_not_video_available(self):
         body, content_type = preview_image(GuiState(mode="audio_only"))
@@ -90,11 +96,19 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(content_type, "image/svg+xml")
         self.assertIn(b"SRT Preview", body)
 
+    def test_rgb_frame_to_bmp_builds_browser_image(self):
+        bmp = rgb_frame_to_bmp(bytes([255, 0, 0, 0, 255, 0]), 2, 1)
+
+        self.assertTrue(bmp.startswith(b"BM"))
+        self.assertEqual(int.from_bytes(bmp[18:22], "little"), 2)
+        self.assertEqual(int.from_bytes(bmp[22:26], "little"), 1)
+
     def test_start_launches_normal_profile_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
 
         with patch("videosim.gui.subprocess.Popen") as popen:
             popen.return_value.stdout = []
+            popen.return_value.pid = 1234
             popen.return_value.poll.return_value = None
             state.start()
 
@@ -105,6 +119,21 @@ class GuiTest(unittest.TestCase):
         self.assertIn("--port", cmd)
         self.assertIn("9912", cmd)
         self.assertEqual(state.status, "running")
+        self.assertTrue(any("Starting normal feed: profile=profiles/srt-normal.yaml" in line for line in state.logs))
+        self.assertIn("Started normal feed at srt://127.0.0.1:9912?mode=caller pid=1234", state.logs)
+
+    def test_verbose_gui_logs_feed_launch_command(self):
+        state = GuiState(feed_port=9912)
+
+        with patch.dict("videosim.gui.os.environ", {"VIDEOSIM_VERBOSE": "1"}), patch(
+            "videosim.gui.subprocess.Popen"
+        ) as popen:
+            popen.return_value.stdout = []
+            popen.return_value.pid = 1234
+            popen.return_value.poll.return_value = None
+            state.start()
+
+        self.assertTrue(any("Feed launch command:" in line for line in state.logs))
 
     def test_start_launches_selected_outage_profile(self):
         state = GuiState(feed_port=9912, mode="black_video")

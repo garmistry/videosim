@@ -94,6 +94,25 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("gst-launch-1.0", stdout.getvalue())
         self.assertIn("srt://127.0.0.1:9910?mode=caller", stdout.getvalue())
 
+    def test_verbose_feed_logs_pipeline_command_and_pid(self):
+        class FakeProcess:
+            pid = 1234
+            stdin = None
+
+            def wait(self, timeout=None):
+                return 0
+
+        stdout = StringIO()
+        with redirect_stdout(stdout), patch.dict("videosim.feed.os.environ", {"VIDEOSIM_VERBOSE": "1"}), patch(
+            "videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"
+        ), patch("videosim.feed.subprocess.Popen", return_value=FakeProcess()):
+            code = run_video_feed(VideoFeedConfig(port=9910, captions=False))
+
+        self.assertEqual(code, 0)
+        self.assertIn("Feed config:", stdout.getvalue())
+        self.assertIn("GStreamer command:", stdout.getvalue())
+        self.assertIn("SRT feed subprocess pid=1234", stdout.getvalue())
+
     def test_keyboard_interrupt_stops_feed_cleanly(self):
         class FakeProcess:
             def __init__(self):

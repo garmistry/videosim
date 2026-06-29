@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import shutil
+import shlex
 import signal
 import subprocess
 import threading
@@ -47,6 +49,10 @@ def require_gst_launch() -> str:
     if not gst_launch:
         raise FeedError("Missing gst-launch-1.0. Run scripts/install-deps.sh.")
     return gst_launch
+
+
+def verbose_enabled() -> bool:
+    return os.environ.get("VIDEOSIM_VERBOSE", "").lower() in {"1", "true", "yes", "on"}
 
 
 def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
@@ -129,7 +135,18 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
 def run_video_feed(config: VideoFeedConfig) -> int:
     args = video_pipeline_args(config)
     print(f"Starting SRT video feed at {config.endpoint}", flush=True)
+    if verbose_enabled():
+        print(
+            "Feed config: "
+            f"port={config.port} size={config.width}x{config.height} framerate={config.framerate} "
+            f"video={config.video} audio={config.audio} captions={config.captions} "
+            f"pattern={config.pattern} frozen={config.frozen}",
+            flush=True,
+        )
+        print(f"GStreamer command: {shlex.join(args)}", flush=True)
     proc = subprocess.Popen(args, stdin=subprocess.PIPE if config.captions and config.video else None)
+    if verbose_enabled():
+        print(f"SRT feed subprocess pid={proc.pid}", flush=True)
     writer = None
     if config.captions and proc.stdin:
         writer = threading.Thread(target=write_caption_stream, args=(proc.stdin, config.framerate), daemon=True)

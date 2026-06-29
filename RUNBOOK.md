@@ -137,7 +137,9 @@ Video-present modes include a running clock overlay in the encoded SRT video so
 receivers can visually prove live motion and timing.
 
 When a running mode has video, the GUI opens a preview panel automatically. The
-preview uses GStreamer to pull refreshed frames from the active SRT endpoint.
+preview uses GStreamer to render a local frame matching the active mode without
+attaching another receiver to the SRT listener. Use Validate to prove actual SRT
+stream state.
 
 ## Deploy With Docker Compose
 
@@ -146,8 +148,16 @@ docker compose up --build app
 ```
 
 Open `http://127.0.0.1:8080`. The app service publishes the GUI on TCP 8080 and
-the SRT listener on UDP 9000. Override host ports with `VIDEOSIM_HTTP_PORT` and
+the SRT listener on UDP 9000. The GUI and SRT feed subprocess run inside the
+`videosim-app-1` container. Override host ports with `VIDEOSIM_HTTP_PORT` and
 `VIDEOSIM_FEED_PORT`.
+
+Verbose logging is enabled by default for the Compose app. Watch feed creation,
+container status, subprocess PID, and the exact GStreamer pipeline:
+
+```sh
+docker compose logs -f app
+```
 
 Print the GStreamer command without starting a feed:
 

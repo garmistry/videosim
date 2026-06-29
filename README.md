@@ -125,7 +125,8 @@ The GUI also shows status, intentional outage state, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
 file. Video-present SRT modes include a visible running clock overlay for
 receiver testing. When a video-capable SRT feed is running, the React GUI opens
-a live preview panel that refreshes frames pulled from the actual SRT endpoint.
+a preview panel that refreshes a local frame matching the active mode. Use
+Validate to prove actual SRT stream state.
 
 Deploy the GUI and SRT listener together with Docker Compose:
 
@@ -133,7 +134,13 @@ Deploy the GUI and SRT listener together with Docker Compose:
 docker compose up --build app
 ```
 
-Open `http://127.0.0.1:8080`.
+Open `http://127.0.0.1:8080`. The GUI and SRT feed process both run inside the
+`videosim-app-1` container. Verbose container logs show feed mode, profile,
+endpoint, subprocess PID, and the GStreamer pipeline:
+
+```sh
+docker compose logs -f app
+```
 
 Receiver URL:
 

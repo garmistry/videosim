@@ -1,6 +1,8 @@
 services:
   app:
     build: .
+    environment:
+      VIDEOSIM_VERBOSE: "${VIDEOSIM_VERBOSE:-1}"
     ports:
       - "${VIDEOSIM_HTTP_PORT:-8080}:8080"
       - "${VIDEOSIM_FEED_PORT:-9000}:${VIDEOSIM_FEED_PORT:-9000}/udp"

@@ -6,9 +6,11 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
@@ -63,6 +65,14 @@ def mode_from_form(params: dict[str, list[str]], default_mode: str) -> str:
     return params.get("mode", [default_mode])[0]
 
 
+def verbose_enabled() -> bool:
+    return os.environ.get("VIDEOSIM_VERBOSE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def running_in_container() -> bool:
+    return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+
+
 @dataclass
 class GuiState:
     feed_port: int = 9000
@@ -114,13 +124,17 @@ class GuiState:
             str(self.framerate),
         ]
         self.last_error = ""
+        container = "yes" if running_in_container() else "no"
+        self.log(f"Starting {self.mode} feed: profile={profile} endpoint={self.endpoint} container={container}")
+        if verbose_enabled():
+            self.log(f"Feed launch command: {shlex.join(cmd)}")
         try:
             self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         except OSError as exc:
             self.process = None
             self.fail(f"Failed to start {self.mode} feed: {exc}")
             return False
-        self.log(f"Started {self.mode} feed at {self.endpoint}")
+        self.log(f"Started {self.mode} feed at {self.endpoint} pid={self.process.pid}")
         threading.Thread(target=self._capture_logs, args=(self.process,), daemon=True).start()
         return True
 
@@ -199,6 +213,8 @@ class GuiState:
     def log(self, message: str):
         self.logs.append(message)
         del self.logs[:-200]
+        if verbose_enabled() or running_in_container():
+            print(f"[videosim-gui] {message}", flush=True)
 
     def _capture_logs(self, process):
         if not process.stdout:
@@ -436,44 +452,79 @@ def preview_image(state: GuiState) -> tuple[bytes, str]:
     if not controls["video"]:
         return preview_placeholder("No video track"), "image/svg+xml"
 
+    preview_width = min(640, state.width)
+    preview_height = max(1, round(state.height * preview_width / state.width))
+    pattern = "black" if controls["black_video"] else "smpte"
+    overlay = [] if controls["frozen_video"] else ["!", "clockoverlay", "halignment=right", "valignment=top", "shaded-background=true"]
+    tmp = tempfile.NamedTemporaryFile(prefix="videosim-preview-", suffix=".rgb", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
     try:
         result = subprocess.run(
             [
                 "gst-launch-1.0",
                 "-q",
-                "srtsrc",
-                f"uri={state.endpoint}",
+                "videotestsrc",
+                "num-buffers=1",
+                f"pattern={pattern}",
                 "!",
-                "tsdemux",
-                "name=demux",
-                "demux.",
+                f"video/x-raw,width={state.width},height={state.height},framerate={state.framerate}/1",
+            ]
+            + overlay
+            + [
                 "!",
-                "queue",
-                "!",
-                "h264parse",
-                "!",
-                "avdec_h264",
+                "videoscale",
                 "!",
                 "videoconvert",
                 "!",
-                "jpegenc",
-                "snapshot=true",
-                "quality=75",
+                f"video/x-raw,format=RGB,width={preview_width},height={preview_height}",
                 "!",
-                "fdsink",
-                "fd=1",
+                "filesink",
+                f"location={tmp_path}",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=10,
+            timeout=12,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
+        Path(tmp_path).unlink(missing_ok=True)
         return preview_placeholder(f"Preview unavailable: {exc}"), "image/svg+xml"
 
-    if result.returncode != 0 or not result.stdout:
+    frame_size = preview_width * preview_height * 3
+    frame = Path(tmp_path).read_bytes() if Path(tmp_path).exists() else b""
+    Path(tmp_path).unlink(missing_ok=True)
+    if result.returncode != 0 or len(frame) < frame_size:
         detail = result.stderr.decode("utf-8", "replace").splitlines()[-1:] or ["Preview unavailable"]
         return preview_placeholder(detail[0]), "image/svg+xml"
-    return result.stdout, "image/jpeg"
+    return rgb_frame_to_bmp(frame[:frame_size], preview_width, preview_height), "image/bmp"
+
+
+def rgb_frame_to_bmp(frame: bytes, width: int, height: int) -> bytes:
+    row_padding = (4 - (width * 3) % 4) % 4
+    pixel_bytes = bytearray()
+    for y in range(height - 1, -1, -1):
+        row = frame[y * width * 3 : (y + 1) * width * 3]
+        for index in range(0, len(row), 3):
+            red, green, blue = row[index : index + 3]
+            pixel_bytes.extend((blue, green, red))
+        pixel_bytes.extend(b"\x00" * row_padding)
+    file_size = 54 + len(pixel_bytes)
+    header = bytearray(b"BM")
+    header.extend(file_size.to_bytes(4, "little"))
+    header.extend((0).to_bytes(4, "little"))
+    header.extend((54).to_bytes(4, "little"))
+    header.extend((40).to_bytes(4, "little"))
+    header.extend(width.to_bytes(4, "little"))
+    header.extend(height.to_bytes(4, "little"))
+    header.extend((1).to_bytes(2, "little"))
+    header.extend((24).to_bytes(2, "little"))
+    header.extend((0).to_bytes(4, "little"))
+    header.extend(len(pixel_bytes).to_bytes(4, "little"))
+    header.extend((2835).to_bytes(4, "little"))
+    header.extend((2835).to_bytes(4, "little"))
+    header.extend((0).to_bytes(4, "little"))
+    header.extend((0).to_bytes(4, "little"))
+    return bytes(header + pixel_bytes)
 
 
 def preview_placeholder(message: str) -> bytes:

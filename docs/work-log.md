@@ -141,3 +141,9 @@
 - Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18100 --feed-port 9912` plus `curl -fsS http://127.0.0.1:18100/preview.jpg` returned the stopped-feed preview placeholder.
 - Fixed preview frame capture to use GStreamer instead of FFmpeg so local FFmpeg builds without `srt://` protocol support do not show `Protocol not found`.
+- Added verbose GUI/feed logging for Docker Compose app runs, including container status, endpoint, subprocess PID, and GStreamer command output.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed tests.test_gui` passed, 32 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 68 tests with 11 live tests skipped locally by default.
+- Changed GUI preview to render a local mode-matched frame instead of attaching a short-lived SRT receiver, because the receiver-preview path could destabilize the SRT listener.
+- Validation run: `python3 -m unittest discover -s tests` passed, 69 tests with 11 live tests skipped locally by default.
+- Docker runtime smoke: copied patched Python files into `videosim-app-1`, restarted the app, started normal feed, confirmed `/preview.jpg` returned BMP bytes, and `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json` passed while GUI state stayed running.

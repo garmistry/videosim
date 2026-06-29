@@ -8,6 +8,7 @@ from videosim.gui import (
     diagnostics_text,
     mode_from_controls,
     mode_from_form,
+    preview_image,
     render_page,
     state_payload,
 )
@@ -44,6 +45,48 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(payload["mode"], "video_only")
         self.assertEqual(payload["logs"], ["ready"])
         self.assertFalse(payload["controls"]["audio"])
+        self.assertEqual(payload["previewUrl"], "/preview.jpg")
+        self.assertFalse(payload["previewAvailable"])
+
+    def test_react_state_marks_running_video_feed_preview_available(self):
+        state = GuiState(feed_port=9912)
+        state.process = Mock()
+        state.process.poll.return_value = None
+
+        payload = state_payload(state)
+
+        self.assertTrue(payload["previewAvailable"])
+
+    def test_react_state_blocks_preview_for_audio_only_feed(self):
+        state = GuiState(feed_port=9912, mode="audio_only")
+        state.process = Mock()
+        state.process.poll.return_value = None
+
+        payload = state_payload(state)
+
+        self.assertFalse(payload["previewAvailable"])
+
+    def test_preview_image_grabs_jpeg_frame_from_running_srt_feed(self):
+        state = GuiState(feed_port=9912)
+        state.process = Mock()
+        state.process.poll.return_value = None
+        result = Mock(returncode=0, stdout=b"\xff\xd8jpeg", stderr=b"")
+
+        with patch("videosim.gui.subprocess.run", return_value=result) as run:
+            body, content_type = preview_image(state)
+
+        self.assertEqual(content_type, "image/jpeg")
+        self.assertEqual(body, b"\xff\xd8jpeg")
+        cmd = run.call_args.args[0]
+        self.assertIn("ffmpeg", cmd)
+        self.assertIn("srt://127.0.0.1:9912?mode=caller", cmd)
+        self.assertIn("pipe:1", cmd)
+
+    def test_preview_image_returns_placeholder_when_not_video_available(self):
+        body, content_type = preview_image(GuiState(mode="audio_only"))
+
+        self.assertEqual(content_type, "image/svg+xml")
+        self.assertIn(b"SRT Preview", body)
 
     def test_start_launches_normal_profile_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)

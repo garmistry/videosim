@@ -124,7 +124,8 @@ controls while a feed is running uses a controlled stream restart.
 The GUI also shows status, intentional outage state, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
 file. Video-present SRT modes include a visible running clock overlay for
-receiver testing.
+receiver testing. When a video-capable SRT feed is running, the React GUI opens
+a live preview panel that refreshes frames pulled from the actual SRT endpoint.
 
 Deploy the GUI and SRT listener together with Docker Compose:
 

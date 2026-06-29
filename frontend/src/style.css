@@ -96,6 +96,60 @@ button, .download {
   padding: 1rem;
 }
 
+.preview-pop {
+  animation: rise 260ms ease both;
+  background: #0f1821;
+  border: 1px solid #263747;
+  border-radius: 0.65rem;
+  bottom: 1rem;
+  box-shadow: 0 1rem 2.5rem rgba(15, 24, 33, 0.28);
+  color: white;
+  display: grid;
+  gap: 0.75rem;
+  max-width: min(34rem, calc(100vw - 2rem));
+  overflow: hidden;
+  padding: 0.85rem;
+  position: fixed;
+  right: 1rem;
+  z-index: 10;
+}
+
+.preview-pop header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.preview-pop h3 {
+  margin: 0;
+}
+
+.preview-pop img, .preview-empty {
+  aspect-ratio: 16 / 9;
+  background: #101820;
+  border-radius: 0.45rem;
+  display: block;
+  object-fit: cover;
+  width: 100%;
+}
+
+.preview-empty {
+  align-items: center;
+  color: #9fb3c1;
+  display: grid;
+  font-weight: 800;
+  place-items: center;
+}
+
+.preview-tab {
+  background: #176b87;
+  bottom: 1rem;
+  color: white;
+  position: fixed;
+  right: 1rem;
+  z-index: 10;
+}
+
 .status {
   border-radius: 999px;
   font-weight: 900;

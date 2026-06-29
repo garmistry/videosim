@@ -224,6 +224,10 @@ class GuiHandler(BaseHTTPRequestHandler):
         if path == "/state.json":
             self._send_json(state_payload(self.state))
             return
+        if path == "/preview.jpg":
+            body, content_type = preview_image(self.state)
+            self._send_bytes(body, content_type)
+            return
         if path.startswith("/static/"):
             self._send_static(path.removeprefix("/static/"))
             return
@@ -280,6 +284,14 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _send_bytes(self, body: bytes, content_type: str):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_static(self, relative_path: str):
         path = (STATIC_DIR / relative_path).resolve()
         try:
@@ -316,6 +328,11 @@ def render_page(state: GuiState) -> str:
     outage = "yes" if state.intentional_outage else "no"
     last_error = html.escape(state.last_error or "none")
     validation = html.escape(state.validation_output or "not run")
+    preview = (
+        '<h2>Preview</h2><img alt="SRT stream preview" src="/preview.jpg" style="width:min(100%,40rem);border-radius:0.5rem;background:#101820;">'
+        if state.status == "running"
+        else ""
+    )
     options = "\n".join(
         f'<option value="{html.escape(mode)}"{" selected" if mode == state.mode else ""}>{html.escape(label)}</option>'
         for mode, (label, _) in PROFILE_OPTIONS.items()
@@ -378,6 +395,7 @@ def render_page(state: GuiState) -> str:
   </div>
   <h2>Validation</h2>
   <pre>{validation}</pre>
+  {preview}
   <h2>Logs</h2>
   <pre>{logs}</pre>
   </div>
@@ -396,6 +414,8 @@ def state_payload(state: GuiState) -> dict:
         "endpoint": state.endpoint,
         "lastError": state.last_error or "none",
         "validationOutput": state.validation_output or "not run",
+        "previewAvailable": state.status == "running" and controls["video"],
+        "previewUrl": "/preview.jpg",
         "logs": state.logs[-80:],
         "modes": [
             {"value": mode, "label": label, "controls": MODE_CONTROLS[mode]}
@@ -407,6 +427,55 @@ def state_payload(state: GuiState) -> dict:
 
 def script_json(payload) -> str:
     return json.dumps(payload).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+
+
+def preview_image(state: GuiState) -> tuple[bytes, str]:
+    controls = controls_for_mode(state.mode)
+    if state.status != "running":
+        return preview_placeholder("Feed stopped"), "image/svg+xml"
+    if not controls["video"]:
+        return preview_placeholder("No video track"), "image/svg+xml"
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                state.endpoint,
+                "-frames:v",
+                "1",
+                "-q:v",
+                "4",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "pipe:1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return preview_placeholder(f"Preview unavailable: {exc}"), "image/svg+xml"
+
+    if result.returncode != 0 or not result.stdout:
+        detail = result.stderr.decode("utf-8", "replace").splitlines()[-1:] or ["Preview unavailable"]
+        return preview_placeholder(detail[0]), "image/svg+xml"
+    return result.stdout, "image/jpeg"
+
+
+def preview_placeholder(message: str) -> bytes:
+    safe = html.escape(message)
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#101820"/>
+  <rect x="18" y="18" width="604" height="324" rx="8" fill="none" stroke="#314455"/>
+  <text x="320" y="176" fill="#eef6f9" font-family="system-ui, sans-serif" font-size="24" font-weight="700" text-anchor="middle">SRT Preview</text>
+  <text x="320" y="212" fill="#9fb3c1" font-family="system-ui, sans-serif" font-size="16" text-anchor="middle">{safe}</text>
+</svg>""".encode("utf-8")
 
 
 def diagnostics_text(state: GuiState) -> str:

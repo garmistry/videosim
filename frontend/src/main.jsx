@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 
@@ -13,6 +13,8 @@ function App() {
   const state = readState();
   const [tab, setTab] = useState("Control");
   const [copied, setCopied] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(state.status === "running");
+  const [previewTick, setPreviewTick] = useState(Date.now());
   const mode = useMemo(
     () => state.modes.find((item) => item.value === state.mode) || state.modes[0],
     [state.mode, state.modes]
@@ -23,6 +25,14 @@ function App() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   }
+
+  useEffect(() => {
+    if (!previewOpen || state.status !== "running" || !state.previewAvailable) {
+      return undefined;
+    }
+    const timer = setInterval(() => setPreviewTick(Date.now()), 1800);
+    return () => clearInterval(timer);
+  }, [previewOpen, state.previewAvailable, state.status]);
 
   return (
     <div className="app-shell">
@@ -50,6 +60,16 @@ function App() {
           <StatusPill status={state.status} />
         </section>
 
+        {state.status === "running" && (
+          <PreviewPopup
+            open={previewOpen}
+            previewAvailable={state.previewAvailable}
+            previewUrl={`${state.previewUrl}?t=${previewTick}`}
+            onClose={() => setPreviewOpen(false)}
+            onOpen={() => setPreviewOpen(true)}
+          />
+        )}
+
         <section className="metrics">
           <Metric label="Outage" value={state.intentionalOutage ? "Intentional" : "Normal"} />
           <Metric label="Last error" value={state.lastError} />
@@ -61,6 +81,33 @@ function App() {
         {tab === "Logs" && <Output title="Logs" body={(state.logs || []).join("\n") || "No logs yet"} />}
       </main>
     </div>
+  );
+}
+
+function PreviewPopup({ open, previewAvailable, previewUrl, onClose, onOpen }) {
+  if (!open) {
+    return (
+      <button className="preview-tab" onClick={onOpen} type="button">
+        Preview
+      </button>
+    );
+  }
+
+  return (
+    <section className="preview-pop" role="dialog" aria-label="SRT stream preview">
+      <header>
+        <div>
+          <p className="eyebrow">Live SRT</p>
+          <h3>Preview</h3>
+        </div>
+        <button className="secondary" onClick={onClose} type="button">Hide</button>
+      </header>
+      {previewAvailable ? (
+        <img alt="Live SRT stream preview" src={previewUrl} />
+      ) : (
+        <div className="preview-empty">No video track in this mode.</div>
+      )}
+    </section>
   );
 }
 

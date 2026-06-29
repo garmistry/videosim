@@ -135,3 +135,8 @@
 - Docker app smoke: `docker compose up -d app`, `curl -fsS http://127.0.0.1:8080/state.json`, and `curl -fsS http://127.0.0.1:8080/static/app.js` passed.
 - Docker dependency proof: installing `gstreamer1.0-x` in the running app container made `gst-inspect-1.0 clockoverlay` pass.
 - Skipped check: final Docker image rebuild after adding `gstreamer1.0-x` could not complete because Docker repeatedly hung resolving base-image metadata before reaching project layers; package-level proof above verifies the added dependency.
+- Added automatic React GUI preview popup for running video-capable SRT feeds using refreshed FFmpeg JPEG frames from `/preview.jpg`.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 19 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 66 tests with 11 live tests skipped locally by default.
+- Validation run: `npm run build-ui && npm audit --omit=dev` passed with zero reported vulnerabilities.
+- HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18100 --feed-port 9912` plus `curl -fsS http://127.0.0.1:18100/preview.jpg` returned the stopped-feed preview placeholder.

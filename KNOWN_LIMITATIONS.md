@@ -24,3 +24,6 @@
 - No project-specific target receiver has been defined.
 - The soak harness is implemented, but 24-hour normal/outage soak evidence is
   still pending.
+- The GUI preview is a refreshed frame preview from FFmpeg, not native browser
+  SRT playback. Audio-only mode has no video preview, and each refresh briefly
+  acts as an SRT receiver.

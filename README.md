@@ -148,8 +148,10 @@ Receiver URL:
 srt://127.0.0.1:9000?mode=caller
 ```
 
-The SRT listener is started with `maxconn=10`, so up to 10 receiver clients can
-connect to that URL as callers.
+The SRT listener accepts receiver clients at that caller URL. This Docker image
+does not pass a `maxconn` URI option to GStreamer's `srtsink`; inspection showed
+that option is not a supported property in the packaged plugin and it can crash
+the listener.
 
 Stop the feed with Ctrl-C.
 

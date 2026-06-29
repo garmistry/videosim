@@ -148,3 +148,10 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 69 tests with 11 live tests skipped locally by default.
 - Docker runtime smoke: copied patched Python files into `videosim-app-1`, restarted the app, started normal feed, confirmed `/preview.jpg` returned BMP bytes, and `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json` passed while GUI state stayed running.
 - Added `maxconn=10` to every generated SRT listener URI so up to 10 caller receivers can connect.
+- Fixed Docker SRT stack smashing by removing the unsupported `maxconn` URI option from the GStreamer `srtsink` listener; container `gst-inspect-1.0 srtsink` exposes caller signals but no `maxconn`/max-connections property.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed` passed, 12 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 69 tests with 11 live tests skipped locally by default.
+- Docker runtime validation: copied patched `videosim/feed.py` into `videosim-app-1`, restarted the app, started a normal feed, and `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json` passed.
+- Docker multi-receiver smoke: two simultaneous `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json` clients both passed against the same SRT listener.
+- Recent Docker log check: `docker compose logs --since 1m app | grep -i 'stack smashing\|Feed process exited'` returned no matches while GUI state stayed `running`.
+- Skipped check: `docker compose build app` was stopped after Docker stalled resolving `node:20-slim` metadata; the running app container was patched and validated, and the source tree contains the durable fix for the next successful build.

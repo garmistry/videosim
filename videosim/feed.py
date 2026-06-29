@@ -14,7 +14,7 @@ class FeedError(Exception):
     pass
 
 
-SRT_MAX_CALLERS = 10
+SRT_CALLER_LIMIT = "unbounded-by-gstreamer-srtsink"
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "name=mux",
         "!",
         "srtsink",
-        f"uri=srt://:{config.port}?mode=listener&maxconn={SRT_MAX_CALLERS}",
+        f"uri=srt://:{config.port}?mode=listener",
     ]
     if config.video:
         args.extend(["videotestsrc", "is-live=true", f"pattern={config.pattern}"])
@@ -143,7 +143,7 @@ def run_video_feed(config: VideoFeedConfig) -> int:
             "Feed config: "
             f"port={config.port} size={config.width}x{config.height} framerate={config.framerate} "
             f"video={config.video} audio={config.audio} captions={config.captions} "
-            f"pattern={config.pattern} frozen={config.frozen} max_callers={SRT_MAX_CALLERS}",
+            f"pattern={config.pattern} frozen={config.frozen} srt_caller_limit={SRT_CALLER_LIMIT}",
             flush=True,
         )
         print(f"GStreamer command: {shlex.join(args)}", flush=True)

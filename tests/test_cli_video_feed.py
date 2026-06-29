@@ -4,7 +4,7 @@ from io import StringIO
 from unittest.mock import patch
 
 from videosim.cli import main
-from videosim.feed import VideoFeedConfig, cea608_pairs, run_video_feed, video_pipeline_args
+from videosim.feed import SRT_MAX_CALLERS, VideoFeedConfig, cea608_pairs, run_video_feed, video_pipeline_args
 
 
 class VideoFeedCliTest(unittest.TestCase):
@@ -33,7 +33,7 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("mpegtsmux", args)
         self.assertIn("srtsink", args)
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
-        self.assertIn("uri=srt://:9910?mode=listener", args)
+        self.assertIn(f"uri=srt://:9910?mode=listener&maxconn={SRT_MAX_CALLERS}", args)
 
     def test_pipeline_can_disable_audio(self):
         config = VideoFeedConfig(port=9910, audio=False)
@@ -110,6 +110,7 @@ class VideoFeedCliTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("Feed config:", stdout.getvalue())
+        self.assertIn("max_callers=10", stdout.getvalue())
         self.assertIn("GStreamer command:", stdout.getvalue())
         self.assertIn("SRT feed subprocess pid=1234", stdout.getvalue())
 

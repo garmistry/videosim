@@ -152,6 +152,9 @@ the SRT listener on UDP 9000. The GUI and SRT feed subprocess run inside the
 `videosim-app-1` container. Override host ports with `VIDEOSIM_HTTP_PORT` and
 `VIDEOSIM_FEED_PORT`.
 
+Generated SRT listener pipelines include `maxconn=10`; connect receiver clients
+to `srt://127.0.0.1:9000?mode=caller`.
+
 Verbose logging is enabled by default for the Compose app. Watch feed creation,
 container status, subprocess PID, and the exact GStreamer pipeline:
 

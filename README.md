@@ -148,6 +148,9 @@ Receiver URL:
 srt://127.0.0.1:9000?mode=caller
 ```
 
+The SRT listener is started with `maxconn=10`, so up to 10 receiver clients can
+connect to that URL as callers.
+
 Stop the feed with Ctrl-C.
 
 ## Documentation

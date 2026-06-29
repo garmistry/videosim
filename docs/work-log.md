@@ -147,3 +147,4 @@
 - Changed GUI preview to render a local mode-matched frame instead of attaching a short-lived SRT receiver, because the receiver-preview path could destabilize the SRT listener.
 - Validation run: `python3 -m unittest discover -s tests` passed, 69 tests with 11 live tests skipped locally by default.
 - Docker runtime smoke: copied patched Python files into `videosim-app-1`, restarted the app, started normal feed, confirmed `/preview.jpg` returned BMP bytes, and `python -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json` passed while GUI state stayed running.
+- Added `maxconn=10` to every generated SRT listener URI so up to 10 caller receivers can connect.

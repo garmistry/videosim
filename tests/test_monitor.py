@@ -329,6 +329,39 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(config.framerate, "59.94")
         self.assertEqual(config.endpoint, "srt://app:9000?mode=caller")
 
+    def test_config_for_external_stream_preserves_registered_endpoint(self):
+        config = config_for_stream(
+            stream()
+            | {
+                "source": "external",
+                "endpoint": "srt://camera.local:9999?mode=caller",
+                "framerate": "59.94",
+            },
+            "app",
+        )
+
+        self.assertEqual(config.framerate, "59.94")
+        self.assertEqual(config.endpoint, "srt://camera.local:9999?mode=caller")
+
+    def test_monitor_once_alerts_on_external_missing_video(self):
+        def validator(config):
+            return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)
+
+        state = run_monitor_once(
+            {"streams": [stream() | {"source": "external", "endpoint": "srt://camera.local:9999?mode=caller"}]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertEqual([alarm["monitorId"] for alarm in state["alarms"]], ["essence_video_present"])
+
     def test_frame_rate_checker_raises_mismatch_alarm(self):
         with patch("videosim.monitor.measure_frame_rate", return_value=FrameRateReport(measured_fps=60.0, source="sample")):
             issues = frame_rate_issues_for_stream(stream() | {"framerate": "50"}, VideoFeedConfig(framerate="50"))

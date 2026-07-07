@@ -387,3 +387,13 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 138 tests with 11 live tests skipped locally by default.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Added a SQLite-backed feed registration store behind a `FeedRegistrationStore` boundary, with CLI GUI startup using `VIDEOSIM_DB_PATH` or the default user data path for persisted feed definitions and alert profiles.
+- Added external SRT and external DASH feed registration in the GUI, including URL validation, persisted source/URL fields, monitorable external status, validation through the registered endpoint, and UI behavior that hides generated-feed start/stop/fault controls for external feeds.
+- Added external DASH URL validation support for reachable MPDs with common `SegmentURL` or `SegmentTemplate` media references, plus external DASH frame-rate/loudness probe input support.
+- Updated README, runbook, known limitations, and test plan for SQLite registration and bring-your-own SRT/DASH feed alerting.
+- Validation run: `python3 -m unittest tests.test_feed_store tests.test_gui tests.test_monitor tests.test_validator tests.test_cli_video_feed tests.test_framerate tests.test_loudness` passed, 101 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 146 tests with 11 live tests skipped locally by default.
+- Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

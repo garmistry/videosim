@@ -14,6 +14,11 @@ class VideoFeedCliTest(unittest.TestCase):
 
         self.assertEqual(config.endpoint, "srt://127.0.0.1:9910?mode=caller")
 
+    def test_endpoint_can_use_external_override(self):
+        config = VideoFeedConfig(protocol="dash", external_endpoint="https://example.test/live/manifest.mpd")
+
+        self.assertEqual(config.endpoint, "https://example.test/live/manifest.mpd")
+
     def test_pipeline_uses_srt_listener_video_and_audio_test_sources(self):
         config = VideoFeedConfig(port=9910, width=320, height=180, framerate=10)
 

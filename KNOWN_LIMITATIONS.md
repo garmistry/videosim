@@ -31,16 +31,23 @@
   still pending.
 - The GUI preview is a local refreshed frame matching the active mode, not
   native browser SRT playback and not validation proof of the SRT output.
-  Audio-only mode has no video preview.
+  Audio-only mode and external feeds have no video preview.
 - GUI feed metrics are estimates from configured media tracks and elapsed run
-  time. They are not actual SRT socket byte counters or per-receiver telemetry.
+  time for generated feeds. They are not actual SRT socket byte counters,
+  external-feed ingress counters, or per-receiver telemetry.
+- SQLite feed registration persists feed definitions and alert profiles only.
+  Local feed subprocesses are intentionally not restored as running processes
+  after a GUI restart.
+- External DASH validation supports reachable MPDs with common `SegmentURL` or
+  `SegmentTemplate` media references. Unusual DASH packaging may need a new
+  resolver in the validation layer.
 
 ## Monitoring
 
 - The separate monitor app uses a shared JSON state file rather than a database
   or event broker.
-- Alert profiles are kept in the running GUI process with each stream record.
-  They are not persisted across GUI restarts.
+- Feed definitions and alert profiles are persisted by the GUI, but monitor
+  alarm/event history still lives in the shared JSON monitor state file.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

@@ -40,6 +40,7 @@ class VideoFeedConfig:
     dash_dir: str = "/tmp/videosim-dash"
     dash_base_url: str = ""
     dash_manifest: str = DASH_MANIFEST
+    external_endpoint: str = ""
 
     def __post_init__(self):
         for name in ("port", "width", "height", "audio_frequency"):
@@ -58,6 +59,8 @@ class VideoFeedConfig:
 
     @property
     def endpoint(self) -> str:
+        if self.external_endpoint:
+            return self.external_endpoint
         if self.protocol == "dash":
             if self.dash_base_url:
                 return f"{self.dash_base_url.rstrip('/')}/{self.dash_manifest}"

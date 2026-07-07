@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from videosim.feed_store import SqliteFeedStore
 from videosim.gui import (
     GuiState,
     MODE_CONTROLS,
@@ -204,6 +205,8 @@ class GuiTest(unittest.TestCase):
         self.assertIn("FullPreviewDialog", source)
         self.assertIn("preview-thumb", source)
         self.assertIn('name="framerate"', source)
+        self.assertIn('name="source"', source)
+        self.assertIn('name="external_url"', source)
         self.assertIn("state.framerates", source)
         self.assertIn("AlertProfileCard", source)
         self.assertIn('name="alert_monitor"', source)
@@ -269,6 +272,54 @@ class GuiTest(unittest.TestCase):
         state.select_stream("stream-1")
 
         self.assertEqual(state.endpoint, "srt://127.0.0.1:9912?mode=caller")
+
+    def test_external_stream_payload_uses_registered_endpoint_without_process(self):
+        state = GuiState(feed_port=9912)
+        stream = state.create_stream(
+            name="Camera",
+            protocol="srt",
+            source="external",
+            external_url="srt://camera.local:9999?mode=caller",
+        )
+
+        payload = state_payload(state)
+
+        self.assertEqual(stream.status, "running")
+        self.assertEqual(payload["endpoint"], "srt://camera.local:9999?mode=caller")
+        self.assertEqual(payload["streams"][0]["source"], "external")
+        self.assertEqual(payload["streams"][0]["externalUrl"], "srt://camera.local:9999?mode=caller")
+        self.assertFalse(payload["previewAvailable"])
+        self.assertFalse(payload["streams"][0]["previewAvailable"])
+        self.assertEqual(payload["streams"][0]["metrics"]["bitrateBps"], 0)
+        with patch("videosim.gui.subprocess.Popen") as popen:
+            self.assertTrue(state.start(stream.id))
+        popen.assert_not_called()
+
+    def test_external_url_validation_rejects_protocol_mismatch(self):
+        state = GuiState()
+
+        with self.assertRaisesRegex(ValueError, "External DASH URL"):
+            state.create_stream(name="Bad", protocol="dash", source="external", external_url="srt://camera.local:9999?mode=caller")
+
+    def test_gui_state_persists_feed_registrations_to_sqlite_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "feeds.sqlite3"
+            state = GuiState(feed_store=SqliteFeedStore(path))
+            created = state.create_stream(
+                name="External camera",
+                protocol="srt",
+                source="external",
+                external_url="srt://camera.local:9999?mode=caller",
+            )
+            state.update_alert_profile(created.id, ["essence_video_present"], 4)
+
+            reloaded = GuiState(feed_store=SqliteFeedStore(path))
+
+        self.assertEqual(reloaded.selected_stream_id, "stream-1")
+        self.assertEqual(reloaded.endpoint, "srt://camera.local:9999?mode=caller")
+        self.assertEqual(reloaded.active_stream.source, "external")
+        self.assertEqual(reloaded.active_stream.alert_enabled_ids, ["essence_video_present"])
+        self.assertEqual(reloaded.active_stream.alert_delay_seconds, 4)
 
     def test_render_page_links_to_feed_detail(self):
         state = GuiState(feed_port=9912)

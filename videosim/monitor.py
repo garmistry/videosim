@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -84,6 +84,8 @@ def config_for_stream(stream: dict, srt_host: str) -> VideoFeedConfig:
         for key in ("width", "height", "framerate")
         if key in stream and stream[key] not in (None, "")
     }
+    if stream.get("source") == "external":
+        return replace(config, **overrides, protocol=stream["protocol"], external_endpoint=stream["endpoint"])
     if stream["protocol"] == "dash":
         return VideoFeedConfig(
             **{

@@ -141,19 +141,29 @@ Open `http://127.0.0.1:8080`.
 The GUI starts with zero configured feeds. Use Create feed first, then use the
 active-feed table for CRUDL operations:
 
-- Create a named SRT or DASH feed.
+- Create a named generated SRT/DASH feed or register an external SRT/DASH URL.
 - List all configured streams.
 - Open/read a stream at `/feeds/<stream-id>` to see endpoint, status, logs, and validation output.
-- Update the selected stream name, protocol, or mode.
+- Update the selected stream name, source, protocol, mode, URL, or frame rate.
 - Delete the selected stream.
+
+GUI feed registrations are stored in SQLite when the GUI is launched through
+`python3 -m videosim gui`. The default path is
+`$XDG_DATA_HOME/videosim/feeds.sqlite3` or
+`~/.local/share/videosim/feeds.sqlite3`; set `VIDEOSIM_DB_PATH` to override it.
+The database stores feed definitions and alert profiles, not local subprocess
+handles or transient runtime metrics.
 
 Feed detail pages are directly bookmarkable and do not include the create-feed
 form; use `/` for the create/list workflow. Use the protocol selector to choose
 SRT or DASH, then use the mode selector to start normal, audio-only, video-only,
-no-captions, black-video, or frozen-video feeds. Each feed has independent
-start, stop, validate, and copy URL actions. Use the runtime fault controls to
-toggle video, audio, captions, black video, or frozen video while the GUI is
-running; the MVP applies those changes with a controlled stream restart.
+no-captions, black-video, or frozen-video feeds. Select External URL to register
+a bring-your-own SRT endpoint or DASH manifest URL for validation and alerting.
+Generated feeds have independent start, stop, validate, and copy URL actions.
+External feeds expose validate, copy URL, and alert profile actions only. Use
+the runtime fault controls on generated feeds to toggle video, audio, captions,
+black video, or frozen video while the GUI is running; the MVP applies those
+changes with a controlled stream restart.
 
 Use the Validate button to run the current profile validation from the GUI.
 Use Download diagnostics to export status, mode, endpoint, last error,

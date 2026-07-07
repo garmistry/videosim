@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
+from urllib.parse import urljoin
+from urllib.request import urlopen
 from xml.etree import ElementTree
 
 from .feed import VideoFeedConfig
@@ -80,16 +84,17 @@ def _validate_dash(config: VideoFeedConfig, report: ValidationReport) -> Validat
         report.errors.append(f"DASH manifest parse failed: {exc}")
         return report
 
-    report.video_present = "video" in adaptations and bool(_wait_for_dash_segment(config, "video"))
-    report.audio_present = "audio" in adaptations and bool(_wait_for_dash_segment(config, "audio"))
+    video_segment = _wait_for_dash_segment(config, "video", manifest)
+    audio_segment = _wait_for_dash_segment(config, "audio", manifest)
+    report.video_present = "video" in adaptations and bool(video_segment)
+    report.audio_present = "audio" in adaptations and bool(audio_segment)
     report.reachable = (report.video_present if config.video else True) and (report.audio_present if config.audio else True)
     if not report.reachable:
         report.errors.append("DASH feed unreachable or expected segments missing")
         return report
 
     if config.video:
-        video_segment = _wait_for_dash_segment(config, "video")
-        report.captions_present = "text" in adaptations and _dash_captions_present(config)
+        report.captions_present = "text" in adaptations and _dash_captions_present(config, manifest)
         if config.pattern == "black" and video_segment:
             frames = _read_dash_rgb_frames(config, video_segment, 3)
             report.black_video = _black_pixel_ratio(frames) >= 0.95
@@ -270,7 +275,19 @@ def _read_rgb_frames(config: VideoFeedConfig, count: int):
     return result.stdout[: frame_size * count]
 
 
-def _wait_for_dash_manifest(config: VideoFeedConfig, timeout: float = 15) -> Path | None:
+def _external_dash(config: VideoFeedConfig) -> bool:
+    return bool(config.external_endpoint) and config.endpoint.startswith(("http://", "https://"))
+
+
+def _wait_for_dash_manifest(config: VideoFeedConfig, timeout: float = 15) -> Path | bytes | None:
+    if _external_dash(config):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            data = _fetch_url(config.endpoint)
+            if data:
+                return data
+            time.sleep(0.25)
+        return None
     manifest = Path(config.dash_dir) / config.dash_manifest
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -280,27 +297,46 @@ def _wait_for_dash_manifest(config: VideoFeedConfig, timeout: float = 15) -> Pat
     return None
 
 
-def _dash_adaptations(manifest: Path) -> set[str]:
-    root = ElementTree.parse(manifest).getroot()
+def _dash_root(manifest: Path | bytes):
+    return ElementTree.fromstring(manifest) if isinstance(manifest, bytes) else ElementTree.parse(manifest).getroot()
+
+
+def _dash_adaptations(manifest: Path | bytes) -> set[str]:
+    root = _dash_root(manifest)
     adaptations = set()
     for element in root.iter():
         if element.tag.endswith("AdaptationSet"):
-            content_type = element.attrib.get("contentType")
+            content_type = _adaptation_kind(element)
             if content_type:
                 adaptations.add(content_type)
     return adaptations
 
 
-def _wait_for_dash_adaptations(config: VideoFeedConfig, manifest: Path, timeout: float = 8) -> set[str]:
+def _wait_for_dash_adaptations(config: VideoFeedConfig, manifest: Path | bytes, timeout: float = 8) -> set[str]:
     deadline = time.monotonic() + timeout
     adaptations = _dash_adaptations(manifest)
-    while config.captions and "text" not in adaptations and time.monotonic() < deadline:
+    while not isinstance(manifest, bytes) and config.captions and "text" not in adaptations and time.monotonic() < deadline:
         time.sleep(0.25)
         adaptations = _dash_adaptations(manifest)
     return adaptations
 
 
-def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, timeout: float = 15) -> Path | None:
+def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, manifest: Path | bytes | None = None, timeout: float = 15) -> Path | bytes | None:
+    if _external_dash(config):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            source = manifest or _wait_for_dash_manifest(config, timeout=1)
+            if source:
+                try:
+                    urls = _dash_segment_urls(source, config.endpoint, kind)
+                except ElementTree.ParseError:
+                    return None
+                for url in urls:
+                    data = _fetch_url(url)
+                    if data:
+                        return data
+            time.sleep(0.25)
+        return None
     pattern = f"{kind}_0_*.ts"
     root = Path(config.dash_dir)
     deadline = time.monotonic() + timeout
@@ -315,7 +351,10 @@ def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, timeout: float = 
     return None
 
 
-def _dash_captions_present(config: VideoFeedConfig) -> bool:
+def _dash_captions_present(config: VideoFeedConfig, manifest: Path | bytes | None = None) -> bool:
+    if _external_dash(config):
+        source = manifest or _wait_for_dash_manifest(config, timeout=1)
+        return bool(source and "text" in _dash_adaptations(source))
     caption_file = Path(config.dash_dir) / "captions.vtt"
     if not caption_file.is_file():
         return False
@@ -323,39 +362,50 @@ def _dash_captions_present(config: VideoFeedConfig) -> bool:
     return text.startswith("WEBVTT") and "VIDEOSIM" in text
 
 
-def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path, count: int):
+def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path | bytes, count: int):
     frame_size = config.width * config.height * 3
-    result = subprocess.run(
-        [
-            "gst-launch-1.0",
-            "-q",
-            "filesrc",
-            f"location={segment}",
-            "!",
-            "tsdemux",
-            "name=demux",
-            "demux.",
-            "!",
-            "queue",
-            "!",
-            "h264parse",
-            "!",
-            "avdec_h264",
-            "!",
-            "videoconvert",
-            "!",
-            f"video/x-raw,format=RGB,width={config.width},height={config.height}",
-            "!",
-            "identity",
-            f"eos-after={count}",
-            "!",
-            "fdsink",
-            "fd=1",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=12,
-    )
+    temp_path = None
+    if isinstance(segment, bytes):
+        tmp = tempfile.NamedTemporaryFile(prefix="videosim-dash-segment-", suffix=".ts", delete=False)
+        tmp.write(segment)
+        tmp.close()
+        temp_path = tmp.name
+        segment = Path(temp_path)
+    try:
+        result = subprocess.run(
+            [
+                "gst-launch-1.0",
+                "-q",
+                "filesrc",
+                f"location={segment}",
+                "!",
+                "tsdemux",
+                "name=demux",
+                "demux.",
+                "!",
+                "queue",
+                "!",
+                "h264parse",
+                "!",
+                "avdec_h264",
+                "!",
+                "videoconvert",
+                "!",
+                f"video/x-raw,format=RGB,width={config.width},height={config.height}",
+                "!",
+                "identity",
+                f"eos-after={count}",
+                "!",
+                "fdsink",
+                "fd=1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=12,
+        )
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode("utf-8", errors="replace"))
     if len(result.stdout) < frame_size * count:
@@ -369,6 +419,91 @@ def _receiver_succeeds(args, timeout):
     except subprocess.TimeoutExpired:
         return False
     return result.returncode == 0
+
+
+def _fetch_url(url: str, timeout: float = 8) -> bytes:
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            return response.read()
+    except Exception:
+        return b""
+
+
+def _adaptation_kind(element) -> str:
+    content_type = element.attrib.get("contentType", "")
+    if content_type in {"video", "audio", "text"}:
+        return content_type
+    mime_values = [element.attrib.get("mimeType", "")]
+    mime_values.extend(child.attrib.get("mimeType", "") for child in element if child.tag.endswith("Representation"))
+    codecs = " ".join([element.attrib.get("codecs", ""), *[child.attrib.get("codecs", "") for child in element if child.tag.endswith("Representation")]]).lower()
+    for mime in (value.lower() for value in mime_values):
+        if mime.startswith("video/"):
+            return "video"
+        if mime.startswith("audio/"):
+            return "audio"
+        if mime.startswith("text/") or mime == "application/ttml+xml" or (mime == "application/mp4" and "wvtt" in codecs):
+            return "text"
+    return ""
+
+
+def _dash_segment_urls(manifest: Path | bytes, manifest_url: str, kind: str) -> list[str]:
+    root = _dash_root(manifest)
+    urls = []
+    root_base = _node_base_url(manifest_url, root)
+    periods = _children(root, "Period") or [root]
+    for period in periods:
+        period_base = _node_base_url(root_base, period)
+        for adaptation in _children(period, "AdaptationSet"):
+            if _adaptation_kind(adaptation) != kind:
+                continue
+            adaptation_base = _node_base_url(period_base, adaptation)
+            representations = _children(adaptation, "Representation") or [adaptation]
+            for representation in representations:
+                rep_base = _node_base_url(adaptation_base, representation)
+                urls.extend(_segment_list_urls(representation, adaptation, rep_base))
+                urls.extend(_segment_template_urls(representation, adaptation, rep_base))
+    return urls
+
+
+def _children(element, suffix: str) -> list:
+    return [child for child in list(element) if child.tag.endswith(suffix)]
+
+
+def _first_child(element, suffix: str):
+    return next((child for child in list(element) if child.tag.endswith(suffix)), None)
+
+
+def _node_base_url(base: str, element) -> str:
+    node = _first_child(element, "BaseURL")
+    if node is not None and node.text and node.text.strip():
+        return urljoin(base, node.text.strip())
+    return base
+
+
+def _segment_list_urls(representation, adaptation, base_url: str) -> list[str]:
+    segment_list = _first_child(representation, "SegmentList") or _first_child(adaptation, "SegmentList")
+    if segment_list is None:
+        return []
+    return [urljoin(base_url, segment.attrib["media"]) for segment in _children(segment_list, "SegmentURL") if segment.attrib.get("media")]
+
+
+def _segment_template_urls(representation, adaptation, base_url: str) -> list[str]:
+    template = _first_child(representation, "SegmentTemplate") or _first_child(adaptation, "SegmentTemplate")
+    if template is None or not template.attrib.get("media"):
+        return []
+    try:
+        start_number = int(template.attrib.get("startNumber", "1"))
+    except ValueError:
+        start_number = 1
+    media = _template_media(template.attrib["media"], representation.attrib.get("id", ""), start_number)
+    return [urljoin(base_url, media)]
+
+
+def _template_media(media: str, representation_id: str, number: int) -> str:
+    media = media.replace("$RepresentationID$", representation_id)
+    media = re.sub(r"\$Number(?:%0(\d+)d)?\$", lambda match: str(number).zfill(int(match.group(1) or 0)), media)
+    media = re.sub(r"\$Time(?:%0(\d+)d)?\$", lambda match: "0".zfill(int(match.group(1) or 0)), media)
+    return media
 
 
 def _black_pixel_ratio(frames):

@@ -6,6 +6,7 @@ import sys
 from dataclasses import replace
 
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
+from .feed_store import SqliteFeedStore, default_feed_db_path
 from .gui import GuiState, run_gui
 from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
 from .profile import ProfileError, load_profile
@@ -46,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--framerate", help="override the profile framerate")
     validate.add_argument("--dash-dir", help="directory containing DASH MPD and media segments")
     validate.add_argument("--dash-base-url", help="base URL used when reporting DASH endpoint")
+    validate.add_argument("--endpoint", help="external SRT or DASH endpoint URL to validate")
     validate.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     monitor = subparsers.add_parser("monitor", help="poll GUI feeds and write monitor alarms/events")
@@ -111,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                     width=args.width,
                     height=args.height,
                     framerate=args.framerate,
+                    feed_store=SqliteFeedStore(default_feed_db_path()),
                 ),
             )
             return 0
@@ -127,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
                     "protocol": args.protocol,
                     "dash_dir": args.dash_dir,
                     "dash_base_url": args.dash_base_url,
+                    "external_endpoint": args.endpoint,
                 }.items()
                 if value is not None
             }

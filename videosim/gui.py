@@ -13,12 +13,15 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
+from .feed_store import FeedRegistrationStore
 from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
 from .monitor_catalog import monitor_catalog_payload
+from .profile import load_profile
+from .validator import human_summary, validate_config
 
 
 PROFILE_OPTIONS = {
@@ -31,6 +34,7 @@ PROFILE_OPTIONS = {
 }
 
 PROTOCOL_OPTIONS = {"srt": "SRT", "dash": "DASH"}
+SOURCE_OPTIONS = {"generated": "Generated", "external": "External URL"}
 
 CONTROL_FIELDS = ("video", "audio", "captions", "black_video", "frozen_video")
 CONTROL_FORM_FIELD = "controls"
@@ -103,6 +107,33 @@ def format_bytes(byte_count: int) -> str:
     return f"{byte_count} B"
 
 
+def normalize_source(source: str) -> str:
+    source = (source or "generated").strip()
+    if source not in SOURCE_OPTIONS:
+        raise ValueError(f"Unsupported feed source: {source}")
+    return source
+
+
+def validate_external_url(protocol: str, url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        raise ValueError("External feed URL is required")
+    parsed = urlparse(url)
+    if protocol == "srt":
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("External SRT URL must include a valid port") from exc
+        if parsed.scheme != "srt" or not parsed.hostname or not port:
+            raise ValueError("External SRT URL must look like srt://host:port?mode=caller")
+        return url
+    if protocol == "dash":
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("External DASH URL must be an http(s) manifest URL")
+        return url
+    raise ValueError(f"Unsupported protocol: {protocol}")
+
+
 @dataclass
 class FeedRecord:
     id: str
@@ -115,6 +146,8 @@ class FeedRecord:
     framerate: str | int | float
     dash_dir: str
     mode: str
+    source: str = "generated"
+    external_url: str = ""
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
     last_error: str = ""
@@ -127,26 +160,34 @@ class FeedRecord:
 
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
+        self.source = normalize_source(self.source)
+        self.external_url = validate_external_url(self.protocol, self.external_url) if self.source == "external" else ""
         self.alert_enabled_ids = normalize_enabled_alerts(self.alert_enabled_ids)
         self.alert_delay_seconds = normalize_alert_delay(self.alert_delay_seconds)
 
     @property
     def endpoint(self) -> str:
+        if self.source == "external":
+            return self.external_url
         if self.protocol == "dash":
             return f"http://127.0.0.1:{self.http_port}/dash/{self.id}/manifest.mpd"
         return f"srt://127.0.0.1:{self.feed_port}?mode=caller"
 
     @property
     def status(self) -> str:
+        if self.source == "external":
+            return "running"
         if self.process and self.process.poll() is None:
             return "running"
         return "stopped"
 
     @property
     def intentional_outage(self) -> bool:
-        return self.mode != "normal"
+        return self.source == "generated" and self.mode != "normal"
 
     def bitrate_bps(self) -> int:
+        if self.source == "external":
+            return 0
         controls = controls_for_mode(self.mode)
         video_bps = 0
         if controls["video"]:
@@ -199,10 +240,15 @@ class GuiState:
     validation_output: str = ""
     streams: dict[str, FeedRecord] = field(default_factory=dict)
     selected_stream_id: str = ""
+    feed_store: FeedRegistrationStore | None = None
     _next_stream_number: int = 1
 
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
+        if self.feed_store and not self.streams:
+            self._load_streams_from_store()
+        if self.streams:
+            self._next_stream_number = max(self._next_stream_number, next_stream_number(self.streams))
         if self.streams and not self.selected_stream_id:
             self.select_stream(next(iter(self.streams)))
 
@@ -239,6 +285,8 @@ class GuiState:
         name: str = "",
         protocol: str = "srt",
         mode: str = "normal",
+        source: str = "generated",
+        external_url: str = "",
         feed_port: int | None = None,
         width: int | None = None,
         height: int | None = None,
@@ -249,6 +297,7 @@ class GuiState:
             raise ValueError(f"Unsupported protocol: {protocol}")
         if mode not in PROFILE_OPTIONS:
             raise ValueError(f"Unsupported mode: {mode}")
+        source = normalize_source(source)
         stream_id = f"stream-{self._next_stream_number}"
         self._next_stream_number += 1
         feed_port = feed_port or self.next_available_port()
@@ -263,7 +312,10 @@ class GuiState:
             framerate=framerate or self.framerate,
             dash_dir=str(Path(self.dash_dir) / stream_id),
             mode=mode,
+            source=source,
+            external_url=external_url,
         )
+        self._persist_stream(stream)
         self.streams[stream_id] = stream
         if select:
             self.select_stream(stream_id)
@@ -294,31 +346,39 @@ class GuiState:
         name: str | None = None,
         protocol: str | None = None,
         mode: str | None = None,
+        source: str | None = None,
+        external_url: str | None = None,
         framerate: str | int | float | None = None,
     ) -> bool:
         if stream_id not in self.streams:
             self.fail(f"Unsupported stream: {stream_id}")
             return False
         stream = self.streams[stream_id]
-        restart = stream.status == "running"
+        next_protocol = protocol if protocol is not None else stream.protocol
+        next_mode = mode if mode is not None else stream.mode
+        next_source = normalize_source(source if source is not None else stream.source)
+        next_framerate = normalize_frame_rate(framerate) if framerate is not None else stream.framerate
+        next_external_url = external_url if external_url is not None else stream.external_url
+        if next_protocol not in PROTOCOL_OPTIONS:
+            self.fail(f"Unsupported protocol: {next_protocol}")
+            return False
+        if next_mode not in PROFILE_OPTIONS:
+            self.fail(f"Unsupported mode: {next_mode}")
+            return False
+        next_external_url = validate_external_url(next_protocol, next_external_url) if next_source == "external" else ""
+        restart = stream.source == "generated" and stream.status == "running"
         if restart:
             self.stop(stream_id)
         if name is not None and name.strip():
             stream.name = name.strip()
-        if protocol is not None:
-            if protocol not in PROTOCOL_OPTIONS:
-                self.fail(f"Unsupported protocol: {protocol}")
-                return False
-            stream.protocol = protocol
-        if mode is not None:
-            if mode not in PROFILE_OPTIONS:
-                self.fail(f"Unsupported mode: {mode}")
-                return False
-            stream.mode = mode
-        if framerate is not None:
-            stream.framerate = normalize_frame_rate(framerate)
+        stream.protocol = next_protocol
+        stream.mode = next_mode
+        stream.source = next_source
+        stream.external_url = next_external_url
+        stream.framerate = next_framerate
+        self._persist_stream(stream)
         self.select_stream(stream_id)
-        if restart:
+        if restart and stream.source == "generated":
             return self.start(stream_id)
         return True
 
@@ -329,6 +389,11 @@ class GuiState:
         stream = self.streams[stream_id]
         stream.alert_enabled_ids = normalize_enabled_alerts(enabled_ids)
         stream.alert_delay_seconds = normalize_alert_delay(delay_seconds)
+        try:
+            self._persist_stream(stream)
+        except ValueError as exc:
+            self.fail(str(exc), stream_id)
+            return False
         self.select_stream(stream_id)
         return True
 
@@ -337,6 +402,11 @@ class GuiState:
             self.fail(f"Unsupported stream: {stream_id}")
             return False
         self.stop(stream_id)
+        try:
+            self._delete_persisted_stream(stream_id)
+        except ValueError as exc:
+            self.fail(str(exc), stream_id)
+            return False
         del self.streams[stream_id]
         if self.selected_stream_id == stream_id:
             self.selected_stream_id = ""
@@ -376,6 +446,9 @@ class GuiState:
         if not stream:
             self.fail("Create a feed before starting")
             return False
+        if stream.source == "external":
+            self.log("External feed is registered for monitoring", stream.id)
+            return True
         if stream.status == "running":
             self.log("Feed already running", stream.id)
             return False
@@ -447,6 +520,22 @@ class GuiState:
         if mode not in PROFILE_OPTIONS:
             self.fail(f"Unsupported mode: {mode}", stream.id)
             return False
+        if stream.source == "external":
+            stream.mode = mode
+            stream.protocol = protocol
+            try:
+                stream.external_url = validate_external_url(stream.protocol, stream.external_url)
+            except ValueError as exc:
+                self.fail(str(exc), stream.id)
+                return False
+            try:
+                self._persist_stream(stream)
+            except ValueError as exc:
+                self.fail(str(exc), stream.id)
+                return False
+            self._sync_from_active()
+            self.log(f"Updated external feed expectation to {protocol} {mode}", stream.id)
+            return True
         if stream.status == "running" and mode == stream.mode and protocol == stream.protocol:
             self.log("Feed already running", stream.id)
             return True
@@ -468,6 +557,20 @@ class GuiState:
         if stream.mode not in PROFILE_OPTIONS:
             self.fail(f"Unsupported mode: {stream.mode}", stream.id)
             return False
+        if stream.source == "external":
+            try:
+                config = external_validation_config(stream)
+                report = validate_config(config)
+            except Exception as exc:
+                stream.validation_output = ""
+                self.fail(f"Validation failed: {exc}", stream.id)
+                return False
+            stream.validation_output = human_summary(report)
+            self.log("Validation passed" if report.passed else "Validation failed", stream.id)
+            if not report.passed:
+                stream.last_error = stream.validation_output.splitlines()[-1] if stream.validation_output else "Validation failed"
+            self._sync_from_active()
+            return report.passed
         profile = profile_for(stream.protocol, stream.mode)
         cmd = [
             sys.executable,
@@ -522,6 +625,9 @@ class GuiState:
         if not stream:
             self.log("No feeds configured")
             return
+        if stream.source == "external":
+            self.log("External feed has no local process to stop", stream.id)
+            return
         if not stream.process or stream.process.poll() is not None:
             stream.finish_run()
             stream.process = None
@@ -566,6 +672,36 @@ class GuiState:
         if verbose_enabled() or running_in_container():
             print(f"[videosim-gui] {message}", flush=True)
 
+    def _load_streams_from_store(self):
+        try:
+            feeds = self.feed_store.load() if self.feed_store else []
+        except Exception as exc:
+            self.logs.append(f"Feed DB load failed: {exc}")
+            return
+        for feed in feeds:
+            try:
+                stream = FeedRecord(**feed)
+            except (TypeError, ValueError) as exc:
+                self.logs.append(f"Skipped stored feed {feed.get('id', '<unknown>')}: {exc}")
+                continue
+            self.streams[stream.id] = stream
+
+    def _persist_stream(self, stream: FeedRecord):
+        if not self.feed_store:
+            return
+        try:
+            self.feed_store.upsert(stream_registration(stream))
+        except Exception as exc:
+            raise ValueError(f"Feed registration failed: {exc}") from exc
+
+    def _delete_persisted_stream(self, stream_id: str):
+        if not self.feed_store:
+            return
+        try:
+            self.feed_store.delete(stream_id)
+        except Exception as exc:
+            raise ValueError(f"Feed registration delete failed: {exc}") from exc
+
     def _capture_logs(self, stream_id: str | subprocess.Popen, process=None):
         if process is None:
             process = stream_id
@@ -591,6 +727,46 @@ def profile_for(protocol: str, mode: str) -> str:
     if protocol == "dash":
         return f"profiles/dash-{mode.replace('_', '-')}.yaml"
     raise ValueError(f"Unsupported protocol: {protocol}")
+
+
+def stream_registration(stream: FeedRecord) -> dict:
+    return {
+        "id": stream.id,
+        "name": stream.name,
+        "source": stream.source,
+        "external_url": stream.external_url,
+        "protocol": stream.protocol,
+        "mode": stream.mode,
+        "http_port": stream.http_port,
+        "feed_port": stream.feed_port,
+        "width": stream.width,
+        "height": stream.height,
+        "framerate": stream.framerate,
+        "dash_dir": stream.dash_dir,
+        "alert_enabled_ids": stream.alert_enabled_ids,
+        "alert_delay_seconds": stream.alert_delay_seconds,
+    }
+
+
+def external_validation_config(stream: FeedRecord):
+    config = load_profile(profile_for(stream.protocol, stream.mode))
+    return replace(
+        config,
+        protocol=stream.protocol,
+        width=stream.width,
+        height=stream.height,
+        framerate=stream.framerate,
+        external_endpoint=stream.endpoint,
+    )
+
+
+def next_stream_number(streams: dict[str, FeedRecord]) -> int:
+    highest = 0
+    for stream_id in streams:
+        prefix, _, suffix = stream_id.rpartition("-")
+        if prefix == "stream" and suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return highest + 1
 
 
 class GuiHandler(BaseHTTPRequestHandler):
@@ -663,6 +839,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                     name=params.get("name", [""])[0],
                     protocol=params.get("protocol", ["srt"])[0],
                     mode=params.get("mode", ["normal"])[0],
+                    source=params.get("source", ["generated"])[0],
+                    external_url=params.get("external_url", [""])[0],
                     framerate=params.get("framerate", [self.state.framerate])[0],
                 )
                 redirect_stream_id = stream.id
@@ -685,6 +863,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                         name=params.get("name", [None])[0],
                         protocol=params.get("protocol", [None])[0],
                         mode=params.get("mode", [None])[0],
+                        source=params.get("source", [None])[0],
+                        external_url=params.get("external_url", [None])[0],
                         framerate=params.get("framerate", [None])[0],
                     )
                 except ValueError as exc:
@@ -845,6 +1025,11 @@ def render_page(state: GuiState) -> str:
         f'<option value="{html.escape(protocol)}"{" selected" if protocol == state.protocol else ""}>{html.escape(label)}</option>'
         for protocol, label in PROTOCOL_OPTIONS.items()
     )
+    selected_source = active.source if active else "generated"
+    source_options = "\n".join(
+        f'<option value="{html.escape(source)}"{" selected" if source == selected_source else ""}>{html.escape(label)}</option>'
+        for source, label in SOURCE_OPTIONS.items()
+    )
     framerate_options = "\n".join(
         f'<option value="{html.escape(option["value"])}"{" selected" if option["value"] == state.framerate else ""}>{html.escape(option["label"])}</option>'
         for option in supported_frame_rate_options()
@@ -854,7 +1039,7 @@ def render_page(state: GuiState) -> str:
     stream_rows = "\n".join(
         f"""<tr>
           <td><a href="{html.escape(feed_path(stream.id))}"><img alt="{html.escape(stream.name)} preview" src="{html.escape(feed_path(stream.id))}/preview.jpg" style="width:8.5rem;aspect-ratio:16/9;object-fit:cover;border-radius:0.45rem;background:#050505;"></a></td>
-          <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(stream.protocol.upper())} · {html.escape(stream.mode)}</td>
+          <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(SOURCE_OPTIONS[stream.source])} · {html.escape(stream.protocol.upper())} · {html.escape(stream.mode)}</td>
           <td>{html.escape(stream.status)}</td>
           <td>{html.escape(stream.endpoint)}</td>
           <td>Frame rate: {html.escape(stream.framerate)} fps<br>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
@@ -875,8 +1060,10 @@ def render_page(state: GuiState) -> str:
     create_form = f"""
   <form method="post" action="/streams/create" class="row">
     <label>Name <input name="name" value="Feed {len(state.streams) + 1}"></label>
+    <label>Source <select name="source">{source_options}</select></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
+    <label>External URL <input name="external_url" placeholder="srt://host:port or https://host/manifest.mpd"></label>
     <label>Frame rate <select name="framerate">{framerate_options}</select></label>
     <button type="submit">Create stream</button>
   </form>
@@ -919,8 +1106,10 @@ def render_page(state: GuiState) -> str:
   <form method="post" action="/streams/update" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
     <label>Selected name <input name="name" value="{html.escape(active.name)}"></label>
+    <label>Source <select name="source">{source_options}</select></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
+    <label>External URL <input name="external_url" value="{html.escape(active.external_url)}" placeholder="srt://host:port or https://host/manifest.mpd"></label>
     <label>Frame rate <select name="framerate">{active_framerate_options}</select></label>
     <button type="submit">Update stream</button>
   </form>
@@ -1026,6 +1215,7 @@ def state_payload(state: GuiState) -> dict:
         "status": state.status,
         "protocol": state.protocol,
         "protocols": [{"value": value, "label": label} for value, label in PROTOCOL_OPTIONS.items()],
+        "sources": [{"value": value, "label": label} for value, label in SOURCE_OPTIONS.items()],
         "framerate": state.framerate,
         "framerates": supported_frame_rate_options(),
         "mode": state.mode,
@@ -1034,7 +1224,7 @@ def state_payload(state: GuiState) -> dict:
         "lastError": state.last_error or (active.last_error if active else "") or "none",
         "validationOutput": state.validation_output or (active.validation_output if active else "") or "not run",
         "metrics": active.metrics() if active else None,
-        "previewAvailable": bool(active) and state.status == "running" and controls["video"],
+        "previewAvailable": bool(active) and active.source == "generated" and state.status == "running" and controls["video"],
         "previewUrl": "/preview.jpg",
         "logs": (state.logs or (active.logs if active else []))[-80:],
         "modes": [
@@ -1053,6 +1243,9 @@ def stream_payload(stream: FeedRecord) -> dict:
         "name": stream.name,
         "url": feed_path(stream.id),
         "protocol": stream.protocol,
+        "source": stream.source,
+        "sourceLabel": SOURCE_OPTIONS[stream.source],
+        "externalUrl": stream.external_url,
         "mode": stream.mode,
         "framerate": stream.framerate,
         "framerateLabel": f"{stream.framerate} fps",
@@ -1063,7 +1256,7 @@ def stream_payload(stream: FeedRecord) -> dict:
         "lastError": stream.last_error or "none",
         "validationOutput": stream.validation_output or "not run",
         "metrics": stream.metrics(),
-        "previewAvailable": stream.status == "running" and controls_for_mode(stream.mode)["video"],
+        "previewAvailable": stream.source == "generated" and stream.status == "running" and controls_for_mode(stream.mode)["video"],
         "previewUrl": f"{feed_path(stream.id)}/preview.jpg",
         "logs": stream.logs[-80:],
     }
@@ -1077,6 +1270,8 @@ def preview_image(state: GuiState, stream_id: str | None = None) -> tuple[bytes,
     stream = state.streams.get(stream_id) if stream_id else state.active_stream
     if not stream:
         return preview_placeholder("Create a feed"), "image/svg+xml"
+    if stream.source == "external":
+        return preview_placeholder("External preview unavailable"), "image/svg+xml"
     controls = controls_for_mode(stream.mode)
     running = stream.status == "running" or (stream.id == state.selected_stream_id and state.status == "running")
     if not running:
@@ -1198,6 +1393,7 @@ def diagnostics_text(state: GuiState) -> str:
             *[
                 (
                     f"{stream.id} name={stream.name} protocol={stream.protocol} mode={stream.mode} "
+                    f"source={stream.source} "
                     f"status={stream.status} bitrate={stream.metrics()['bitrateLabel']} "
                     f"outbound={stream.metrics()['outboundLabel']} uptime={stream.metrics()['uptimeSeconds']}s "
                     f"alert_delay={stream.alert_delay_seconds}s "

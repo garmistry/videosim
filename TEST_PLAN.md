@@ -41,6 +41,19 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 | Real-time per-stream GUI metrics payload, polling, and 5-minute detail graphs | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 | Multi-stream Docker GUI smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |
 
+## Added External Feed Registration Coverage
+
+Bring-your-own feed registration is additive to generated local feeds. SQLite is
+the first persistence adapter behind the feed-store boundary.
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| SQLite feed registration store round trip | P1 | implemented | `python3 -m unittest tests.test_feed_store` |
+| GUI persists feed definitions and alert profiles through the store boundary | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| External SRT URL registration and protocol validation | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Monitor preserves external SRT endpoints and raises missing-video alarms | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| External DASH manifest and segment URL validation | P1 | implemented | `python3 -m unittest tests.test_validator` |
+
 ## Added Monitoring Coverage
 
 | Test area | Priority | Status | Command |

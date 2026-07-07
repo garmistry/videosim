@@ -128,11 +128,18 @@ Then open `http://127.0.0.1:8080`.
 The GUI starts with zero configured feeds. Use Create feed as the entry point,
 then manage feeds from the active-feed table:
 
-- Create a named SRT or DASH feed.
+- Create a named generated SRT/DASH feed or register an external SRT/DASH URL.
 - List streams in the root active-feed table.
 - Read/open a stream at `/feeds/<stream-id>` to see endpoint, status, validation, and logs.
-- Update selected stream name, protocol, or mode.
+- Update selected stream name, source, protocol, mode, URL, or frame rate.
 - Delete the selected stream.
+
+Feed registrations are persisted in SQLite when the GUI is launched from the
+CLI. By default the database is
+`$XDG_DATA_HOME/videosim/feeds.sqlite3` or `~/.local/share/videosim/feeds.sqlite3`;
+set `VIDEOSIM_DB_PATH` to use another location. The GUI stores feed
+definitions and alert profiles there, while local subprocess runtime state is
+recreated after restart.
 
 The React/Vite GUI follows the `design_docs` model: IBM Plex Sans UI text, IBM
 Plex Mono for endpoints/logs/metrics, a dark-primary warm neutral palette,
@@ -141,10 +148,11 @@ is an active-feed table with status, endpoint, metrics, actions, and a small
 preview thumbnail for each feed. Create feed opens a modal. Clicking a row
 preview opens a full preview dialog, and each feed detail page can still be
 bookmarked directly. Each feed can be started, stopped, validated, and copied
-independently. The protocol, mode, and frame-rate selectors support SRT or DASH
-for normal, audio-only, video-only, no-captions, black-video, and frozen-video
-feeds at 23.97, 24, 25, 50, 59.94, or 60 fps. Changing feed controls while a
-feed is running uses a controlled stream restart.
+independently. The source, protocol, mode, URL, and frame-rate selectors support
+generated feeds plus external SRT URLs and external DASH manifest URLs. Normal,
+audio-only, video-only, no-captions, black-video, and frozen-video expectations
+can be selected at 23.97, 24, 25, 50, 59.94, or 60 fps. Changing generated feed
+controls while a feed is running uses a controlled stream restart.
 
 The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,
@@ -153,10 +161,11 @@ file. Each feed detail page also plots bit rate and outbound data over a
 rolling five-minute client-side metrics window and includes a stream-specific
 alert profile for enabling/disabling monitor alarms plus alarm delay. Alert
 profiles can be configured before the monitor service is running; alarms begin
-evaluating when the monitor is started. Video-present modes include a visible
-running clock overlay for receiver testing. Feed table thumbnails and the
-preview dialog refresh a local frame matching the active mode. Use Validate to
-prove actual stream state.
+evaluating when the monitor is started. External feeds have no local start/stop
+or fault controls; Validate and the monitor probe the registered URL. Video-present
+generated modes include a visible running clock overlay for receiver testing.
+Feed table thumbnails and the preview dialog refresh a local frame matching the
+active generated mode. Use Validate to prove actual stream state.
 
 The optional monitor app runs as a separate process/container, polls GUI feed
 state, validates running feeds, and writes alarm/event history for the GUI to

@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,6 +71,46 @@ class ValidatorOutputTest(unittest.TestCase):
         self.assertFalse(report.video_present)
         self.assertTrue(report.audio_present)
         self.assertFalse(report.captions_present)
+
+    def test_external_dash_validation_fetches_manifest_and_segments(self):
+        manifest = b"""<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet contentType="video">
+      <SegmentTemplate media="$RepresentationID$_$Number$.ts" startNumber="1"/>
+      <Representation id="video_0"/>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio">
+      <SegmentTemplate media="$RepresentationID$_$Number$.ts" startNumber="1"/>
+      <Representation id="audio_0"/>
+    </AdaptationSet>
+    <AdaptationSet contentType="text"><Representation id="caption_0"/></AdaptationSet>
+  </Period>
+</MPD>"""
+        fetched = []
+
+        class Response(BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                self.close()
+
+        def fake_urlopen(url, timeout=8):
+            fetched.append(url)
+            return Response(manifest if url.endswith("manifest.mpd") else b"segment")
+
+        config = VideoFeedConfig(protocol="dash", external_endpoint="http://example.test/live/manifest.mpd", width=1, height=1)
+
+        with patch("videosim.validator.urlopen", side_effect=fake_urlopen):
+            report = validate_config(config)
+
+        self.assertTrue(report.passed)
+        self.assertTrue(report.video_present)
+        self.assertTrue(report.audio_present)
+        self.assertTrue(report.captions_present)
+        self.assertIn("http://example.test/live/video_0_1.ts", fetched)
+        self.assertIn("http://example.test/live/audio_0_1.ts", fetched)
 
 
 if __name__ == "__main__":

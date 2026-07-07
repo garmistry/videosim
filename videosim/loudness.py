@@ -72,6 +72,8 @@ def _number_after(pattern: str, text: str) -> float | None:
 
 
 def _input_args(config: VideoFeedConfig, sample_seconds: float) -> tuple[list[str], str]:
+    if config.protocol == "dash" and config.external_endpoint:
+        return ["-t", str(sample_seconds), "-i", config.endpoint], config.endpoint
     if config.protocol == "dash":
         segment = _latest_dash_audio_segment(config)
         return ["-i", str(segment)], str(segment)

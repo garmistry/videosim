@@ -112,6 +112,8 @@ def parse_ffprobe_frame_rate(text: str) -> float:
 
 
 def _frame_rate_input(config: "VideoFeedConfig") -> str | Path:
+    if config.protocol == "dash" and config.external_endpoint:
+        return config.endpoint
     if config.protocol == "dash":
         paths = sorted(Path(config.dash_dir).glob("video_0_*.ts"), key=lambda path: path.stat().st_mtime)
         if not paths:

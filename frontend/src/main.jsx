@@ -233,6 +233,7 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
                 <div className="feed-name-cell">
                   <a href={stream.url}>{stream.name}</a>
                   <span>
+                    <Tag>{stream.sourceLabel || stream.source || "Generated"}</Tag>
                     <Tag>{stream.protocol.toUpperCase()}</Tag>
                     <Tag>{stream.mode}</Tag>
                   </span>
@@ -251,16 +252,20 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
               <td>
                 <div className="row-actions">
                   <a className="button small ghost" href={stream.url}>Open</a>
-                  <form action="/start" method="post">
-                    <input name="stream_id" type="hidden" value={stream.id} />
-                    <input name="protocol" type="hidden" value={stream.protocol} />
-                    <input name="mode" type="hidden" value={stream.mode} />
-                    <button className="button small secondary" type="submit">Start</button>
-                  </form>
-                  <form action="/stop" method="post">
-                    <input name="stream_id" type="hidden" value={stream.id} />
-                    <button className="button small secondary" type="submit">Stop</button>
-                  </form>
+                  {stream.source !== "external" ? (
+                    <>
+                      <form action="/start" method="post">
+                        <input name="stream_id" type="hidden" value={stream.id} />
+                        <input name="protocol" type="hidden" value={stream.protocol} />
+                        <input name="mode" type="hidden" value={stream.mode} />
+                        <button className="button small secondary" type="submit">Start</button>
+                      </form>
+                      <form action="/stop" method="post">
+                        <input name="stream_id" type="hidden" value={stream.id} />
+                        <button className="button small secondary" type="submit">Stop</button>
+                      </form>
+                    </>
+                  ) : null}
                   <form action="/validate" method="post">
                     <input name="stream_id" type="hidden" value={stream.id} />
                     <button className="button small ghost" type="submit">Validate</button>
@@ -285,30 +290,33 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
           <div className="title-row">
             <h1>{stream.name}</h1>
             <StatusBadge stream={stream} state={state} />
+            <Tag>{stream.sourceLabel || stream.source || "Generated"}</Tag>
             <Tag>{stream.protocol.toUpperCase()}</Tag>
             <Tag>{stream.mode}</Tag>
             <Tag accent>{stream.url}</Tag>
           </div>
-          <p className="meta-line">{stream.intentionalOutage ? "Intentional outage" : "Normal feed"}</p>
+          <p className="meta-line">{stream.source === "external" ? "External feed" : stream.intentionalOutage ? "Intentional outage" : "Normal feed"}</p>
         </div>
         <div className="header-actions">
           <form action="/validate" method="post">
             <input name="stream_id" type="hidden" value={stream.id} />
             <button className="button secondary" type="submit">Validate</button>
           </form>
-          {stream.status === "running" ? (
-            <form action="/stop" method="post">
-              <input name="stream_id" type="hidden" value={stream.id} />
-              <button className="button danger" type="submit">Stop feed</button>
-            </form>
-          ) : (
-            <form action="/start" method="post">
-              <input name="stream_id" type="hidden" value={stream.id} />
-              <input name="protocol" type="hidden" value={stream.protocol} />
-              <input name="mode" type="hidden" value={stream.mode} />
-              <button className="button primary" type="submit">Start feed</button>
-            </form>
-          )}
+          {stream.source !== "external" ? (
+            stream.status === "running" ? (
+              <form action="/stop" method="post">
+                <input name="stream_id" type="hidden" value={stream.id} />
+                <button className="button danger" type="submit">Stop feed</button>
+              </form>
+            ) : (
+              <form action="/start" method="post">
+                <input name="stream_id" type="hidden" value={stream.id} />
+                <input name="protocol" type="hidden" value={stream.protocol} />
+                <input name="mode" type="hidden" value={stream.mode} />
+                <button className="button primary" type="submit">Start feed</button>
+              </form>
+            )
+          ) : null}
         </div>
       </header>
 
@@ -378,6 +386,14 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                   <input defaultValue={stream.name} name="name" />
                 </label>
                 <label>
+                  Source
+                  <select defaultValue={stream.source || "generated"} name="source">
+                    {(state.sources || []).map((source) => (
+                      <option key={source.value} value={source.value}>{source.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Protocol
                   <select defaultValue={stream.protocol} name="protocol">
                     {(state.protocols || []).map((protocol) => (
@@ -394,6 +410,10 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                   </select>
                 </label>
                 <label>
+                  External URL
+                  <input defaultValue={stream.externalUrl || ""} name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
+                </label>
+                <label>
                   Frame rate
                   <select defaultValue={stream.framerate} name="framerate">
                     {(state.framerates || []).map((rate) => (
@@ -408,29 +428,31 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
         </div>
       </section>
 
-      <section className="card">
-        <header className="card-header"><h2>Fault controls</h2></header>
-        <div className="card-body">
-          <form action="/start" className="switch-row" method="post">
-            <input name="controls" type="hidden" value="1" />
-            <input name="protocol" type="hidden" value={stream.protocol} />
-            <input name="stream_id" type="hidden" value={stream.id} />
-            {[
-              ["video", "Video"],
-              ["audio", "Audio"],
-              ["captions", "Captions"],
-              ["black_video", "Black video"],
-              ["frozen_video", "Frozen video"]
-            ].map(([name, label]) => (
-              <label className="switch" key={name}>
-                <input defaultChecked={controls[name]} name={name} type="checkbox" />
-                <span>{label}</span>
-              </label>
-            ))}
-            <button className="button primary" type="submit">Apply controls</button>
-          </form>
-        </div>
-      </section>
+      {stream.source !== "external" ? (
+        <section className="card">
+          <header className="card-header"><h2>Fault controls</h2></header>
+          <div className="card-body">
+            <form action="/start" className="switch-row" method="post">
+              <input name="controls" type="hidden" value="1" />
+              <input name="protocol" type="hidden" value={stream.protocol} />
+              <input name="stream_id" type="hidden" value={stream.id} />
+              {[
+                ["video", "Video"],
+                ["audio", "Audio"],
+                ["captions", "Captions"],
+                ["black_video", "Black video"],
+                ["frozen_video", "Frozen video"]
+              ].map(([name, label]) => (
+                <label className="switch" key={name}>
+                  <input defaultChecked={controls[name]} name={name} type="checkbox" />
+                  <span>{label}</span>
+                </label>
+              ))}
+              <button className="button primary" type="submit">Apply controls</button>
+            </form>
+          </div>
+        </section>
+      ) : null}
 
       <section className="card flush">
         <div className="tabs" role="tablist">
@@ -487,6 +509,14 @@ function CreateFeedDialog({ state, open, onClose }) {
           <input defaultValue={`Feed ${(state.streams || []).length + 1}`} name="name" />
         </label>
         <label>
+          Source
+          <select defaultValue="generated" name="source">
+            {(state.sources || []).map((source) => (
+              <option key={source.value} value={source.value}>{source.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
           Protocol
           <select defaultValue={state.protocol} name="protocol">
             {(state.protocols || []).map((protocol) => (
@@ -501,6 +531,10 @@ function CreateFeedDialog({ state, open, onClose }) {
               <option key={mode.value} value={mode.value}>{mode.label}</option>
             ))}
           </select>
+        </label>
+        <label>
+          External URL
+          <input name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
         </label>
         <label>
           Frame rate
@@ -557,6 +591,9 @@ function statusMeta(stream, state) {
   }
   if (stream.lastError && stream.lastError !== "none") {
     return { key: "error", label: "Error" };
+  }
+  if (stream.source === "external" && stream.status === "running") {
+    return { key: "running", label: "Monitoring" };
   }
   if (stream.status === "running" && stream.intentionalOutage) {
     return { key: "fault", label: `Fault - ${modeLabel(stream.mode, state)}` };

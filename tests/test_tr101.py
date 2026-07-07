@@ -67,6 +67,29 @@ def si_section(table_id, section_number=0):
     return with_crc(bytes([table_id, 0xB0, 9, 0x00, 0x01, 0xC1, section_number, 0x00]))
 
 
+def cat_section(ca_pid):
+    return with_crc(
+        bytes(
+            [
+                0x01,
+                0xB0,
+                15,
+                0x00,
+                0x01,
+                0xC1,
+                0x00,
+                0x00,
+                0x09,
+                0x04,
+                0x12,
+                0x34,
+                0xE0 | (ca_pid >> 8),
+                ca_pid & 0xFF,
+            ]
+        )
+    )
+
+
 def packet(pid, payload=b"", cc=0, pusi=False, transport_error=False, scrambled=False, adaptation=b""):
     afc = 3 if adaptation else 1
     header = bytes(
@@ -188,6 +211,14 @@ class TR101Test(unittest.TestCase):
 
         self.assertTrue(report.indicators["tr101_3_4_unreferenced_pid"])
         self.assertTrue(report.indicators["tr101_3_4a_unreferenced_pid"])
+
+    def test_cat_referenced_ca_pid_is_not_unreferenced(self):
+        data = b"".join([valid_ts(), section_packet(1, cat_section(300)), packet(300, b"emm")])
+
+        report = analyze_ts(data, sample_seconds=1.0)
+
+        self.assertFalse(report.indicators["tr101_3_4_unreferenced_pid"], report.messages)
+        self.assertFalse(report.indicators["tr101_3_4a_unreferenced_pid"], report.messages)
 
     def test_detects_priority_3_si_syntax_repetition_and_pairing(self):
         data = b"".join(

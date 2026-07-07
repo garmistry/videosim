@@ -39,6 +39,7 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
     cat_seen = False
     scrambled_seen = False
     pmt_pids = set()
+    cat_pids = set()
     referenced_pids = set()
     seen_pids = set()
     pcr_pids = set()
@@ -172,6 +173,8 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
                 cat_seen = True
                 if mpeg_crc32(section) != 0:
                     report.set("tr101_2_2_crc_error", "CAT CRC check failed")
+                else:
+                    cat_pids.update(parse_cat(section))
             elif section:
                 report.set("tr101_2_6_cat_error", "PID 0x0001 contains a non-CAT section")
 
@@ -215,7 +218,7 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
     if scrambled_seen and not cat_seen:
         report.set("tr101_2_6_cat_error", "Scrambled packets are present but CAT is missing")
     if sample_seconds is None or sample_seconds >= UNREFERENCED_PID_SECONDS:
-        unreferenced = sorted(seen_pids - referenced_pids - pcr_pids - pmt_pids - set(range(0x20)) - {0x1FFF})
+        unreferenced = sorted(seen_pids - referenced_pids - pcr_pids - pmt_pids - cat_pids - set(range(0x20)) - {0x1FFF})
         if pmt_seen and unreferenced:
             message = f"PID(s) not referenced by PMT/CAT: {', '.join(str(pid) for pid in unreferenced)}"
             report.set("tr101_3_4_unreferenced_pid", message)
@@ -308,6 +311,25 @@ def parse_pmt(section: bytes) -> tuple[int | None, set[int]]:
         es_info_length = ((section[offset + 3] & 0x0F) << 8) | section[offset + 4]
         offset += 5 + es_info_length
     return pcr_pid, pids
+
+
+def parse_cat(section: bytes) -> set[int]:
+    if len(section) < 12:
+        return set()
+    section_length = ((section[1] & 0x0F) << 8) | section[2]
+    end = min(3 + section_length - 4, len(section))
+    pids = set()
+    offset = 8
+    while offset + 2 <= end:
+        descriptor_tag = section[offset]
+        descriptor_length = section[offset + 1]
+        descriptor_end = offset + 2 + descriptor_length
+        if descriptor_end > end:
+            break
+        if descriptor_tag == 0x09 and descriptor_length >= 4:
+            pids.add(((section[offset + 4] & 0x1F) << 8) | section[offset + 5])
+        offset = descriptor_end
+    return pids
 
 
 def parse_pcr(raw: bytes) -> float:

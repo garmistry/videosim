@@ -269,3 +269,10 @@
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
 - Skipped check: malformed live SRT/DASH fixture streams for end-to-end proof of every TR 101 290 indicator remain pending; parser behavior is covered by synthetic TS unit tests.
+- Added CAT CA descriptor parsing so TR 101 290 unreferenced-PID checks exempt CAT-referenced CA PIDs instead of false-positive alarming on valid conditional-access metadata.
+- Validation run: `python3 -m unittest tests.test_tr101` passed, 7 tests.
+- Validation run: `python3 -m unittest tests.test_tr101 tests.test_monitor` passed, 12 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 106 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

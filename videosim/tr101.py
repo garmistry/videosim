@@ -13,6 +13,8 @@ NIT_REPEAT_SECONDS = 10
 SDT_EIT_REPEAT_SECONDS = 2
 OTHER_SI_REPEAT_SECONDS = 10
 TDT_REPEAT_SECONDS = 30
+TSTD_DATA_DELAY_SECONDS = 1.0
+TSTD_UNDERFLOW_TOLERANCE_SECONDS = 0.1
 
 
 @dataclass
@@ -46,6 +48,7 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
     continuity = {}
     pcr_seen = {}
     pts_seen = {}
+    tstd_delays = {}
     si_tables_seen = {}
     si_section_counts = {}
     si_section_last_packet = {}
@@ -197,6 +200,15 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
         if pid in referenced_pids and payload_start:
             pts = parse_pts(payload)
             if pts is not None:
+                if byte_rate:
+                    arrival_time = packet_index * PACKET_SIZE / byte_rate
+                    delay = pts - arrival_time
+                    tstd_delays.setdefault(pid, []).append(delay)
+                    if delay > TSTD_DATA_DELAY_SECONDS:
+                        report.set("tr101_3_10_data_delay_error", "PES data delay through T-STD model is greater than 1 second")
+                        report.set("tr101_3_3_buffer_error", "PES data delay indicates T-STD buffer pressure")
+                    elif delay < -TSTD_UNDERFLOW_TOLERANCE_SECONDS:
+                        report.set("tr101_3_3_buffer_error", "PES data arrives after its presentation time")
                 previous_pts = pts_seen.get(pid)
                 if previous_pts is not None and pts - previous_pts > PTS_LIMIT_SECONDS:
                     report.set("tr101_2_5_pts_error", "PTS repetition period is greater than 700 ms")
@@ -223,6 +235,7 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
             message = f"PID(s) not referenced by PMT/CAT: {', '.join(str(pid) for pid in unreferenced)}"
             report.set("tr101_3_4_unreferenced_pid", message)
             report.set("tr101_3_4a_unreferenced_pid", message)
+    check_tstd_empty_buffer(report, tstd_delays, sample_seconds)
     check_si_presence(report, seen_pids, si_tables_seen, si_section_counts, sample_seconds)
 
     for indicator in TR101_INDICATORS:
@@ -438,6 +451,15 @@ def check_si_presence(
         }
         if sections and sections != {0, 1}:
             report.set("tr101_3_6c_eit_pf_error", "EIT P/F section 0 or 1 is present without its pair")
+
+
+def check_tstd_empty_buffer(report: TR101Report, tstd_delays: dict[int, list[float]], sample_seconds: float | None):
+    if not sample_seconds or sample_seconds < TSTD_DATA_DELAY_SECONDS:
+        return
+    for pid, delays in tstd_delays.items():
+        if delays and min(delays) > TSTD_DATA_DELAY_SECONDS:
+            report.set("tr101_3_9_empty_buffer_error", f"PID {pid} T-STD delay stayed above 1 second across observed PES packets")
+            report.set("tr101_3_3_buffer_error", f"PID {pid} T-STD delay stayed above 1 second across observed PES packets")
 
 
 def mpeg_crc32(data: bytes) -> int:

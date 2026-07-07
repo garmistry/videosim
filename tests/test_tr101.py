@@ -245,6 +245,38 @@ class TR101Test(unittest.TestCase):
         self.assertTrue(report.indicators["tr101_3_8_tdt_error"])
         self.assertTrue(report.indicators["tr101_3_2_si_repetition_error"])
 
+    def test_detects_priority_3_tstd_data_delay_and_empty_buffer(self):
+        data = b"".join(
+            [
+                section_packet(PAT_PID, pat_section(), cc=0),
+                section_packet(PMT_PID, pmt_section(), cc=0),
+                packet(VIDEO_PID, b"video", cc=0, adaptation=pcr_adaptation(0.00)),
+                pes_packet(VIDEO_PID, 2.20, cc=1),
+                pes_packet(VIDEO_PID, 2.40, cc=2),
+            ]
+        )
+
+        report = analyze_ts(data, sample_seconds=1.2)
+
+        self.assertTrue(report.indicators["tr101_3_10_data_delay_error"])
+        self.assertTrue(report.indicators["tr101_3_9_empty_buffer_error"])
+        self.assertTrue(report.indicators["tr101_3_3_buffer_error"])
+
+    def test_detects_priority_3_tstd_underflow_buffer_error(self):
+        data = b"".join(
+            [
+                section_packet(PAT_PID, pat_section(), cc=0),
+                section_packet(PMT_PID, pmt_section(), cc=0),
+                packet(VIDEO_PID, b"video", cc=0, adaptation=pcr_adaptation(0.00)),
+                pes_packet(VIDEO_PID, 0.00, cc=1),
+            ]
+        )
+
+        report = analyze_ts(data, sample_seconds=1.2)
+
+        self.assertTrue(report.indicators["tr101_3_3_buffer_error"])
+        self.assertFalse(report.indicators["tr101_3_10_data_delay_error"], report.messages)
+
 
 if __name__ == "__main__":
     unittest.main()

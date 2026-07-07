@@ -158,8 +158,9 @@ The optional monitor app runs as a separate process/container, polls GUI feed
 state, validates running feeds, and writes alarm/event history for the GUI to
 review. Current alarms cover feed reachability, video absence, audio absence,
 caption absence, black-video validation, frozen-video validation, and parser-
-backed TR 101 290 priority 1/2 indicators plus priority 3 PSI/SI and
-unreferenced-PID checks. Details are documented in [MONITORING.md](MONITORING.md).
+backed TR 101 290 priority 1/2 indicators plus priority 3 PSI/SI,
+unreferenced-PID, and T-STD timing checks. Details are documented in
+[MONITORING.md](MONITORING.md).
 
 Deploy the GUI and SRT listener together with Docker Compose:
 

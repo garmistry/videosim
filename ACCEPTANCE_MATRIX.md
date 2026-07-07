@@ -69,7 +69,7 @@
 | Show per-feed metrics. | GUI state and React UI expose per-stream estimated bit rate, outbound total data, uptime, and generated frame count with polling updates, plus five-minute detail-page traffic graphs. |
 | Monitor running feeds. | A separate monitor process/container polls GUI state, validates running feeds, writes alarm/event history, and repeats active alarm events every 5 seconds. |
 | Review alarms in UI. | GUI state and React UI expose monitor alarms plus per-stream event audit history. |
-| TR 101 290 monitoring. | Parser-backed MPEG-2 TS analyzer raises monitor alarms for priority 1/2 indicators plus priority 3 PSI/SI and unreferenced-PID indicators; T-STD buffer checks are catalogued as pending. |
+| TR 101 290 monitoring. | Parser-backed MPEG-2 TS analyzer raises monitor alarms for priority 1/2 indicators plus priority 3 PSI/SI, unreferenced-PID, and T-STD timing indicators. |
 
 ## Milestone Status
 

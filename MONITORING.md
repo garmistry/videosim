@@ -54,8 +54,8 @@ and shows active alarms plus stream-specific event audit history.
 The monitor samples MPEG-2 TS bytes from SRT feeds, or DASH `.ts` segments from
 the shared DASH volume, and parses the following TR 101 290 indicators.
 Priority 3 is application-dependent; the current parser covers PSI/SI syntax,
-observed SI repetition/presence windows, EIT P/F pairing, and unreferenced PIDs.
-The T-STD buffer-model checks are catalogued but not implemented.
+observed SI repetition/presence windows, EIT P/F pairing, unreferenced PIDs, and
+T-STD timing checks estimated from sample byte rate and PES PTS.
 
 | Indicator | Priority | Status |
 |---|---|---|
@@ -79,7 +79,7 @@ The T-STD buffer-model checks are catalogued but not implemented.
 | NIT_actual_error | 3 | parser-backed for table-id, observed presence, and repetition |
 | NIT_other_error | 3 | parser-backed when NIT_other is present |
 | SI_repetition_error | 3 | parser-backed for observed SI timing windows |
-| Buffer_error | 3 | catalogued; T-STD model pending |
+| Buffer_error | 3 | parser-backed T-STD timing approximation |
 | Unreferenced_PID | 3 | parser-backed |
 | Unreferenced_PID 2 | 3 | parser-backed |
 | SDT_error | 3 | parser-backed for table-id, observed presence, and repetition |
@@ -91,8 +91,8 @@ The T-STD buffer-model checks are catalogued but not implemented.
 | EIT_PF_error | 3 | parser-backed |
 | RST_error | 3 | parser-backed for table-id and repetition |
 | TDT_error | 3 | parser-backed for table-id, observed presence, and repetition |
-| Empty_buffer_error | 3 | catalogued; T-STD model pending |
-| Data_delay_error | 3 | catalogued; T-STD model pending |
+| Empty_buffer_error | 3 | parser-backed T-STD timing approximation |
+| Data_delay_error | 3 | parser-backed T-STD timing approximation |
 
 ## Extending
 

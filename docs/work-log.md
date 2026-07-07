@@ -284,3 +284,10 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Added parser-backed TR 101 290 priority 3 T-STD timing checks for `Buffer_error`, `Empty_buffer_error`, and `Data_delay_error` using sample byte-rate arrival time and PES PTS.
+- Updated monitoring docs, test plan, gaps, limitations, runbook, README, and acceptance matrix for the T-STD timing approximation.
+- Validation run: `python3 -m unittest tests.test_tr101 tests.test_monitor` passed, 15 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 109 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

@@ -43,4 +43,5 @@
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.
 - TR 101 290 priority 3 T-STD buffer, empty-buffer, and data-delay checks are
-  catalogued but not implemented.
+  parser-backed timing approximations from sample byte rate and PES PTS, not a
+  calibrated ISO decoder buffer model.

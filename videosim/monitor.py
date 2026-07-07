@@ -71,7 +71,7 @@ MONITOR_SPECS = [
     MonitorSpec("tr101_3_1a_nit_actual_error", "NIT actual error", "TR101 priority 3", "minor", True, "NIT_actual table-id, presence, or repetition fault."),
     MonitorSpec("tr101_3_1b_nit_other_error", "NIT other error", "TR101 priority 3", "minor", True, "NIT_other repetition fault when present."),
     MonitorSpec("tr101_3_2_si_repetition_error", "SI repetition error", "TR101 priority 3", "minor", True, "SI table repetition outside parser-backed limits."),
-    MonitorSpec("tr101_3_3_buffer_error", "Buffer error", "TR101 priority 3", "minor", False, "T-STD buffer overflow or underflow model check."),
+    MonitorSpec("tr101_3_3_buffer_error", "Buffer error", "TR101 priority 3", "minor", True, "Parser-backed T-STD timing buffer pressure check."),
     MonitorSpec("tr101_3_4_unreferenced_pid", "Unreferenced PID", "TR101 priority 3", "minor", True, "PID is not referenced by PMT/CAT within the sample window."),
     MonitorSpec("tr101_3_4a_unreferenced_pid", "Unreferenced PID 2", "TR101 priority 3", "minor", True, "Updated unreferenced PID check."),
     MonitorSpec("tr101_3_5_sdt_error", "SDT error", "TR101 priority 3", "minor", True, "SDT table-id, presence, or repetition fault."),
@@ -83,8 +83,8 @@ MONITOR_SPECS = [
     MonitorSpec("tr101_3_6c_eit_pf_error", "EIT P/F error", "TR101 priority 3", "minor", True, "EIT present/following section pair is incomplete."),
     MonitorSpec("tr101_3_7_rst_error", "RST error", "TR101 priority 3", "minor", True, "RST table-id or repetition fault."),
     MonitorSpec("tr101_3_8_tdt_error", "TDT error", "TR101 priority 3", "minor", True, "TDT/TOT table-id, presence, or repetition fault."),
-    MonitorSpec("tr101_3_9_empty_buffer_error", "Empty buffer error", "TR101 priority 3", "minor", False, "T-STD transport buffer emptying model check."),
-    MonitorSpec("tr101_3_10_data_delay_error", "Data delay error", "TR101 priority 3", "minor", False, "T-STD data delay model check."),
+    MonitorSpec("tr101_3_9_empty_buffer_error", "Empty buffer error", "TR101 priority 3", "minor", True, "Parser-backed T-STD empty-buffer timing check."),
+    MonitorSpec("tr101_3_10_data_delay_error", "Data delay error", "TR101 priority 3", "minor", True, "Parser-backed T-STD data delay timing check."),
 ]
 
 SPEC_BY_ID = {spec.id: spec for spec in MONITOR_SPECS}

@@ -27,10 +27,7 @@ implementation and must pass before those milestones advance.
 ## Monitoring
 
 - TR 101 290 priority 1/2 indicators and parser-backed priority 3 PSI/SI plus
-  unreferenced-PID indicators have unit coverage, and malformed DASH segment
-  sampling is covered through the monitor alarm path. Malformed live SRT/DASH
-  fixture streams are not yet generated for end-to-end Docker proof of every
-  indicator.
-- TR 101 290 priority 3 T-STD `Buffer_error`, `Empty_buffer_error`, and
-  `Data_delay_error` remain catalogued but unimplemented pending a real buffer
-  model.
+  unreferenced-PID and T-STD timing indicators have unit coverage, and malformed
+  DASH segment sampling is covered through the monitor alarm path. Malformed
+  live SRT/DASH fixture streams are not yet generated for end-to-end Docker
+  proof of every indicator.

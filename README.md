@@ -141,10 +141,10 @@ is an active-feed table with status, endpoint, metrics, actions, and a small
 preview thumbnail for each feed. Create feed opens a modal. Clicking a row
 preview opens a full preview dialog, and each feed detail page can still be
 bookmarked directly. Each feed can be started, stopped, validated, and copied
-independently. The protocol and mode selectors support SRT or DASH for normal,
-audio-only, video-only, no-captions, black-video, and frozen-video feeds.
-Changing fault controls while a feed is running uses a controlled stream
-restart.
+independently. The protocol, mode, and frame-rate selectors support SRT or DASH
+for normal, audio-only, video-only, no-captions, black-video, and frozen-video
+feeds at 23.97, 24, 25, 50, 59.94, or 60 fps. Changing feed controls while a
+feed is running uses a controlled stream restart.
 
 The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,
@@ -160,9 +160,9 @@ state, validates running feeds, and writes alarm/event history for the GUI to
 review. Current alarms cover feed reachability, video absence, audio absence,
 caption absence, black-video validation, frozen-video validation, and parser-
 backed TR 101 290 priority 1/2 indicators plus priority 3 PSI/SI,
-unreferenced-PID, T-STD timing checks, and audio loudness alarms for ITU-R
-BS.1770 measurement, EBU R 128, and ATSC A/85. Details are documented in
-[MONITORING.md](MONITORING.md).
+unreferenced-PID, T-STD timing checks, measured frame-rate mismatches, and
+audio loudness alarms for ITU-R BS.1770 measurement, EBU R 128, and ATSC A/85.
+Details are documented in [MONITORING.md](MONITORING.md).
 
 Deploy the GUI and SRT listener together with Docker Compose:
 

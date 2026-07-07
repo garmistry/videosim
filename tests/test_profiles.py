@@ -18,9 +18,19 @@ class ProfileTest(unittest.TestCase):
         config = load_profile(ROOT / "profiles" / "srt-normal.yaml")
 
         self.assertEqual(config.port, 9000)
+        self.assertEqual(config.framerate, "30")
         self.assertTrue(config.audio)
         self.assertTrue(config.captions)
         self.assertEqual(config.audio_frequency, 440)
+
+    def test_profile_accepts_fractional_frame_rate(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml") as profile:
+            profile.write("schema_version: 1\nmode: normal\nframerate: 23.97\n")
+            profile.flush()
+
+            config = load_profile(profile.name)
+
+        self.assertEqual(config.framerate, "23.97")
 
     def test_required_static_profiles_map_to_expected_state(self):
         cases = {

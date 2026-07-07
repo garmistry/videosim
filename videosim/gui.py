@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
+
 
 PROFILE_OPTIONS = {
     "normal": ("Normal", "profiles/srt-normal.yaml"),
@@ -108,7 +110,7 @@ class FeedRecord:
     feed_port: int
     width: int
     height: int
-    framerate: int
+    framerate: str | int | float
     dash_dir: str
     mode: str
     process: subprocess.Popen | None = None
@@ -118,6 +120,9 @@ class FeedRecord:
     started_at: float | None = None
     last_run_seconds: float = 0
     last_outbound_bytes: int = 0
+
+    def __post_init__(self):
+        self.framerate = normalize_frame_rate(self.framerate)
 
     @property
     def endpoint(self) -> str:
@@ -139,7 +144,7 @@ class FeedRecord:
         controls = controls_for_mode(self.mode)
         video_bps = 0
         if controls["video"]:
-            scale = (self.width * self.height * self.framerate) / (1280 * 720 * 30)
+            scale = (self.width * self.height * frame_rate_float(self.framerate)) / (1280 * 720 * 30)
             video_bps = int(4_000_000 * scale)
             if controls["black_video"] or controls["frozen_video"]:
                 video_bps = int(video_bps * 0.35)
@@ -153,7 +158,7 @@ class FeedRecord:
         uptime = max(0.0, now - self.started_at) if running and self.started_at is not None else self.last_run_seconds
         bitrate_bps = self.bitrate_bps() if running else 0
         outbound_bytes = int(bitrate_bps * uptime / 8) if running else self.last_outbound_bytes
-        video_frames = int(uptime * self.framerate) if controls_for_mode(self.mode)["video"] else 0
+        video_frames = int(uptime * frame_rate_float(self.framerate)) if controls_for_mode(self.mode)["video"] else 0
         return {
             "uptimeSeconds": round(uptime, 1),
             "bitrateBps": bitrate_bps,
@@ -178,7 +183,7 @@ class GuiState:
     feed_port: int = 9000
     width: int = 1280
     height: int = 720
-    framerate: int = 30
+    framerate: str | int | float = "59.94"
     dash_dir: str = "/tmp/videosim-dash"
     monitor_state_path: str = ""
     mode: str = "normal"
@@ -191,6 +196,7 @@ class GuiState:
     _next_stream_number: int = 1
 
     def __post_init__(self):
+        self.framerate = normalize_frame_rate(self.framerate)
         if self.streams and not self.selected_stream_id:
             self.select_stream(next(iter(self.streams)))
 
@@ -230,7 +236,7 @@ class GuiState:
         feed_port: int | None = None,
         width: int | None = None,
         height: int | None = None,
-        framerate: int | None = None,
+        framerate: str | int | float | None = None,
         select: bool = True,
     ) -> FeedRecord:
         if protocol not in PROTOCOL_OPTIONS:
@@ -276,7 +282,14 @@ class GuiState:
         self.selected_stream_id = ""
         self._sync_from_active()
 
-    def update_stream(self, stream_id: str, name: str | None = None, protocol: str | None = None, mode: str | None = None) -> bool:
+    def update_stream(
+        self,
+        stream_id: str,
+        name: str | None = None,
+        protocol: str | None = None,
+        mode: str | None = None,
+        framerate: str | int | float | None = None,
+    ) -> bool:
         if stream_id not in self.streams:
             self.fail(f"Unsupported stream: {stream_id}")
             return False
@@ -296,6 +309,8 @@ class GuiState:
                 self.fail(f"Unsupported mode: {mode}")
                 return False
             stream.mode = mode
+        if framerate is not None:
+            stream.framerate = normalize_frame_rate(framerate)
         self.select_stream(stream_id)
         if restart:
             return self.start(stream_id)
@@ -631,6 +646,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                     name=params.get("name", [""])[0],
                     protocol=params.get("protocol", ["srt"])[0],
                     mode=params.get("mode", ["normal"])[0],
+                    framerate=params.get("framerate", [self.state.framerate])[0],
                 )
                 redirect_stream_id = stream.id
             except ValueError as exc:
@@ -652,6 +668,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                         name=params.get("name", [None])[0],
                         protocol=params.get("protocol", [None])[0],
                         mode=params.get("mode", [None])[0],
+                        framerate=params.get("framerate", [None])[0],
                     )
                 except ValueError as exc:
                     self.state.log(str(exc))
@@ -795,6 +812,10 @@ def render_page(state: GuiState) -> str:
         f'<option value="{html.escape(protocol)}"{" selected" if protocol == state.protocol else ""}>{html.escape(label)}</option>'
         for protocol, label in PROTOCOL_OPTIONS.items()
     )
+    framerate_options = "\n".join(
+        f'<option value="{html.escape(option["value"])}"{" selected" if option["value"] == state.framerate else ""}>{html.escape(option["label"])}</option>'
+        for option in supported_frame_rate_options()
+    )
     controls = controls_for_mode(active.mode if active else state.mode)
     checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
     stream_rows = "\n".join(
@@ -803,7 +824,7 @@ def render_page(state: GuiState) -> str:
           <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(stream.protocol.upper())} · {html.escape(stream.mode)}</td>
           <td>{html.escape(stream.status)}</td>
           <td>{html.escape(stream.endpoint)}</td>
-          <td>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
+          <td>Frame rate: {html.escape(stream.framerate)} fps<br>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
           <td><a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a></td>
         </tr>"""
         for stream in state.streams.values()
@@ -823,18 +844,24 @@ def render_page(state: GuiState) -> str:
     <label>Name <input name="name" value="Feed {len(state.streams) + 1}"></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
+    <label>Frame rate <select name="framerate">{framerate_options}</select></label>
     <button type="submit">Create stream</button>
   </form>
   <div class="empty-state">Open an existing feed or create a new one.</div>"""
     selected_detail = ""
     if active:
         metrics = active.metrics()
+        active_framerate_options = "\n".join(
+            f'<option value="{html.escape(option["value"])}"{" selected" if option["value"] == active.framerate else ""}>{html.escape(option["label"])}</option>'
+            for option in supported_frame_rate_options()
+        )
         selected_detail = f"""
   <form method="post" action="/streams/update" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
     <label>Selected name <input name="name" value="{html.escape(active.name)}"></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
+    <label>Frame rate <select name="framerate">{active_framerate_options}</select></label>
     <button type="submit">Update stream</button>
   </form>
   <form method="post" action="/streams/delete" class="row">
@@ -845,6 +872,7 @@ def render_page(state: GuiState) -> str:
   <div>Intentional outage: <strong>{outage}</strong></div>
   <div>Last error: <strong>{last_error}</strong></div>
   <div>Bit rate (est.): <strong>{html.escape(metrics["bitrateLabel"])}</strong></div>
+  <div>Frame rate: <strong>{html.escape(active.framerate)} fps</strong></div>
   <div>Outbound total (est.): <strong>{html.escape(metrics["outboundLabel"])}</strong></div>
   <div>Uptime: <strong>{html.escape(str(metrics["uptimeSeconds"]))}s</strong></div>
   <div>Video frames: <strong>{html.escape(metrics["videoFramesLabel"])}</strong></div>
@@ -936,6 +964,8 @@ def state_payload(state: GuiState) -> dict:
         "status": state.status,
         "protocol": state.protocol,
         "protocols": [{"value": value, "label": label} for value, label in PROTOCOL_OPTIONS.items()],
+        "framerate": state.framerate,
+        "framerates": supported_frame_rate_options(),
         "mode": state.mode,
         "intentionalOutage": state.intentional_outage,
         "endpoint": state.endpoint,
@@ -961,6 +991,8 @@ def stream_payload(stream: FeedRecord) -> dict:
         "url": feed_path(stream.id),
         "protocol": stream.protocol,
         "mode": stream.mode,
+        "framerate": stream.framerate,
+        "framerateLabel": f"{stream.framerate} fps",
         "status": stream.status,
         "endpoint": stream.endpoint,
         "intentionalOutage": stream.intentional_outage,
@@ -1004,7 +1036,7 @@ def preview_image(state: GuiState, stream_id: str | None = None) -> tuple[bytes,
                 "num-buffers=1",
                 f"pattern={pattern}",
                 "!",
-                f"video/x-raw,width={stream.width},height={stream.height},framerate={stream.framerate}/1",
+                f"video/x-raw,width={stream.width},height={stream.height},framerate={frame_rate_fraction(stream.framerate)}",
             ]
             + overlay
             + [

@@ -10,6 +10,8 @@ import subprocess
 import threading
 import time
 
+from .framerate import frame_rate_float, frame_rate_fraction, frame_rate_keyint, normalize_frame_rate
+
 
 class FeedError(Exception):
     pass
@@ -28,7 +30,7 @@ class VideoFeedConfig:
     port: int = 9000
     width: int = 1280
     height: int = 720
-    framerate: int = 30
+    framerate: str | int | float = 30
     pattern: str = "smpte"
     video: bool = True
     audio: bool = True
@@ -40,10 +42,11 @@ class VideoFeedConfig:
     dash_manifest: str = DASH_MANIFEST
 
     def __post_init__(self):
-        for name in ("port", "width", "height", "framerate", "audio_frequency"):
+        for name in ("port", "width", "height", "audio_frequency"):
             value = getattr(self, name)
             if value < 1:
                 raise ValueError(f"{name} must be greater than 0")
+        object.__setattr__(self, "framerate", normalize_frame_rate(self.framerate))
         if self.protocol not in {"srt", "dash"}:
             raise ValueError("protocol must be srt or dash")
         if self.port > 65535:
@@ -80,6 +83,8 @@ def video_pipeline_args(config: VideoFeedConfig) -> list[str]:
 
 
 def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
+    framerate = frame_rate_fraction(config.framerate)
+    keyint = str(frame_rate_keyint(config.framerate))
     args = [
         require_gst_launch(),
         "-e",
@@ -97,7 +102,7 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
         args.extend(
             [
                 "!",
-                f"video/x-raw,width={config.width},height={config.height},framerate={config.framerate}/1",
+                f"video/x-raw,width={config.width},height={config.height},framerate={framerate}",
                 "!",
                 "clockoverlay",
                 "halignment=right",
@@ -108,13 +113,13 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
             ]
         )
         if config.captions:
-            args.extend([f"video/x-raw,framerate={config.framerate}/1", "!", "cccombiner", "name=cc", "!"])
+            args.extend([f"video/x-raw,framerate={framerate}", "!", "cccombiner", "name=cc", "!"])
         args.extend(
             [
                 "x264enc",
                 "tune=zerolatency",
                 "speed-preset=ultrafast",
-                f"key-int-max={config.framerate}",
+                f"key-int-max={keyint}",
                 "!",
                 "h264parse",
                 "!",
@@ -149,7 +154,7 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
                 "fd=0",
                 "do-timestamp=true",
                 "!",
-                f"closedcaption/x-cea-608,format=raw,field=0,framerate={config.framerate}/1",
+                f"closedcaption/x-cea-608,format=raw,field=0,framerate={framerate}",
                 "!",
                 "cc.caption",
             ]
@@ -158,6 +163,8 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
 
 
 def dash_pipeline_args(config: VideoFeedConfig) -> list[str]:
+    framerate = frame_rate_fraction(config.framerate)
+    keyint = str(frame_rate_keyint(config.framerate))
     args = [
         require_gst_launch(),
         "-e",
@@ -176,7 +183,7 @@ def dash_pipeline_args(config: VideoFeedConfig) -> list[str]:
         args.extend(
             [
                 "!",
-                f"video/x-raw,width={config.width},height={config.height},framerate={config.framerate}/1",
+                f"video/x-raw,width={config.width},height={config.height},framerate={framerate}",
                 "!",
                 "clockoverlay",
                 "halignment=right",
@@ -191,7 +198,7 @@ def dash_pipeline_args(config: VideoFeedConfig) -> list[str]:
                 "x264enc",
                 "tune=zerolatency",
                 "speed-preset=ultrafast",
-                f"key-int-max={config.framerate}",
+                f"key-int-max={keyint}",
                 "!",
                 "h264parse",
                 "!",
@@ -317,8 +324,8 @@ def _ensure_dash_caption_manifest(config: VideoFeedConfig):
     manifest.write_text(text.replace("</Period>", f"{adaptation}</Period>"), encoding="utf-8")
 
 
-def write_caption_stream(stream, framerate: int):
-    delay = 1 / (framerate * 5)
+def write_caption_stream(stream, framerate: str | int | float):
+    delay = 1 / (frame_rate_float(framerate) * 5)
     sequence = 0
     # ponytail: fixed startup delay; use bus-driven negotiation if sub-second captions matter.
     time.sleep(3)

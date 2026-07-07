@@ -392,6 +392,14 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                     ))}
                   </select>
                 </label>
+                <label>
+                  Frame rate
+                  <select defaultValue={stream.framerate} name="framerate">
+                    {(state.framerates || []).map((rate) => (
+                      <option key={rate.value} value={rate.value}>{rate.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <button className="button secondary" type="submit">Update</button>
               </form>
             </div>
@@ -490,6 +498,14 @@ function CreateFeedDialog({ state, open, onClose }) {
           <select defaultValue={state.mode} name="mode">
             {(state.modes || []).map((mode) => (
               <option key={mode.value} value={mode.value}>{mode.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Frame rate
+          <select defaultValue={state.framerate} name="framerate">
+            {(state.framerates || []).map((rate) => (
+              <option key={rate.value} value={rate.value}>{rate.label}</option>
             ))}
           </select>
         </label>

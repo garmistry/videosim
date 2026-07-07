@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from .feed import DASH_SEGMENT_DURATION_SECONDS, VideoFeedConfig
+from .framerate import FRAME_RATE_TOLERANCE_FPS, FrameRateError, frame_rate_float, measure_frame_rate
 from .gui import controls_for_mode, profile_for
 from .loudness import (
     ATSC_A85_TARGET_LKFS,
@@ -60,6 +61,7 @@ MONITOR_SPECS = [
     MonitorSpec("essence_captions_present", "Captions present", "platform", "major", True, "Expected captions are present."),
     MonitorSpec("black_video_detected", "Black video detected", "platform", "major", True, "Expected black-video profile validates."),
     MonitorSpec("frozen_video_detected", "Frozen video detected", "platform", "major", True, "Expected frozen-video profile validates."),
+    MonitorSpec("video_frame_rate_match", "Video frame rate match", "platform", "major", True, "Measured video frame rate matches the configured feed frame rate."),
     MonitorSpec("loudness_bs1770_measurement", "ITU-R BS.1770 loudness measurement", "audio loudness", "major", True, "Audio loudness can be measured with a BS.1770-compatible meter."),
     MonitorSpec("loudness_ebu_r128_integrated", "EBU R 128 integrated loudness", "audio loudness", "major", True, "Integrated loudness is within the EBU R 128 target window."),
     MonitorSpec("loudness_ebu_r128_true_peak", "EBU R 128 true peak", "audio loudness", "major", True, "True peak does not exceed the EBU R 128 maximum."),
@@ -136,16 +138,22 @@ def fetch_gui_state(url: str) -> dict:
 
 def config_for_stream(stream: dict, srt_host: str) -> VideoFeedConfig:
     config = load_profile(profile_for(stream["protocol"], stream["mode"]))
+    overrides = {
+        key: stream[key]
+        for key in ("width", "height", "framerate")
+        if key in stream and stream[key] not in (None, "")
+    }
     if stream["protocol"] == "dash":
         return VideoFeedConfig(
             **{
                 **config.__dict__,
+                **overrides,
                 "dash_dir": f"/tmp/videosim-dash/{stream['id']}",
                 "dash_base_url": stream["endpoint"].rsplit("/", 1)[0],
             }
         )
     parsed = urlparse(stream["endpoint"])
-    return VideoFeedConfig(**{**config.__dict__, "srt_host": srt_host, "port": parsed.port or config.port})
+    return VideoFeedConfig(**{**config.__dict__, **overrides, "srt_host": srt_host, "port": parsed.port or config.port})
 
 
 def issues_for_report(stream: dict, report: ValidationReport) -> list[MonitorIssue]:
@@ -214,6 +222,26 @@ def loudness_issues_for_stream(stream: dict, config: VideoFeedConfig, sample_sec
             )
         )
     return issues
+
+
+def frame_rate_issues_for_stream(stream: dict, config: VideoFeedConfig) -> list[MonitorIssue]:
+    if not controls_for_mode(stream["mode"])["video"]:
+        return []
+    expected = frame_rate_float(stream.get("framerate", config.framerate))
+    try:
+        report = measure_frame_rate(config)
+    except FrameRateError as exc:
+        return [issue(stream, "video_frame_rate_match", f"Frame-rate measurement failed: {exc}")]
+    delta = report.measured_fps - expected
+    if abs(delta) <= FRAME_RATE_TOLERANCE_FPS:
+        return []
+    return [
+        issue(
+            stream,
+            "video_frame_rate_match",
+            f"Measured frame rate {report.measured_fps:.2f} fps differs from configured {expected:.2f} fps by {delta:+.2f} fps",
+        )
+    ]
 
 
 def ts_sample(config: VideoFeedConfig, sample_seconds: float) -> tuple[bytes, float | None]:
@@ -330,6 +358,7 @@ def run_monitor_once(
     validator: Callable[[VideoFeedConfig], ValidationReport] = validate_config,
     tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = tr101_issues_for_stream,
     loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = loudness_issues_for_stream,
+    frame_rate_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = frame_rate_issues_for_stream,
 ) -> dict:
     issues = []
     for stream in gui_state.get("streams", []):
@@ -348,6 +377,11 @@ def run_monitor_once(
             issues.extend(tr101_checker(stream, config))
         except Exception:
             pass
+        if report.video_present:
+            try:
+                issues.extend(frame_rate_checker(stream, config))
+            except Exception:
+                pass
         if report.audio_present:
             try:
                 issues.extend(loudness_checker(stream, config))

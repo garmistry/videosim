@@ -4,8 +4,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from videosim.feed import VideoFeedConfig
+from videosim.framerate import FrameRateReport
 from videosim.loudness import LoudnessError, LoudnessReport
-from videosim.monitor import apply_issues, empty_monitor_state, issue, loudness_issues_for_stream, run_monitor_once, tr101_issues_for_stream
+from videosim.monitor import (
+    apply_issues,
+    config_for_stream,
+    empty_monitor_state,
+    frame_rate_issues_for_stream,
+    issue,
+    loudness_issues_for_stream,
+    run_monitor_once,
+    tr101_issues_for_stream,
+)
 from videosim.tr101 import TR101_INDICATORS
 from videosim.validator import ValidationReport
 from tests.test_tr101 import (
@@ -65,6 +75,7 @@ class MonitorTest(unittest.TestCase):
         self.assertTrue(monitors["loudness_ebu_r128_integrated"]["implemented"])
         self.assertTrue(monitors["loudness_ebu_r128_true_peak"]["implemented"])
         self.assertTrue(monitors["loudness_atsc_a85_integrated"]["implemented"])
+        self.assertTrue(monitors["video_frame_rate_match"]["implemented"])
 
     def test_alarm_events_repeat_every_five_seconds_and_clear_to_steady(self):
         item = issue(stream(), "essence_video_present", "Expected video is absent")
@@ -107,6 +118,7 @@ class MonitorTest(unittest.TestCase):
             validator=validator,
             tr101_checker=lambda stream, config: [],
             loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
         )
 
         self.assertEqual(reports[0].endpoint, "srt://app:9000?mode=caller")
@@ -132,6 +144,7 @@ class MonitorTest(unittest.TestCase):
             validator=validator,
             tr101_checker=lambda current, config: [issue(current, "tr101_1_4_continuity_count_error", "PID 200 continuity counter jumped")],
             loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
         )
 
         self.assertEqual(state["alarms"][0]["monitorId"], "tr101_1_4_continuity_count_error")
@@ -177,10 +190,34 @@ class MonitorTest(unittest.TestCase):
                 srt_host="app",
                 validator=validator,
                 loudness_checker=lambda stream, config: [],
+                frame_rate_checker=lambda stream, config: [],
             )
 
         self.assertIn("tr101_1_2_sync_byte_error", {alarm["monitorId"] for alarm in state["alarms"]})
         self.assertEqual(state["events"][0]["type"], "alarm_raised")
+
+    def test_config_for_stream_keeps_selected_frame_rate(self):
+        config = config_for_stream(stream() | {"framerate": "59.94"}, "app")
+
+        self.assertEqual(config.framerate, "59.94")
+        self.assertEqual(config.endpoint, "srt://app:9000?mode=caller")
+
+    def test_frame_rate_checker_raises_mismatch_alarm(self):
+        with patch("videosim.monitor.measure_frame_rate", return_value=FrameRateReport(measured_fps=60.0, source="sample")):
+            issues = frame_rate_issues_for_stream(stream() | {"framerate": "50"}, VideoFeedConfig(framerate="50"))
+
+        self.assertEqual([item.monitor_id for item in issues], ["video_frame_rate_match"])
+        self.assertIn("60.00 fps", issues[0].message)
+        self.assertIn("50.00 fps", issues[0].message)
+
+    def test_frame_rate_checker_skips_matching_and_audio_only(self):
+        with patch("videosim.monitor.measure_frame_rate", return_value=FrameRateReport(measured_fps=59.94, source="sample")) as checker:
+            self.assertEqual(frame_rate_issues_for_stream(stream() | {"framerate": "59.94"}, VideoFeedConfig(framerate="59.94")), [])
+
+        checker.assert_called_once()
+        with patch("videosim.monitor.measure_frame_rate") as checker:
+            self.assertEqual(frame_rate_issues_for_stream(stream("audio_only"), VideoFeedConfig(video=False, captions=False)), [])
+        checker.assert_not_called()
 
     def test_loudness_checker_raises_ebu_and_atsc_alarms(self):
         loud_stream = stream()
@@ -235,6 +272,7 @@ class MonitorTest(unittest.TestCase):
             validator=validator,
             tr101_checker=lambda current, config: [],
             loudness_checker=lambda current, config: [issue(current, "loudness_ebu_r128_integrated", "too loud")],
+            frame_rate_checker=lambda stream, config: [],
         )
 
         self.assertEqual(state["alarms"][0]["monitorId"], "loudness_ebu_r128_integrated")

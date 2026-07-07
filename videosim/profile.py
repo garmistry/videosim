@@ -29,7 +29,7 @@ ALLOWED_KEYS = {
     "dash_base_url",
     "dash_manifest",
 }
-INT_KEYS = {"schema_version", "port", "width", "height", "framerate", "audio_frequency"}
+INT_KEYS = {"schema_version", "port", "width", "height", "audio_frequency"}
 BOOL_KEYS = {"video", "audio", "captions", "frozen"}
 MODE_PRESETS = {
     "normal": {},

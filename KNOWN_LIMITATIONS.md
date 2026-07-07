@@ -45,6 +45,9 @@
 - TR 101 290 priority 3 T-STD buffer, empty-buffer, and data-delay checks are
   parser-backed timing approximations from sample byte rate and PES PTS, not a
   calibrated ISO decoder buffer model.
+- Frame-rate alarms use FFprobe-reported stream rates from the live endpoint or
+  latest DASH video segment. They detect configured-rate mismatches, not
+  long-term cadence jitter.
 - Audio loudness alarms use short live samples through FFmpeg `ebur128`.
   They are useful for operational alarms but are not full-program EBU R 128 or
   ATSC A/85 compliance certificates.

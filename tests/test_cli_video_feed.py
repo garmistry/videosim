@@ -39,6 +39,15 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertFalse(any("maxconn=" in arg for arg in args))
         self.assertLess(args.index("video/x-raw,framerate=10/1"), args.index("cccombiner"))
 
+    def test_pipeline_accepts_fractional_broadcast_frame_rate(self):
+        config = VideoFeedConfig(port=9910, width=320, height=180, framerate="59.94")
+
+        with patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+            args = video_pipeline_args(config)
+
+        self.assertIn("video/x-raw,width=320,height=180,framerate=60000/1001", args)
+        self.assertIn("key-int-max=60", args)
+
     def test_dash_endpoint_uses_manifest_file_by_default(self):
         config = VideoFeedConfig(protocol="dash", dash_dir="/tmp/videosim-test-dash")
 

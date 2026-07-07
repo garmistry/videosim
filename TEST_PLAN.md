@@ -54,6 +54,8 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 | Monitor samples DASH TS segments for TR 101 290 alarms | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | Monitor samples malformed DASH fixtures for every TR 101 290 indicator | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | Docker monitor fixture gate for malformed DASH TR 101 290 indicators | P1 | implemented | `docker compose run --build --rm monitor-fixtures` |
+| Feed frame-rate selection and fractional GStreamer caps | P1 | implemented | `python3 -m unittest tests.test_framerate tests.test_cli_video_feed tests.test_profiles tests.test_gui` |
+| Monitor raises configured-vs-measured frame-rate mismatch alarm | P1 | implemented | `python3 -m unittest tests.test_monitor tests.test_framerate` |
 | Audio loudness parser and DASH audio segment selection | P1 | implemented | `python3 -m unittest tests.test_loudness` |
 | Monitor raises ITU-R BS.1770, EBU R 128, and ATSC A/85 loudness alarms | P1 | implemented | `python3 -m unittest tests.test_monitor tests.test_loudness` |
 | GUI payload and fallback render monitor alarms | P1 | implemented | `python3 -m unittest tests.test_gui` |

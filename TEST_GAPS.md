@@ -36,3 +36,6 @@ implementation and must pass before those milestones advance.
   and ATSC A/85 have unit coverage. Full-program loudness compliance runs are
   not part of the live monitor slice; the monitor samples live audio for alarm
   detection.
+- Frame-rate selection and mismatch alarms have unit coverage for GUI/CLI,
+  profile loading, GStreamer caps, FFprobe parsing, and monitor alarm behavior.
+  Long-running live SRT/DASH frame-rate drift fixtures are not generated yet.

@@ -771,7 +771,7 @@ input:focus-visible {
 
 .form-grid {
   align-items: end;
-  grid-template-columns: minmax(14rem, 1fr) minmax(9rem, 0.45fr) minmax(11rem, 0.6fr) auto;
+  grid-template-columns: minmax(14rem, 1fr) minmax(9rem, 0.45fr) minmax(11rem, 0.6fr) minmax(8rem, 0.4fr) auto;
 }
 
 label {

@@ -333,3 +333,14 @@
 - Containerized monitor/loudness fixture proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_loudness tests.test_monitor tests.test_tr101` passed, 23 tests, using the existing Linux test image with current source bind-mounted.
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `git diff --check` passed.
+- Added GUI feed frame-rate selectors for 23.97, 24, 25, 50, 59.94, and 60 fps, with 59.94 fps as the GUI default and legacy 30 fps profile/config support preserved.
+- Added shared frame-rate normalization/caps helpers so fractional rates use rational GStreamer caps and matching caption caps/keyframe intervals.
+- Added the `Video frame rate match` monitor alarm using FFprobe-measured video rates against the configured stream rate, including DASH segment probing and audio-only skip behavior.
+- Updated README, runbook, monitoring docs, acceptance matrix, test plan, gaps, and known limitations for selected frame-rate validation and alert behavior.
+- Validation run: `python3 -m unittest tests.test_framerate tests.test_cli_video_feed tests.test_profiles tests.test_gui tests.test_monitor` passed, 86 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 128 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Containerized frame-rate monitor/GUI proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_framerate tests.test_monitor tests.test_gui` passed, 58 tests, using the existing Linux test image with current source bind-mounted.
+- Validation run: `git diff --check` passed.

@@ -61,6 +61,7 @@ and shows active alarms plus stream-specific event audit history.
 | Captions present | major | Platform validator | implemented |
 | Black video detected | major | Platform validator | implemented |
 | Frozen video detected | major | Platform validator | implemented |
+| Video frame rate match | major | FFprobe | implemented |
 | ITU-R BS.1770 loudness measurement | major | FFmpeg ebur128 | implemented |
 | EBU R 128 integrated loudness | major | FFmpeg ebur128 | implemented |
 | EBU R 128 true peak | major | FFmpeg ebur128 | implemented |
@@ -82,6 +83,14 @@ For DASH, it measures the latest audio `.ts` segment in the shared DASH volume.
 These are live monitor samples, not full-program compliance certificates.
 Program-level acceptance should still be measured across the full item when
 that matters.
+
+## Frame Rate Monitor
+
+The GUI stores the configured frame rate for each stream. Supported GUI choices
+are 23.97, 24, 25, 50, 59.94, and 60 fps; GStreamer receives rational caps for
+the fractional rates. The monitor probes video-present feeds with FFprobe and
+raises `Video frame rate match` when the measured rate differs from the
+configured rate by more than 0.15 fps, or when frame-rate measurement fails.
 
 ## TR 101 290 Monitors
 

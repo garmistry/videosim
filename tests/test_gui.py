@@ -96,6 +96,9 @@ class GuiTest(unittest.TestCase):
         self.assertFalse(payload["previewAvailable"])
         self.assertIn("metrics", payload)
         self.assertIn("bitrateBps", payload["streams"][0]["metrics"])
+        self.assertEqual(payload["streams"][0]["framerate"], "59.94")
+        self.assertEqual(payload["framerate"], "59.94")
+        self.assertIn({"value": "59.94", "label": "59.94 fps"}, payload["framerates"])
         self.assertEqual(payload["streams"][0]["previewUrl"], "/feeds/stream-1/preview.jpg")
         self.assertFalse(payload["streams"][0]["previewAvailable"])
 
@@ -171,6 +174,8 @@ class GuiTest(unittest.TestCase):
         self.assertIn("CreateFeedDialog", source)
         self.assertIn("FullPreviewDialog", source)
         self.assertIn("preview-thumb", source)
+        self.assertIn('name="framerate"', source)
+        self.assertIn("state.framerates", source)
 
     def test_frontend_renders_stream_detail_traffic_graphs(self):
         source = Path("frontend/src/main.jsx").read_text()
@@ -247,12 +252,30 @@ class GuiTest(unittest.TestCase):
         state = GuiState(feed_port=9912)
         self.create_feed(state)
 
-        updated = state.update_stream("stream-1", name="Updated", protocol="dash", mode="video_only")
+        updated = state.update_stream("stream-1", name="Updated", protocol="dash", mode="video_only", framerate="59.94")
 
         self.assertTrue(updated)
         self.assertEqual(state.active_stream.name, "Updated")
         self.assertEqual(state.protocol, "dash")
         self.assertEqual(state.mode, "video_only")
+        self.assertEqual(state.framerate, "59.94")
+
+    def test_create_stream_supports_selected_frame_rate(self):
+        state = GuiState(feed_port=9912)
+        created = state.create_stream(name="Rate", framerate="23.97")
+
+        self.assertEqual(created.framerate, "23.97")
+        self.assertEqual(state_payload(state)["streams"][0]["framerateLabel"], "23.97 fps")
+
+        with patch("videosim.gui.subprocess.Popen") as popen:
+            popen.return_value.stdout = []
+            popen.return_value.pid = 1234
+            popen.return_value.poll.return_value = None
+            state.start(created.id)
+
+        cmd = popen.call_args.args[0]
+        self.assertIn("--framerate", cmd)
+        self.assertIn("23.97", cmd)
 
     def test_stream_delete_stops_and_removes_record(self):
         state = GuiState(feed_port=9912)

@@ -724,6 +724,31 @@ input:focus-visible {
   border-top: 1px solid var(--border-subtle);
 }
 
+.event-audit {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.event-audit summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: var(--space-4);
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-6);
+}
+
+.event-summary-title {
+  color: var(--text-1);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.event-audit-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-5) var(--space-6) 0;
+}
+
 .alarm-row,
 .event-row {
   background: var(--surface-inset);

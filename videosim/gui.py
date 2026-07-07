@@ -898,6 +898,13 @@ class GuiHandler(BaseHTTPRequestHandler):
                     )
                 except ValueError as exc:
                     self.state.log(str(exc))
+        elif self.path == "/streams/events/clear":
+            params = self._read_form()
+            stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
+            if stream_id:
+                redirect_stream_id = stream_id
+                if clear_monitor_events(self.state, stream_id):
+                    self.state.log("Cleared event audit", stream_id)
         elif self.path == "/streams/delete":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
@@ -1177,6 +1184,10 @@ def render_page(state: GuiState) -> str:
     </fieldset>
   </form>
   {alert_profile_form}
+  <form method="post" action="/streams/events/clear" class="row">
+    <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
+    <button class="secondary" type="submit">Clear event audit</button>
+  </form>
   <div class="row">
     <form method="post" action="/stop"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Stop</button></form>
     <form method="post" action="/validate"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Validate</button></form>
@@ -1435,7 +1446,7 @@ def diagnostics_text(state: GuiState) -> str:
 
 
 def monitor_payload(state: GuiState) -> dict:
-    path = Path(state.monitor_state_path or os.environ.get("VIDEOSIM_MONITOR_STATE", DEFAULT_MONITOR_STATE_PATH))
+    path = monitor_state_path(state)
     if not path.is_file():
         return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "connected": False}
     try:
@@ -1450,6 +1461,29 @@ def monitor_payload(state: GuiState) -> dict:
         "monitors": payload.get("monitors", []) or monitor_catalog_payload(),
         "connected": True,
     }
+
+
+def clear_monitor_events(state: GuiState, stream_id: str) -> bool:
+    path = monitor_state_path(state)
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    events = payload.get("events", [])
+    payload["events"] = [event for event in events if event.get("streamId") != stream_id]
+    try:
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(path)
+    except OSError:
+        return False
+    return True
+
+
+def monitor_state_path(state: GuiState) -> Path:
+    return Path(state.monitor_state_path or os.environ.get("VIDEOSIM_MONITOR_STATE", DEFAULT_MONITOR_STATE_PATH))
 
 
 def run_gui(host: str, port: int, state: GuiState):

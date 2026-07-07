@@ -10,6 +10,7 @@ from videosim.gui import (
     MODE_CONTROLS,
     PROFILE_OPTIONS,
     PROTOCOL_OPTIONS,
+    clear_monitor_events,
     diagnostics_text,
     mode_from_controls,
     mode_from_form,
@@ -166,6 +167,31 @@ class GuiTest(unittest.TestCase):
         self.assertIn('action="/streams/alerts"', page)
         self.assertIn('name="alert_delay_seconds"', page)
         self.assertIn('value="essence_video_present"', page)
+        self.assertIn('action="/streams/events/clear"', page)
+
+    def test_clear_monitor_events_removes_only_selected_stream_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "updatedAt": "2026-07-07T00:00:00Z",
+                        "alarms": [],
+                        "events": [
+                            {"id": "1", "streamId": "stream-1", "type": "alarm_raised"},
+                            {"id": "2", "streamId": "stream-2", "type": "alarm_raised"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = GuiState(monitor_state_path=str(path))
+
+            cleared = clear_monitor_events(state, "stream-1")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertTrue(cleared)
+        self.assertEqual(payload["events"], [{"id": "2", "streamId": "stream-2", "type": "alarm_raised"}])
 
     def test_stream_metrics_payload_updates_for_each_running_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
@@ -228,6 +254,8 @@ class GuiTest(unittest.TestCase):
         self.assertIn("MetricChart", source)
         self.assertIn("MonitorPanel", source)
         self.assertIn("Event audit", source)
+        self.assertIn('className="event-audit"', source)
+        self.assertIn('action="/streams/events/clear"', source)
         self.assertIn('valueKey="bitrateBps"', source)
         self.assertIn('valueKey="outboundBytes"', source)
         self.assertIn("-5 min", source)

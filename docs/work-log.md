@@ -411,3 +411,11 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 148 tests with 11 live tests skipped locally by default.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Made the stream-page event audit collapsible and added a clear action that removes only the selected stream's monitor events from the shared monitor state file.
+- Added GUI regression coverage for the clear action and React event-audit controls.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 46 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 149 tests with 11 live tests skipped locally by default.
+- Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

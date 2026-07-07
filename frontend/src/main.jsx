@@ -718,13 +718,21 @@ function MonitorPanel({ stream, monitor }) {
       <div className="alarm-list">
         {alarms.length === 0 ? <p className="empty-copy">No monitor alarms</p> : alarms.map((alarm) => <AlarmRow alarm={alarm} key={alarm.id} />)}
       </div>
-      <header className="card-header subhead">
-        <h2>Event audit</h2>
-        <span className="card-meta">{events.length} recent</span>
-      </header>
-      <div className="event-list">
-        {events.length === 0 ? <p className="empty-copy">No monitor events</p> : events.map((event) => <EventRow event={event} key={event.id} />)}
-      </div>
+      <details className="event-audit" open>
+        <summary>
+          <span className="event-summary-title">Event audit</span>
+          <span className="card-meta">{events.length} recent</span>
+        </summary>
+        <div className="event-audit-actions">
+          <form action="/streams/events/clear" method="post">
+            <input name="stream_id" type="hidden" value={stream.id} />
+            <button className="button small ghost" disabled={events.length === 0} type="submit">Clear audit</button>
+          </form>
+        </div>
+        <div className="event-list">
+          {events.length === 0 ? <p className="empty-copy">No monitor events</p> : events.map((event) => <EventRow event={event} key={event.id} />)}
+        </div>
+      </details>
     </article>
   );
 }

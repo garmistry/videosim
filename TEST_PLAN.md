@@ -50,8 +50,9 @@ the first persistence adapter behind the feed-store boundary.
 |---|---:|---|---|
 | SQLite feed registration store round trip | P1 | implemented | `python3 -m unittest tests.test_feed_store` |
 | GUI persists feed definitions and alert profiles through the store boundary | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| GUI shows only source-specific create/update fields | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 | External SRT URL registration and protocol validation | P1 | implemented | `python3 -m unittest tests.test_gui` |
-| Monitor preserves external SRT endpoints and raises missing-video alarms | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| Monitor preserves external SRT endpoints and raises selected missing-video alarms | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | External DASH manifest and segment URL validation | P1 | implemented | `python3 -m unittest tests.test_validator` |
 
 ## Added Monitoring Coverage

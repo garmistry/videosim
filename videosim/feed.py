@@ -41,6 +41,7 @@ class VideoFeedConfig:
     dash_base_url: str = ""
     dash_manifest: str = DASH_MANIFEST
     external_endpoint: str = ""
+    passive: bool = False
 
     def __post_init__(self):
         for name in ("port", "width", "height", "audio_frequency"):

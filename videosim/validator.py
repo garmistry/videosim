@@ -38,6 +38,16 @@ def validate_config(config: VideoFeedConfig) -> ValidationReport:
 
 
 def _validate_srt(config: VideoFeedConfig, report: ValidationReport) -> ValidationReport:
+    if config.passive:
+        report.video_present = _track_present(config.endpoint, "video")
+        report.audio_present = _track_present(config.endpoint, "audio")
+        report.captions_present = report.video_present and _captions_present(config.endpoint)
+        report.reachable = report.video_present or report.audio_present or report.captions_present
+        if not report.reachable:
+            report.errors.append("feed unreachable or no streams detected")
+        report.passed = not report.errors
+        return report
+
     expected = {"video": config.video, "audio": config.audio, "captions": config.captions}
     report.reachable = _expected_tracks_present(config.endpoint, expected)
     if not report.reachable:
@@ -88,13 +98,20 @@ def _validate_dash(config: VideoFeedConfig, report: ValidationReport) -> Validat
     audio_segment = _wait_for_dash_segment(config, "audio", manifest)
     report.video_present = "video" in adaptations and bool(video_segment)
     report.audio_present = "audio" in adaptations and bool(audio_segment)
+    report.captions_present = "text" in adaptations and _dash_captions_present(config, manifest)
+    if config.passive:
+        report.reachable = report.video_present or report.audio_present or report.captions_present
+        if not report.reachable:
+            report.errors.append("DASH feed unreachable or no streams detected")
+        report.passed = not report.errors
+        return report
+
     report.reachable = (report.video_present if config.video else True) and (report.audio_present if config.audio else True)
     if not report.reachable:
         report.errors.append("DASH feed unreachable or expected segments missing")
         return report
 
     if config.video:
-        report.captions_present = "text" in adaptations and _dash_captions_present(config, manifest)
         if config.pattern == "black" and video_segment:
             frames = _read_dash_rgb_frames(config, video_segment, 3)
             report.black_video = _black_pixel_ratio(frames) >= 0.95

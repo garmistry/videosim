@@ -72,6 +72,21 @@ class ValidatorOutputTest(unittest.TestCase):
         self.assertTrue(report.audio_present)
         self.assertFalse(report.captions_present)
 
+    def test_passive_srt_validation_reports_tracks_without_expectation_errors(self):
+        config = VideoFeedConfig(external_endpoint="srt://camera.local:9999?mode=caller", passive=True)
+
+        with patch("videosim.validator._track_present", side_effect=lambda _endpoint, track: track == "audio"), patch(
+            "videosim.validator._captions_present", return_value=False
+        ), patch("videosim.validator._expected_tracks_present") as expected:
+            report = validate_config(config)
+
+        expected.assert_not_called()
+        self.assertTrue(report.passed)
+        self.assertTrue(report.reachable)
+        self.assertFalse(report.video_present)
+        self.assertTrue(report.audio_present)
+        self.assertFalse(report.captions_present)
+
     def test_external_dash_validation_fetches_manifest_and_segments(self):
         manifest = b"""<?xml version="1.0"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">

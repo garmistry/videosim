@@ -131,7 +131,7 @@ then manage feeds from the active-feed table:
 - Create a named generated SRT/DASH feed or register an external SRT/DASH URL.
 - List streams in the root active-feed table.
 - Read/open a stream at `/feeds/<stream-id>` to see endpoint, status, validation, and logs.
-- Update selected stream name, source, protocol, mode, URL, or frame rate.
+- Update selected stream name, source, protocol, and the source-specific fields.
 - Delete the selected stream.
 
 Feed registrations are persisted in SQLite when the GUI is launched from the
@@ -147,12 +147,14 @@ broadcast amber actions, and dot-plus-label status badges. The primary GUI view
 is an active-feed table with status, endpoint, metrics, actions, and a small
 preview thumbnail for each feed. Create feed opens a modal. Clicking a row
 preview opens a full preview dialog, and each feed detail page can still be
-bookmarked directly. Each feed can be started, stopped, validated, and copied
-independently. The source, protocol, mode, URL, and frame-rate selectors support
-generated feeds plus external SRT URLs and external DASH manifest URLs. Normal,
-audio-only, video-only, no-captions, black-video, and frozen-video expectations
-can be selected at 23.97, 24, 25, 50, 59.94, or 60 fps. Changing generated feed
-controls while a feed is running uses a controlled stream restart.
+bookmarked directly. Generated feeds can be started, stopped, validated, and
+copied independently. Generated feed forms show protocol, mode, and frame rate;
+external feed forms show protocol and URL only. External SRT URLs and external
+DASH manifest URLs are ingested as-is, with no configured mode or frame-rate
+expectation. Normal, audio-only, video-only, no-captions, black-video, and
+frozen-video generated modes can be selected at 23.97, 24, 25, 50, 59.94, or
+60 fps. Changing generated feed controls while a feed is running uses a
+controlled stream restart.
 
 The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,
@@ -162,10 +164,12 @@ rolling five-minute client-side metrics window and includes a stream-specific
 alert profile for enabling/disabling monitor alarms plus alarm delay. Alert
 profiles can be configured before the monitor service is running; alarms begin
 evaluating when the monitor is started. External feeds have no local start/stop
-or fault controls; Validate and the monitor probe the registered URL. Video-present
-generated modes include a visible running clock overlay for receiver testing.
-Feed table thumbnails and the preview dialog refresh a local frame matching the
-active generated mode. Use Validate to prove actual stream state.
+or fault controls; Validate and the monitor probe the registered URL and report
+whatever tracks are present. External absence alarms are raised only for alert
+checks enabled in that feed's alert profile. Video-present generated modes
+include a visible running clock overlay for receiver testing. Feed table
+thumbnails and the preview dialog refresh a local frame matching the active
+generated mode. Use Validate to prove actual stream state.
 
 The optional monitor app runs as a separate process/container, polls GUI feed
 state, validates running feeds, and writes alarm/event history for the GUI to

@@ -235,7 +235,7 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
                   <span>
                     <Tag>{stream.sourceLabel || stream.source || "Generated"}</Tag>
                     <Tag>{stream.protocol.toUpperCase()}</Tag>
-                    <Tag>{stream.mode}</Tag>
+                    {stream.source !== "external" ? <Tag>{stream.mode}</Tag> : null}
                   </span>
                 </div>
               </td>
@@ -282,6 +282,10 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
 
 function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
   const controls = state.controls || {};
+  const [configSource, setConfigSource] = useState(stream.source || "generated");
+  useEffect(() => {
+    setConfigSource(stream.source || "generated");
+  }, [stream.id, stream.source]);
   return (
     <div className="screen-stack">
       <a className="back-link" href="/">Active feeds</a>
@@ -292,7 +296,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
             <StatusBadge stream={stream} state={state} />
             <Tag>{stream.sourceLabel || stream.source || "Generated"}</Tag>
             <Tag>{stream.protocol.toUpperCase()}</Tag>
-            <Tag>{stream.mode}</Tag>
+            {stream.source !== "external" ? <Tag>{stream.mode}</Tag> : null}
             <Tag accent>{stream.url}</Tag>
           </div>
           <p className="meta-line">{stream.source === "external" ? "External feed" : stream.intentionalOutage ? "Intentional outage" : "Normal feed"}</p>
@@ -387,7 +391,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                 </label>
                 <label>
                   Source
-                  <select defaultValue={stream.source || "generated"} name="source">
+                  <select name="source" onChange={(event) => setConfigSource(event.target.value)} value={configSource}>
                     {(state.sources || []).map((source) => (
                       <option key={source.value} value={source.value}>{source.label}</option>
                     ))}
@@ -401,26 +405,31 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                     ))}
                   </select>
                 </label>
-                <label>
-                  Mode
-                  <select defaultValue={stream.mode} name="mode">
-                    {(state.modes || []).map((mode) => (
-                      <option key={mode.value} value={mode.value}>{mode.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  External URL
-                  <input defaultValue={stream.externalUrl || ""} name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
-                </label>
-                <label>
-                  Frame rate
-                  <select defaultValue={stream.framerate} name="framerate">
-                    {(state.framerates || []).map((rate) => (
-                      <option key={rate.value} value={rate.value}>{rate.label}</option>
-                    ))}
-                  </select>
-                </label>
+                {configSource !== "external" ? (
+                  <>
+                    <label>
+                      Mode
+                      <select defaultValue={stream.mode} name="mode">
+                        {(state.modes || []).map((mode) => (
+                          <option key={mode.value} value={mode.value}>{mode.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Frame rate
+                      <select defaultValue={stream.framerate} name="framerate">
+                        {(state.framerates || []).map((rate) => (
+                          <option key={rate.value} value={rate.value}>{rate.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : (
+                  <label>
+                    External URL
+                    <input defaultValue={stream.externalUrl || ""} name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
+                  </label>
+                )}
                 <button className="button secondary" type="submit">Update</button>
               </form>
             </div>
@@ -493,6 +502,13 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
 }
 
 function CreateFeedDialog({ state, open, onClose }) {
+  const [source, setSource] = useState("generated");
+  useEffect(() => {
+    if (open) {
+      setSource("generated");
+    }
+  }, [open]);
+
   if (!open) {
     return null;
   }
@@ -510,7 +526,7 @@ function CreateFeedDialog({ state, open, onClose }) {
         </label>
         <label>
           Source
-          <select defaultValue="generated" name="source">
+          <select name="source" onChange={(event) => setSource(event.target.value)} value={source}>
             {(state.sources || []).map((source) => (
               <option key={source.value} value={source.value}>{source.label}</option>
             ))}
@@ -524,26 +540,31 @@ function CreateFeedDialog({ state, open, onClose }) {
             ))}
           </select>
         </label>
-        <label>
-          Mode
-          <select defaultValue={state.mode} name="mode">
-            {(state.modes || []).map((mode) => (
-              <option key={mode.value} value={mode.value}>{mode.label}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          External URL
-          <input name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
-        </label>
-        <label>
-          Frame rate
-          <select defaultValue={state.framerate} name="framerate">
-            {(state.framerates || []).map((rate) => (
-              <option key={rate.value} value={rate.value}>{rate.label}</option>
-            ))}
-          </select>
-        </label>
+        {source !== "external" ? (
+          <>
+            <label>
+              Mode
+              <select defaultValue={state.mode} name="mode">
+                {(state.modes || []).map((mode) => (
+                  <option key={mode.value} value={mode.value}>{mode.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Frame rate
+              <select defaultValue={state.framerate} name="framerate">
+                {(state.framerates || []).map((rate) => (
+                  <option key={rate.value} value={rate.value}>{rate.label}</option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : (
+          <label>
+            External URL
+            <input name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
+          </label>
+        )}
         <footer>
           <button className="button secondary" onClick={onClose} type="button">Cancel</button>
           <button className="button primary" type="submit">Create feed</button>

@@ -342,13 +342,38 @@ class MonitorTest(unittest.TestCase):
 
         self.assertEqual(config.framerate, "59.94")
         self.assertEqual(config.endpoint, "srt://camera.local:9999?mode=caller")
+        self.assertTrue(config.passive)
 
-    def test_monitor_once_alerts_on_external_missing_video(self):
+    def test_monitor_once_ignores_external_missing_video_until_alert_selected(self):
         def validator(config):
             return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)
 
         state = run_monitor_once(
             {"streams": [stream() | {"source": "external", "endpoint": "srt://camera.local:9999?mode=caller"}]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertEqual(state["alarms"], [])
+
+        state = run_monitor_once(
+            {
+                "streams": [
+                    stream()
+                    | {
+                        "source": "external",
+                        "endpoint": "srt://camera.local:9999?mode=caller",
+                        "alertProfile": {"enabledMonitorIds": ["essence_video_present"], "delaySeconds": 0},
+                    }
+                ]
+            },
             empty_monitor_state(),
             now=100,
             repeat_seconds=5,

@@ -10,7 +10,7 @@ from typing import Callable
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from .alert_profile import alert_profile_from_stream
+from .alert_profile import alert_profile_from_stream, alert_profile_payload
 from .feed import DASH_SEGMENT_DURATION_SECONDS, VideoFeedConfig
 from .framerate import FRAME_RATE_TOLERANCE_FPS, FrameRateError, frame_rate_float, measure_frame_rate
 from .gui import controls_for_mode, profile_for
@@ -78,14 +78,14 @@ def fetch_gui_state(url: str) -> dict:
 
 
 def config_for_stream(stream: dict, srt_host: str) -> VideoFeedConfig:
-    config = load_profile(profile_for(stream["protocol"], stream["mode"]))
+    config = load_profile(profile_for(stream["protocol"], "normal" if stream.get("source") == "external" else stream["mode"]))
     overrides = {
         key: stream[key]
         for key in ("width", "height", "framerate")
         if key in stream and stream[key] not in (None, "")
     }
     if stream.get("source") == "external":
-        return replace(config, **overrides, protocol=stream["protocol"], external_endpoint=stream["endpoint"])
+        return replace(config, **overrides, protocol=stream["protocol"], external_endpoint=stream["endpoint"], passive=True)
     if stream["protocol"] == "dash":
         return VideoFeedConfig(
             **{
@@ -100,10 +100,11 @@ def config_for_stream(stream: dict, srt_host: str) -> VideoFeedConfig:
 
 
 def issues_for_report(stream: dict, report: ValidationReport) -> list[MonitorIssue]:
-    controls = controls_for_mode(stream["mode"])
-    profile = alert_profile_from_stream(stream)
-    explicit = set(profile["enabledMonitorIds"] or []) if profile["enabledMonitorIds"] is not None else set()
-    expected = lambda control, monitor_id: controls[control] or monitor_id in explicit
+    controls = {field: False for field in ("video", "audio", "captions", "black_video", "frozen_video")} if stream.get("source") == "external" else controls_for_mode(stream["mode"])
+    profile = monitor_alert_profile(stream)
+    enabled = profile["enabledMonitorIds"]
+    explicit = set(enabled or []) if enabled is not None else set()
+    expected = lambda control, monitor_id: (enabled is None and stream.get("source") == "external") or controls[control] or monitor_id in explicit
     issues = []
     if not report.reachable:
         issues.append(issue(stream, "feed_reachable", "Feed is unreachable or expected streams are missing"))
@@ -264,7 +265,7 @@ def apply_alert_profiles(state: dict, streams: list[dict], issues: list[MonitorI
     next_pending = {}
     for item in issues:
         stream = streams_by_id.get(item.stream_id, {})
-        profile = alert_profile_from_stream(stream)
+        profile = monitor_alert_profile(stream)
         enabled = profile["enabledMonitorIds"]
         if enabled is not None and item.monitor_id not in enabled:
             continue
@@ -281,6 +282,12 @@ def apply_alert_profiles(state: dict, streams: list[dict], issues: list[MonitorI
             }
     state["pending"] = sorted(next_pending.values(), key=lambda item: item["id"])
     return filtered
+
+
+def monitor_alert_profile(stream: dict) -> dict:
+    if stream.get("source") == "external" and "alertProfile" not in stream:
+        return alert_profile_payload([], 0)
+    return alert_profile_from_stream(stream)
 
 
 def alarm_payload(item: MonitorIssue, now: float) -> dict:
@@ -350,12 +357,12 @@ def run_monitor_once(
             issues.extend(tr101_checker(stream, config))
         except Exception:
             pass
-        if report.video_present:
+        if stream.get("source") != "external" and report.video_present:
             try:
                 issues.extend(frame_rate_checker(stream, config))
             except Exception:
                 pass
-        if report.audio_present:
+        if stream.get("source") != "external" and report.audio_present:
             try:
                 issues.extend(loudness_checker(stream, config))
             except Exception:

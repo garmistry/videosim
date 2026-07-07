@@ -144,7 +144,7 @@ active-feed table for CRUDL operations:
 - Create a named generated SRT/DASH feed or register an external SRT/DASH URL.
 - List all configured streams.
 - Open/read a stream at `/feeds/<stream-id>` to see endpoint, status, logs, and validation output.
-- Update the selected stream name, source, protocol, mode, URL, or frame rate.
+- Update the selected stream name, source, protocol, and the source-specific fields.
 - Delete the selected stream.
 
 GUI feed registrations are stored in SQLite when the GUI is launched through
@@ -155,17 +155,19 @@ The database stores feed definitions and alert profiles, not local subprocess
 handles or transient runtime metrics.
 
 Feed detail pages are directly bookmarkable and do not include the create-feed
-form; use `/` for the create/list workflow. Use the protocol selector to choose
-SRT or DASH, then use the mode selector to start normal, audio-only, video-only,
-no-captions, black-video, or frozen-video feeds. Select External URL to register
-a bring-your-own SRT endpoint or DASH manifest URL for validation and alerting.
-Generated feeds have independent start, stop, validate, and copy URL actions.
-External feeds expose validate, copy URL, and alert profile actions only. Use
-the runtime fault controls on generated feeds to toggle video, audio, captions,
-black video, or frozen video while the GUI is running; the MVP applies those
-changes with a controlled stream restart.
+form; use `/` for the create/list workflow. Generated feeds show protocol,
+mode, and frame-rate fields. Use them to start normal, audio-only, video-only,
+no-captions, black-video, or frozen-video feeds. External feeds show protocol
+and URL fields only; register a bring-your-own SRT endpoint or DASH manifest
+URL for validation and alerting. Generated feeds have independent start, stop,
+validate, and copy URL actions. External feeds expose validate, copy URL, and
+alert profile actions only. Use the runtime fault controls on generated feeds
+to toggle video, audio, captions, black video, or frozen video while the GUI is
+running; the MVP applies those changes with a controlled stream restart.
 
 Use the Validate button to run the current profile validation from the GUI.
+External validation probes the registered URL and reports whatever tracks are
+present without applying mode or frame-rate expectations.
 Use Download diagnostics to export status, mode, endpoint, last error,
 validation output, and recent logs as text.
 

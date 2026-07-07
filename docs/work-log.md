@@ -397,3 +397,11 @@
 - Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Made generated/external feed forms source-aware: generated forms hide external URL, external forms hide mode and frame-rate fields, and fallback HTML uses separate generated/external create forms.
+- Changed external feed validation and monitor config to passive ingest mode so external feeds report whatever tracks arrive and only raise absence alarms for alert checks explicitly enabled on that feed.
+- Validation run: `python3 -m unittest tests.test_gui tests.test_monitor tests.test_validator tests.test_cli_video_feed tests.test_feed_store` passed, 94 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 147 tests with 11 live tests skipped locally by default.
+- Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

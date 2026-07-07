@@ -201,6 +201,16 @@ class FeedRecord:
 
     def metrics(self, now: float | None = None) -> dict:
         now = time.monotonic() if now is None else now
+        if self.source == "external":
+            return {
+                "uptimeSeconds": 0,
+                "bitrateBps": 0,
+                "bitrateLabel": format_bitrate(0),
+                "outboundBytes": 0,
+                "outboundLabel": format_bytes(0),
+                "videoFrames": 0,
+                "videoFramesLabel": "0",
+            }
         running = self.status == "running"
         uptime = max(0.0, now - self.started_at) if running and self.started_at is not None else self.last_run_seconds
         bitrate_bps = self.bitrate_bps() if running else 0
@@ -314,6 +324,7 @@ class GuiState:
             mode=mode,
             source=source,
             external_url=external_url,
+            alert_enabled_ids=[] if source == "external" else None,
         )
         self._persist_stream(stream)
         self.streams[stream_id] = stream
@@ -373,6 +384,8 @@ class GuiState:
             stream.name = name.strip()
         stream.protocol = next_protocol
         stream.mode = next_mode
+        if stream.source != next_source:
+            stream.alert_enabled_ids = [] if next_source == "external" else None
         stream.source = next_source
         stream.external_url = next_external_url
         stream.framerate = next_framerate
@@ -749,7 +762,7 @@ def stream_registration(stream: FeedRecord) -> dict:
 
 
 def external_validation_config(stream: FeedRecord):
-    config = load_profile(profile_for(stream.protocol, stream.mode))
+    config = load_profile(profile_for(stream.protocol, "normal"))
     return replace(
         config,
         protocol=stream.protocol,
@@ -757,6 +770,7 @@ def external_validation_config(stream: FeedRecord):
         height=stream.height,
         framerate=stream.framerate,
         external_endpoint=stream.endpoint,
+        passive=True,
     )
 
 
@@ -1039,10 +1053,10 @@ def render_page(state: GuiState) -> str:
     stream_rows = "\n".join(
         f"""<tr>
           <td><a href="{html.escape(feed_path(stream.id))}"><img alt="{html.escape(stream.name)} preview" src="{html.escape(feed_path(stream.id))}/preview.jpg" style="width:8.5rem;aspect-ratio:16/9;object-fit:cover;border-radius:0.45rem;background:#050505;"></a></td>
-          <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(SOURCE_OPTIONS[stream.source])} · {html.escape(stream.protocol.upper())} · {html.escape(stream.mode)}</td>
+          <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(SOURCE_OPTIONS[stream.source])} · {html.escape(stream.protocol.upper())}{'' if stream.source == "external" else ' · ' + html.escape(stream.mode)}</td>
           <td>{html.escape(stream.status)}</td>
           <td>{html.escape(stream.endpoint)}</td>
-          <td>Frame rate: {html.escape(stream.framerate)} fps<br>Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
+          <td>{'' if stream.source == "external" else 'Frame rate: ' + html.escape(stream.framerate) + ' fps<br>'}Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
           <td><a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a></td>
         </tr>"""
         for stream in state.streams.values()
@@ -1058,14 +1072,22 @@ def render_page(state: GuiState) -> str:
         for alarm in monitor.get("alarms", [])[:20]
     )
     create_form = f"""
+  <h3>Create generated feed</h3>
   <form method="post" action="/streams/create" class="row">
+    <input type="hidden" name="source" value="generated">
     <label>Name <input name="name" value="Feed {len(state.streams) + 1}"></label>
-    <label>Source <select name="source">{source_options}</select></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
     <label>Mode <select name="mode">{options}</select></label>
-    <label>External URL <input name="external_url" placeholder="srt://host:port or https://host/manifest.mpd"></label>
     <label>Frame rate <select name="framerate">{framerate_options}</select></label>
     <button type="submit">Create stream</button>
+  </form>
+  <h3>Register external feed</h3>
+  <form method="post" action="/streams/create" class="row">
+    <input type="hidden" name="source" value="external">
+    <label>Name <input name="name" value="External feed"></label>
+    <label>Protocol <select name="protocol">{protocol_options}</select></label>
+    <label>External URL <input name="external_url" placeholder="srt://host:port or https://host/manifest.mpd"></label>
+    <button type="submit">Register feed</button>
   </form>
   <div class="empty-state">Open an existing feed or create a new one.</div>"""
     selected_detail = ""
@@ -1102,15 +1124,21 @@ def render_page(state: GuiState) -> str:
     <div class="empty-state">Monitor not running</div>
   </fieldset>"""
         )
+        config_fields = (
+            f"""
+    <label>Mode <select name="mode">{options}</select></label>
+    <label>Frame rate <select name="framerate">{active_framerate_options}</select></label>"""
+            if active.source != "external"
+            else f"""
+    <label>External URL <input name="external_url" value="{html.escape(active.external_url)}" placeholder="srt://host:port or https://host/manifest.mpd"></label>"""
+        )
         selected_detail = f"""
   <form method="post" action="/streams/update" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
     <label>Selected name <input name="name" value="{html.escape(active.name)}"></label>
     <label>Source <select name="source">{source_options}</select></label>
     <label>Protocol <select name="protocol">{protocol_options}</select></label>
-    <label>Mode <select name="mode">{options}</select></label>
-    <label>External URL <input name="external_url" value="{html.escape(active.external_url)}" placeholder="srt://host:port or https://host/manifest.mpd"></label>
-    <label>Frame rate <select name="framerate">{active_framerate_options}</select></label>
+    {config_fields}
     <button type="submit">Update stream</button>
   </form>
   <form method="post" action="/streams/delete" class="row">
@@ -1121,7 +1149,7 @@ def render_page(state: GuiState) -> str:
   <div>Intentional outage: <strong>{outage}</strong></div>
   <div>Last error: <strong>{last_error}</strong></div>
   <div>Bit rate (est.): <strong>{html.escape(metrics["bitrateLabel"])}</strong></div>
-  <div>Frame rate: <strong>{html.escape(active.framerate)} fps</strong></div>
+  {'' if active.source == "external" else f'<div>Frame rate: <strong>{html.escape(active.framerate)} fps</strong></div>'}
   <div>Outbound total (est.): <strong>{html.escape(metrics["outboundLabel"])}</strong></div>
   <div>Uptime: <strong>{html.escape(str(metrics["uptimeSeconds"]))}s</strong></div>
   <div>Video frames: <strong>{html.escape(metrics["videoFramesLabel"])}</strong></div>

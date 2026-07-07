@@ -39,6 +39,8 @@
 
 - The separate monitor app uses a shared JSON state file rather than a database
   or event broker.
+- Alert profiles are kept in the running GUI process with each stream record.
+  They are not persisted across GUI restarts.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

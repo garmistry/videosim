@@ -344,3 +344,13 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Containerized frame-rate monitor/GUI proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_framerate tests.test_monitor tests.test_gui` passed, 58 tests, using the existing Linux test image with current source bind-mounted.
 - Validation run: `git diff --check` passed.
+- Added per-stream alert profiles with selected monitor IDs and alarm delay seconds, exposed on stream detail pages and in `/state.json`.
+- Added monitor-side alert filtering and pending-delay handling so disabled alerts clear and enabled issues must persist before raising.
+- Updated README, runbook, monitoring docs, goal plan, acceptance matrix, test plan, gaps, and limitations for alarming startup and process-local alert profiles.
+- Validation run: `python3 -m unittest tests.test_gui tests.test_monitor` passed, 56 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 131 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Containerized alert-profile monitor/GUI proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_gui tests.test_monitor` passed, 56 tests, using the existing Linux test image with current source bind-mounted.
+- Validation run: `git diff --check` passed.

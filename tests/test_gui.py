@@ -122,7 +122,16 @@ class GuiTest(unittest.TestCase):
                             }
                         ],
                         "events": [{"id": "1", "streamId": "stream-1", "type": "alarm_raised"}],
-                        "monitors": [],
+                        "monitors": [
+                            {
+                                "id": "essence_video_present",
+                                "name": "Video present",
+                                "severity": "critical",
+                                "priority": "platform",
+                                "implemented": True,
+                                "description": "Expected video essence is present.",
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -134,8 +143,12 @@ class GuiTest(unittest.TestCase):
             page = render_page(state)
 
         self.assertEqual(payload["monitor"]["alarms"][0]["monitorName"], "Video present")
+        self.assertEqual(payload["alertOptions"][0]["id"], "essence_video_present")
         self.assertIn("Monitor alarms (1 active)", page)
         self.assertIn("Expected video is absent", page)
+        self.assertIn('action="/streams/alerts"', page)
+        self.assertIn('name="alert_delay_seconds"', page)
+        self.assertIn('value="essence_video_present"', page)
 
     def test_stream_metrics_payload_updates_for_each_running_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
@@ -176,6 +189,9 @@ class GuiTest(unittest.TestCase):
         self.assertIn("preview-thumb", source)
         self.assertIn('name="framerate"', source)
         self.assertIn("state.framerates", source)
+        self.assertIn("AlertProfileCard", source)
+        self.assertIn('name="alert_monitor"', source)
+        self.assertIn('name="alert_delay_seconds"', source)
 
     def test_frontend_renders_stream_detail_traffic_graphs(self):
         source = Path("frontend/src/main.jsx").read_text()
@@ -259,6 +275,18 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(state.protocol, "dash")
         self.assertEqual(state.mode, "video_only")
         self.assertEqual(state.framerate, "59.94")
+
+    def test_stream_alert_profile_update_changes_selected_stream(self):
+        state = GuiState(feed_port=9912)
+        self.create_feed(state)
+
+        updated = state.update_alert_profile("stream-1", ["feed_reachable", "essence_video_present"], 15)
+
+        self.assertTrue(updated)
+        profile = state_payload(state)["streams"][0]["alertProfile"]
+        self.assertFalse(profile["allEnabled"])
+        self.assertEqual(profile["enabledMonitorIds"], ["feed_reachable", "essence_video_present"])
+        self.assertEqual(profile["delaySeconds"], 15)
 
     def test_create_stream_supports_selected_frame_rate(self):
         state = GuiState(feed_port=9912)

@@ -366,6 +366,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
           </article>
 
           <MonitorPanel monitor={state.monitor || {}} stream={stream} />
+          <AlertProfileCard state={state} stream={stream} />
 
           <article className="card">
             <header className="card-header"><h2>Configuration</h2></header>
@@ -665,6 +666,48 @@ function MonitorPanel({ stream, monitor }) {
       </header>
       <div className="event-list">
         {events.length === 0 ? <p className="empty-copy">No monitor events</p> : events.map((event) => <EventRow event={event} key={event.id} />)}
+      </div>
+    </article>
+  );
+}
+
+function AlertProfileCard({ state, stream }) {
+  const options = state.alertOptions || state.monitor?.monitors || [];
+  const profile = stream.alertProfile || { allEnabled: true, enabledMonitorIds: null, delaySeconds: 0 };
+  const enabled = profile.enabledMonitorIds;
+  const isEnabled = (id) => profile.allEnabled || !Array.isArray(enabled) || enabled.includes(id);
+  return (
+    <article className="card">
+      <header className="card-header">
+        <h2>Alert profile</h2>
+        <span className="card-meta">{options.length} alerts</span>
+      </header>
+      <div className="card-body">
+        <form action="/streams/alerts" className="alert-profile-form" method="post">
+          <input name="stream_id" type="hidden" value={stream.id} />
+          <label className="delay-field">
+            Alarm delay seconds
+            <input defaultValue={profile.delaySeconds || 0} min="0" name="alert_delay_seconds" step="1" type="number" />
+          </label>
+          {options.length === 0 ? (
+            <p className="empty-copy">Monitor not running</p>
+          ) : (
+            <>
+              <div className="alert-choice-grid">
+                {options.map((option) => (
+                  <label className="check-row" key={option.id}>
+                    <input defaultChecked={isEnabled(option.id)} name="alert_monitor" type="checkbox" value={option.id} />
+                    <span>
+                      <strong>{option.name}</strong>
+                      <em>{option.severity}</em>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <button className="button secondary" type="submit">Save alerts</button>
+            </>
+          )}
+        </form>
       </div>
     </article>
   );

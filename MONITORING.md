@@ -43,13 +43,23 @@ Docker uses `--srt-host app` so the monitor container validates SRT feeds at
 
 - Poll interval: 5 seconds by default.
 - Repeat interval: 5 seconds by default.
-- First failing poll emits `alarm_raised`.
+- First failing poll emits `alarm_raised` after the stream's alert-profile
+  delay has elapsed.
 - Continued failure emits `alarm_active` every repeat interval.
 - Recovery emits `alarm_cleared`, marks the alarm `steady`, and resets active state.
 - Event history is retained in the shared monitor JSON file.
 
 The GUI reads `VIDEOSIM_MONITOR_STATE` or `/tmp/videosim-monitor/state.json`
 and shows active alarms plus stream-specific event audit history.
+
+## Alert Profiles
+
+Each stream payload includes an `alertProfile` with `enabledMonitorIds` and
+`delaySeconds`. The stream detail page renders those settings as an alert
+profile form when the monitor catalogue is available. Disabled monitor IDs do
+not raise alarms for that stream and clear any existing active alarm on the next
+poll. Enabled issues are stored as pending until they persist for the configured
+delay, then they raise normally.
 
 ## Implemented Monitors
 

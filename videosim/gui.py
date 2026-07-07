@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
 from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
 
 
@@ -120,9 +121,13 @@ class FeedRecord:
     started_at: float | None = None
     last_run_seconds: float = 0
     last_outbound_bytes: int = 0
+    alert_enabled_ids: list[str] | None = None
+    alert_delay_seconds: int = 0
 
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
+        self.alert_enabled_ids = normalize_enabled_alerts(self.alert_enabled_ids)
+        self.alert_delay_seconds = normalize_alert_delay(self.alert_delay_seconds)
 
     @property
     def endpoint(self) -> str:
@@ -314,6 +319,16 @@ class GuiState:
         self.select_stream(stream_id)
         if restart:
             return self.start(stream_id)
+        return True
+
+    def update_alert_profile(self, stream_id: str, enabled_ids: list[str] | None, delay_seconds) -> bool:
+        if stream_id not in self.streams:
+            self.fail(f"Unsupported stream: {stream_id}")
+            return False
+        stream = self.streams[stream_id]
+        stream.alert_enabled_ids = normalize_enabled_alerts(enabled_ids)
+        stream.alert_delay_seconds = normalize_alert_delay(delay_seconds)
+        self.select_stream(stream_id)
         return True
 
     def delete_stream(self, stream_id: str) -> bool:
@@ -672,6 +687,19 @@ class GuiHandler(BaseHTTPRequestHandler):
                     )
                 except ValueError as exc:
                     self.state.log(str(exc))
+        elif self.path == "/streams/alerts":
+            params = self._read_form()
+            stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
+            if stream_id:
+                redirect_stream_id = stream_id
+                try:
+                    self.state.update_alert_profile(
+                        stream_id,
+                        params.get("alert_monitor", []),
+                        params.get("alert_delay_seconds", [0])[0],
+                    )
+                except ValueError as exc:
+                    self.state.log(str(exc))
         elif self.path == "/streams/delete":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
@@ -792,6 +820,7 @@ def render_page(state: GuiState) -> str:
     active = state.active_stream
     monitor = monitor_payload(state)
     active_alarms = [alarm for alarm in monitor.get("alarms", []) if alarm.get("active")]
+    alert_options = monitor.get("monitors", [])
     logs_source = state.logs or (active.logs if active else [])
     logs = "\n".join(html.escape(line) for line in logs_source[-80:])
     status = html.escape(state.status)
@@ -855,6 +884,31 @@ def render_page(state: GuiState) -> str:
             f'<option value="{html.escape(option["value"])}"{" selected" if option["value"] == active.framerate else ""}>{html.escape(option["label"])}</option>'
             for option in supported_frame_rate_options()
         )
+        alert_enabled = active.alert_enabled_ids
+        alert_inputs = "\n".join(
+            f"""<label class="control"><input type="checkbox" name="alert_monitor" value="{html.escape(option.get("id", ""))}"{" checked" if alert_enabled is None or option.get("id") in alert_enabled else ""}> {html.escape(option.get("name", option.get("id", "")))}</label>"""
+            for option in alert_options
+        )
+        alert_profile_form = (
+            f"""
+  <form method="post" action="/streams/alerts">
+    <fieldset>
+      <legend>Alert profile</legend>
+      <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
+      <div class="row">
+        <label>Alarm delay seconds <input type="number" min="0" step="1" name="alert_delay_seconds" value="{active.alert_delay_seconds}"></label>
+        <button type="submit">Save alerts</button>
+      </div>
+      <div class="row">{alert_inputs}</div>
+    </fieldset>
+  </form>"""
+            if alert_options
+            else """
+  <fieldset>
+    <legend>Alert profile</legend>
+    <div class="empty-state">Monitor not running</div>
+  </fieldset>"""
+        )
         selected_detail = f"""
   <form method="post" action="/streams/update" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
@@ -899,6 +953,7 @@ def render_page(state: GuiState) -> str:
       </div>
     </fieldset>
   </form>
+  {alert_profile_form}
   <div class="row">
     <form method="post" action="/stop"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Stop</button></form>
     <form method="post" action="/validate"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Validate</button></form>
@@ -957,6 +1012,7 @@ def render_page(state: GuiState) -> str:
 def state_payload(state: GuiState) -> dict:
     active = state.active_stream
     controls = controls_for_mode(active.mode if active else state.mode)
+    monitor = monitor_payload(state)
     return {
         "selectedStreamId": state.selected_stream_id,
         "feedListUrl": "/",
@@ -980,7 +1036,8 @@ def state_payload(state: GuiState) -> dict:
             for mode, (label, _) in PROFILE_OPTIONS.items()
         ],
         "controls": controls,
-        "monitor": monitor_payload(state),
+        "monitor": monitor,
+        "alertOptions": monitor.get("monitors", []),
     }
 
 
@@ -993,6 +1050,7 @@ def stream_payload(stream: FeedRecord) -> dict:
         "mode": stream.mode,
         "framerate": stream.framerate,
         "framerateLabel": f"{stream.framerate} fps",
+        "alertProfile": alert_profile_payload(stream.alert_enabled_ids, stream.alert_delay_seconds),
         "status": stream.status,
         "endpoint": stream.endpoint,
         "intentionalOutage": stream.intentional_outage,
@@ -1136,6 +1194,7 @@ def diagnostics_text(state: GuiState) -> str:
                     f"{stream.id} name={stream.name} protocol={stream.protocol} mode={stream.mode} "
                     f"status={stream.status} bitrate={stream.metrics()['bitrateLabel']} "
                     f"outbound={stream.metrics()['outboundLabel']} uptime={stream.metrics()['uptimeSeconds']}s "
+                    f"alert_delay={stream.alert_delay_seconds}s "
                     f"endpoint={stream.endpoint}"
                 )
                 for stream in state.streams.values()

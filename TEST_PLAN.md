@@ -47,6 +47,7 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 |---|---:|---|---|
 | Monitor alarm raise/repeat/clear cadence | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | Monitor detects missing expected video/audio from validator reports | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| Per-stream alert profile filtering and alarm delay | P1 | implemented | `python3 -m unittest tests.test_monitor tests.test_gui` |
 | TR 101 290 priority 1/2 MPEG-TS analyzer indicators | P1 | implemented | `python3 -m unittest tests.test_tr101` |
 | TR 101 290 priority 3 PSI/SI and unreferenced-PID parser indicators | P1 | implemented | `python3 -m unittest tests.test_tr101 tests.test_monitor` |
 | TR 101 290 priority 3 T-STD timing indicators | P1 | implemented | `python3 -m unittest tests.test_tr101 tests.test_monitor` |

@@ -124,6 +124,63 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(reports[0].endpoint, "srt://app:9000?mode=caller")
         self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present", "essence_audio_present"})
 
+    def test_stream_alert_profile_filters_disabled_monitors(self):
+        def validator(config):
+            return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=False, captions_present=True)
+
+        state = run_monitor_once(
+            {"streams": [stream() | {"alertProfile": {"enabledMonitorIds": ["essence_video_present"], "delaySeconds": 0}}]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present"})
+
+    def test_stream_alert_profile_delays_alarm_until_issue_persists(self):
+        def validator(config):
+            return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)
+
+        gui_state = {"streams": [stream() | {"alertProfile": {"enabledMonitorIds": ["essence_video_present"], "delaySeconds": 10}}]}
+        state = empty_monitor_state()
+        for now in (100, 109):
+            state = run_monitor_once(
+                gui_state,
+                state,
+                now=now,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                validator=validator,
+                tr101_checker=lambda stream, config: [],
+                loudness_checker=lambda stream, config: [],
+                frame_rate_checker=lambda stream, config: [],
+            )
+            self.assertEqual(state["alarms"], [])
+            self.assertEqual(state["pending"][0]["id"], "stream-1:essence_video_present")
+
+        state = run_monitor_once(
+            gui_state,
+            state,
+            now=110,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertEqual(state["alarms"][0]["monitorId"], "essence_video_present")
+        self.assertEqual(state["events"][0]["type"], "alarm_raised")
+
     def test_monitor_once_adds_tr101_alarm_issues(self):
         def validator(config):
             return ValidationReport(

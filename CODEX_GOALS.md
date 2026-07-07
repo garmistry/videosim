@@ -32,6 +32,12 @@ its endpoint, subprocess, logs, validation output, and selected simulation mode.
 The GUI should start with zero configured/running feeds; feed records are created
 only through the create-feed workflow.
 
+## Additive Monitoring Goal
+
+Each stream should expose its monitor alarms, event audit history, and alert
+profile. The alert profile selects which monitor alarms are enabled for that
+stream and how long an issue must persist before the monitor raises an alarm.
+
 ## Global Milestone Gate
 
 A milestone may close only when:

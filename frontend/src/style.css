@@ -763,6 +763,66 @@ input:focus-visible {
   font-size: var(--text-sm);
 }
 
+.alert-profile-form {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.delay-field {
+  max-width: 14rem;
+}
+
+.alert-choice-grid {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.check-row {
+  align-items: center;
+  background: var(--surface-inset);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 16px minmax(0, 1fr);
+  padding: var(--space-3) var(--space-4);
+}
+
+.check-row input {
+  height: 16px;
+  margin: 0;
+  width: 16px;
+}
+
+.check-row span {
+  align-items: center;
+  display: flex;
+  gap: var(--space-4);
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.check-row strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-row em {
+  color: var(--text-3);
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-style: normal;
+}
+
 .form-grid,
 .modal-form {
   display: grid;

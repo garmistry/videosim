@@ -39,3 +39,6 @@ implementation and must pass before those milestones advance.
 - Frame-rate selection and mismatch alarms have unit coverage for GUI/CLI,
   profile loading, GStreamer caps, FFprobe parsing, and monitor alarm behavior.
   Long-running live SRT/DASH frame-rate drift fixtures are not generated yet.
+- Per-stream alert-profile filtering and delay have unit coverage through the
+  monitor state path and GUI payload/rendering. There is no persisted profile
+  store beyond the running GUI process yet.

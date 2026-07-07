@@ -10,6 +10,7 @@ from typing import Callable
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from .alert_profile import alert_profile_from_stream
 from .feed import DASH_SEGMENT_DURATION_SECONDS, VideoFeedConfig
 from .framerate import FRAME_RATE_TOLERANCE_FPS, FrameRateError, frame_rate_float, measure_frame_rate
 from .gui import controls_for_mode, profile_for
@@ -106,7 +107,7 @@ SPEC_BY_ID = {spec.id: spec for spec in MONITOR_SPECS}
 
 
 def empty_monitor_state() -> dict:
-    return {"updatedAt": "", "alarms": [], "events": [], "monitors": [asdict(spec) for spec in MONITOR_SPECS]}
+    return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": [asdict(spec) for spec in MONITOR_SPECS]}
 
 
 def load_monitor_state(path: str | Path) -> dict:
@@ -119,6 +120,7 @@ def load_monitor_state(path: str | Path) -> dict:
         return empty_monitor_state()
     payload.setdefault("alarms", [])
     payload.setdefault("events", [])
+    payload.setdefault("pending", [])
     payload["monitors"] = [asdict(spec) for spec in MONITOR_SPECS]
     return payload
 
@@ -310,6 +312,33 @@ def apply_issues(state: dict, issues: list[MonitorIssue], now: float, repeat_sec
     return state
 
 
+def apply_alert_profiles(state: dict, streams: list[dict], issues: list[MonitorIssue], now: float) -> list[MonitorIssue]:
+    streams_by_id = {stream["id"]: stream for stream in streams}
+    pending = {item["id"]: item for item in state.get("pending", [])}
+    active_ids = {alarm["id"] for alarm in state.get("alarms", []) if alarm.get("active")}
+    filtered = []
+    next_pending = {}
+    for item in issues:
+        stream = streams_by_id.get(item.stream_id, {})
+        profile = alert_profile_from_stream(stream)
+        enabled = profile["enabledMonitorIds"]
+        if enabled is not None and item.monitor_id not in enabled:
+            continue
+        delay = profile["delaySeconds"]
+        first_seen = float(pending.get(item.alarm_id, {}).get("firstSeenAt", now))
+        if item.alarm_id in active_ids or delay <= 0 or now - first_seen >= delay:
+            filtered.append(item)
+        else:
+            next_pending[item.alarm_id] = {
+                "id": item.alarm_id,
+                "streamId": item.stream_id,
+                "monitorId": item.monitor_id,
+                "firstSeenAt": first_seen,
+            }
+    state["pending"] = sorted(next_pending.values(), key=lambda item: item["id"])
+    return filtered
+
+
 def alarm_payload(item: MonitorIssue, now: float) -> dict:
     return {
         "id": item.alarm_id,
@@ -387,6 +416,7 @@ def run_monitor_once(
                 issues.extend(loudness_checker(stream, config))
             except Exception:
                 pass
+    issues = apply_alert_profiles(state, gui_state.get("streams", []), issues, now)
     return apply_issues(state, issues, now, repeat_seconds, history_limit)
 
 

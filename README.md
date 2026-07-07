@@ -150,24 +150,32 @@ The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
 file. Each feed detail page also plots bit rate and outbound data over a
-rolling five-minute client-side metrics window. Video-present modes include a
-visible running clock overlay for receiver testing. Feed table thumbnails and
-the preview dialog refresh a local frame matching the active mode. Use Validate
-to prove actual stream state.
+rolling five-minute client-side metrics window and includes a stream-specific
+alert profile for enabled monitor alarms plus alarm delay. Video-present modes
+include a visible running clock overlay for receiver testing. Feed table
+thumbnails and the preview dialog refresh a local frame matching the active
+mode. Use Validate to prove actual stream state.
 
 The optional monitor app runs as a separate process/container, polls GUI feed
 state, validates running feeds, and writes alarm/event history for the GUI to
-review. Current alarms cover feed reachability, video absence, audio absence,
-caption absence, black-video validation, frozen-video validation, and parser-
-backed TR 101 290 priority 1/2 indicators plus priority 3 PSI/SI,
-unreferenced-PID, T-STD timing checks, measured frame-rate mismatches, and
-audio loudness alarms for ITU-R BS.1770 measurement, EBU R 128, and ATSC A/85.
-Details are documented in [MONITORING.md](MONITORING.md).
+review. Each stream can enable only the alarms it cares about and delay alarm
+raising until an issue persists. Current alarms cover feed reachability, video
+absence, audio absence, caption absence, black-video validation, frozen-video
+validation, and parser-backed TR 101 290 priority 1/2 indicators plus priority
+3 PSI/SI, unreferenced-PID, T-STD timing checks, measured frame-rate mismatches,
+and audio loudness alarms for ITU-R BS.1770 measurement, EBU R 128, and ATSC
+A/85. Details are documented in [MONITORING.md](MONITORING.md).
 
-Deploy the GUI and SRT listener together with Docker Compose:
+Run the basic GUI and SRT listener:
 
 ```sh
 docker compose up --build app
+```
+
+Run the GUI with the alarming monitor:
+
+```sh
+docker compose up --build app monitor
 ```
 
 Open `http://127.0.0.1:8080`. The GUI and feed subprocesses run inside the
@@ -209,4 +217,4 @@ Stop the feed with Ctrl-C.
 - [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) - receiver compatibility evidence.
 - [STABILITY_REPORT.md](STABILITY_REPORT.md) - soak harness and pending long-run evidence.
 - [RUNBOOK.md](RUNBOOK.md) - install, run, verify, and troubleshoot steps.
-- [MONITORING.md](MONITORING.md) - monitor service, alarm behavior, TR 101 290 coverage, and loudness alarms.
+- [MONITORING.md](MONITORING.md) - monitor service, alert profiles, alarm behavior, TR 101 290 coverage, and loudness alarms.

@@ -276,3 +276,11 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Added monitor-level regression coverage proving `run_monitor_once` samples malformed DASH `.ts` segments and writes TR 101 290 alarms/events through the normal monitor state path.
+- Updated `TEST_GAPS.md` to distinguish covered DASH segment monitor sampling from the remaining malformed live SRT/DASH Docker fixture gap.
+- Validation run: `python3 -m unittest tests.test_monitor` passed, 6 tests.
+- Validation run: `python3 -m unittest tests.test_monitor tests.test_tr101` passed, 13 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 107 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

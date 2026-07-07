@@ -106,6 +106,41 @@ class MonitorTest(unittest.TestCase):
 
         self.assertIn("tr101_1_2_sync_byte_error", {item.monitor_id for item in issues})
 
+    def test_monitor_once_samples_dash_segments_into_tr101_alarm_state(self):
+        dash_root = Path("/tmp/videosim-dash")
+        dash_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="stream-", dir=dash_root) as directory:
+            stream_id = Path(directory).name
+            Path(directory, "video_0_1.ts").write_bytes(b"\x00" * 188)
+            dash_stream = stream() | {
+                "id": stream_id,
+                "protocol": "dash",
+                "endpoint": f"http://127.0.0.1:8080/dash/{stream_id}/manifest.mpd",
+            }
+
+            def validator(config):
+                self.assertEqual(config.dash_dir, directory)
+                return ValidationReport(
+                    endpoint=config.endpoint,
+                    reachable=True,
+                    video_present=True,
+                    audio_present=True,
+                    captions_present=True,
+                )
+
+            state = run_monitor_once(
+                {"streams": [dash_stream]},
+                empty_monitor_state(),
+                now=100,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                validator=validator,
+            )
+
+        self.assertIn("tr101_1_2_sync_byte_error", {alarm["monitorId"] for alarm in state["alarms"]})
+        self.assertEqual(state["events"][0]["type"], "alarm_raised")
+
 
 if __name__ == "__main__":
     unittest.main()

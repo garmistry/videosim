@@ -876,16 +876,16 @@ def render_page(state: GuiState) -> str:
   <title>Video Feed Simulator</title>
   <link rel="stylesheet" href="/static/app.css">
   <style>
-    body {{ font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; background: #050505; color: #f5f5f1; }}
-    main {{ display: grid; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 1.25rem; }}
-    button, .button {{ border: 0; border-radius: 0.45rem; background: #b81d24; color: white; padding: 0.7rem 0.95rem; text-decoration: none; font-weight: 700; }}
-    button.secondary, .button.secondary {{ background: #2b2b2b; color: #f5f5f1; }}
-    #endpoint {{ width: min(100%, 34rem); padding: 0.65rem; border: 1px solid #2c2c2c; border-radius: 0.45rem; background: #080808; color: #f5f5f1; }}
-    fieldset {{ border: 1px solid #2c2c2c; border-radius: 0.5rem; padding: 0.75rem; }}
+    body {{ font-family: var(--font-sans); font-size: var(--text-base); margin: 0; background: var(--surface-app); color: var(--text-1); }}
+    main {{ display: grid; gap: var(--space-6); max-width: 72rem; margin: 0 auto; padding: var(--space-7); }}
+    button, .button {{ border: 1px solid transparent; border-radius: var(--radius-md); background: var(--accent); color: var(--on-accent); min-height: var(--control-md); padding: 0 14px; text-decoration: none; font-weight: var(--weight-medium); }}
+    button.secondary, .button.secondary {{ background: var(--surface-raised); border-color: var(--border-strong); color: var(--text-1); }}
+    #endpoint {{ width: min(100%, 34rem); padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface-inset); color: var(--text-1); }}
+    fieldset {{ border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-5); }}
     label.control {{ display: inline-flex; gap: 0.35rem; align-items: center; margin-right: 0.75rem; }}
-    pre {{ background: #050505; color: #f5f5f1; min-height: 12rem; padding: 1rem; overflow: auto; border-radius: 0.5rem; }}
-    .row {{ display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }}
-    .shell {{ background: #141414; border: 1px solid #2c2c2c; border-radius: 0.5rem; padding: 1rem; box-shadow: 0 1rem 2.5rem rgba(0, 0, 0, 0.4); }}
+    pre {{ background: var(--surface-inset); color: var(--text-2); min-height: 12rem; padding: var(--space-6); overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }}
+    .row {{ display: flex; gap: var(--space-4); flex-wrap: wrap; align-items: center; }}
+    .shell {{ background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-6); }}
   </style>
 </head>
 <body>

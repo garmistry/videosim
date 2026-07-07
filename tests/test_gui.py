@@ -135,6 +135,20 @@ class GuiTest(unittest.TestCase):
         self.assertIn("FullPreviewDialog", source)
         self.assertIn("preview-thumb", source)
 
+    def test_frontend_uses_design_system_tokens(self):
+        source = Path("frontend/src/main.jsx").read_text()
+        style = Path("frontend/src/style.css").read_text()
+
+        self.assertIn('document.documentElement.dataset.theme', source)
+        self.assertIn("StatusBadge", source)
+        self.assertIn("EndpointField", source)
+        self.assertIn('--font-sans: "IBM Plex Sans"', style)
+        self.assertIn("--font-mono: \"IBM Plex Mono\"", style)
+        self.assertIn("--accent: oklch(0.76 0.145 70)", style)
+        self.assertIn("--status-fault", style)
+        self.assertIn("--surface-inset", style)
+        self.assertNotIn("#b81d24", style)
+
     def test_dash_state_payload_exposes_http_manifest_endpoint(self):
         state = GuiState(protocol="dash", http_port=18100)
         self.create_feed(state)

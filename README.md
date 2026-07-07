@@ -124,31 +124,33 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Then open `http://127.0.0.1:8080`.
 
-The GUI starts with zero configured feeds. Use the create-feed form as the entry
-point, then manage feeds from the stream list:
+The GUI starts with zero configured feeds. Use Create feed as the entry point,
+then manage feeds from the active-feed table:
 
 - Create a named SRT or DASH feed.
-- List streams in the left navigation.
+- List streams in the root active-feed table.
 - Read/open a stream at `/feeds/<stream-id>` to see endpoint, status, validation, and logs.
 - Update selected stream name, protocol, or mode.
 - Delete the selected stream.
 
-The primary GUI view is an active-feed table with status, endpoint, metrics,
-actions, and a small preview thumbnail for each feed. Create feed opens a modal.
-Clicking a row preview opens a full preview dialog, and each feed detail page
-can still be bookmarked directly. Each feed can be started, stopped, validated,
-and copied independently. The protocol and mode selectors support SRT or DASH
-for normal, audio-only, video-only, no-captions, black-video, and frozen-video
-feeds. Changing fault controls while a feed is running uses a controlled stream
+The React/Vite GUI follows the `design_docs` model: IBM Plex Sans UI text, IBM
+Plex Mono for endpoints/logs/metrics, a dark-primary warm neutral palette,
+broadcast amber actions, and dot-plus-label status badges. The primary GUI view
+is an active-feed table with status, endpoint, metrics, actions, and a small
+preview thumbnail for each feed. Create feed opens a modal. Clicking a row
+preview opens a full preview dialog, and each feed detail page can still be
+bookmarked directly. Each feed can be started, stopped, validated, and copied
+independently. The protocol and mode selectors support SRT or DASH for normal,
+audio-only, video-only, no-captions, black-video, and frozen-video feeds.
+Changing fault controls while a feed is running uses a controlled stream
 restart.
 
 The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
 file. Video-present modes include a visible running clock overlay for receiver
-testing. When a video-capable feed is running, the React GUI opens a preview
-panel that refreshes a local frame matching the active mode. Use Validate to
-prove actual stream state.
+testing. Feed table thumbnails and the preview dialog refresh a local frame
+matching the active mode. Use Validate to prove actual stream state.
 
 Deploy the GUI and SRT listener together with Docker Compose:
 

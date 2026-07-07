@@ -220,3 +220,15 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18138 --feed-port 9912`, created feeds, confirmed root table HTML and `/state.json` preview URLs, and started `stream-2` on UDP 9913; `/feeds/stream-2/preview.jpg` returned a 640x360 BMP while status was `running`.
 - Skipped check: browser click verification could not run because the browser runtime reported no available browser backends.
+
+## 2026-07-07
+
+- Wired the React GUI to the `design_docs` model: top bar wordmark, active-feed table/detail layout, IBM Plex tokens, warm dark/light surfaces, amber actions, mono endpoint/log/metric wells, and dot-plus-label status badges.
+- Updated the no-JavaScript fallback GUI styling, README, RUNBOOK, and ACCEPTANCE_MATRIX to match the active-feed table and design-system choices.
+- Added GUI regression coverage for the production design tokens and root light-theme hook.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.js` and `videosim/static/app.css`.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 36 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 92 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18149 --feed-port 9912` served `/`, `/static/app.css`, `/static/app.js`, and `/state.json`; saved responses exposed the design-token hooks and initial state.
+- Skipped check: visual browser screenshot verification could not run because the in-app browser runtime listed no available browser backends.

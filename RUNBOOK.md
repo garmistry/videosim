@@ -138,8 +138,8 @@ python3 -m videosim gui --http-port 8080 --feed-port 9000
 
 Open `http://127.0.0.1:8080`.
 
-The GUI starts with zero configured feeds. Use the create-feed form first, then
-use the stream list in the left navigation for CRUDL operations:
+The GUI starts with zero configured feeds. Use Create feed first, then use the
+active-feed table for CRUDL operations:
 
 - Create a named SRT or DASH feed.
 - List all configured streams.
@@ -167,10 +167,9 @@ use Validate to prove actual receiver-visible stream state.
 Video-present modes include a running clock overlay in the encoded video so
 receivers can visually prove live motion and timing.
 
-When a running mode has video, the GUI opens a preview panel automatically. The
-preview uses GStreamer to render a local frame matching the active mode without
-attaching another receiver to the SRT listener. Use Validate to prove actual
-stream state.
+When a running mode has video, table thumbnails and the preview dialog use
+GStreamer to render a local frame matching the active mode without attaching
+another receiver to the SRT listener. Use Validate to prove actual stream state.
 
 ## Deploy With Docker Compose
 
@@ -183,8 +182,10 @@ SRT listeners on UDP 9000-9010 by default. The GUI and feed subprocesses run
 inside the `videosim-app-1` container. Override the primary host ports with
 `VIDEOSIM_HTTP_PORT` and `VIDEOSIM_FEED_PORT`.
 
-The GUI root view is an active-feed table. Use Create feed to open the modal,
-and click a row preview thumbnail to open the larger feed preview.
+The GUI root view is an active-feed table styled from the `design_docs` model:
+IBM Plex Sans for UI, IBM Plex Mono for data, warm dark/light neutrals,
+broadcast amber actions, and dot-plus-label status. Use Create feed to open the
+modal, and click a row preview thumbnail to open the larger feed preview.
 
 Generated SRT listener pipelines accept receiver clients at
 `srt://127.0.0.1:9000?mode=caller` and keep running when receivers disconnect.

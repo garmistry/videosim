@@ -96,37 +96,36 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "wait-for-connection=false",
     ]
     if config.video:
-        args.extend(["videotestsrc", "is-live=true", f"pattern={config.pattern}"])
-        if config.frozen:
-            args.extend(["num-buffers=1", "!", "imagefreeze", "is-live=true"])
         args.extend(
             [
+                "videotestsrc",
+                "is-live=true",
+                f"pattern={config.pattern}",
                 "!",
                 f"video/x-raw,width={config.width},height={config.height},framerate={framerate}",
-                "!",
-                "clockoverlay",
-                "halignment=right",
-                "valignment=top",
-                "shaded-background=true",
-                'time-format=%Y-%m-%d %H:%M:%S',
-                "!",
             ]
         )
+        if not config.frozen:
+            args.extend(
+                [
+                    "!",
+                    "clockoverlay",
+                    "halignment=right",
+                    "valignment=top",
+                    "shaded-background=true",
+                    'time-format=%Y-%m-%d %H:%M:%S',
+                ]
+            )
+        args.extend(["!"])
         if config.captions:
-            args.extend([f"video/x-raw,framerate={framerate}", "!", "cccombiner", "name=cc", "!"])
-        args.extend(
-            [
-                "x264enc",
-                "tune=zerolatency",
-                "speed-preset=ultrafast",
-                f"key-int-max={keyint}",
-                "!",
-                "h264parse",
-                "!",
-                "video/x-h264,alignment=au",
-                "!",
-            ]
-        )
+            if not config.frozen:
+                args.extend([f"video/x-raw,framerate={framerate}", "!"])
+            args.extend(["cccombiner", "name=cc", "!"])
+        encoder = ["x264enc", "tune=zerolatency", "speed-preset=ultrafast"]
+        if config.frozen:
+            encoder.extend(["pass=quant", "quantizer=0"])
+        encoder.extend([f"key-int-max={keyint}", "!", "h264parse", "!", "video/x-h264,alignment=au", "!"])
+        args.extend(encoder)
         if config.captions:
             args.extend(["h264ccinserter", "!", "h264parse", "!"])
         args.extend(["mux."])
@@ -177,35 +176,32 @@ def dash_pipeline_args(config: VideoFeedConfig) -> list[str]:
         "muxer=ts",
     ]
     if config.video:
-        args.extend(["videotestsrc", "is-live=true", f"pattern={config.pattern}"])
-        if config.frozen:
-            args.extend(["num-buffers=1", "!", "imagefreeze", "is-live=true"])
         args.extend(
             [
+                "videotestsrc",
+                "is-live=true",
+                f"pattern={config.pattern}",
                 "!",
                 f"video/x-raw,width={config.width},height={config.height},framerate={framerate}",
-                "!",
-                "clockoverlay",
-                "halignment=right",
-                "valignment=top",
-                "shaded-background=true",
-                'time-format=%Y-%m-%d %H:%M:%S',
-                "!",
             ]
         )
-        args.extend(
-            [
-                "x264enc",
-                "tune=zerolatency",
-                "speed-preset=ultrafast",
-                f"key-int-max={keyint}",
-                "!",
-                "h264parse",
-                "!",
-                "video/x-h264,alignment=au",
-                "!",
-            ]
-        )
+        if not config.frozen:
+            args.extend(
+                [
+                    "!",
+                    "clockoverlay",
+                    "halignment=right",
+                    "valignment=top",
+                    "shaded-background=true",
+                    'time-format=%Y-%m-%d %H:%M:%S',
+                ]
+            )
+        args.extend(["!"])
+        encoder = ["x264enc", "tune=zerolatency", "speed-preset=ultrafast"]
+        if config.frozen:
+            encoder.extend(["pass=quant", "quantizer=0"])
+        encoder.extend([f"key-int-max={keyint}", "!", "h264parse", "!", "video/x-h264,alignment=au", "!"])
+        args.extend(encoder)
         args.extend(["dash.video_0"])
     if config.audio:
         args.extend(

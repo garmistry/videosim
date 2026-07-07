@@ -48,6 +48,18 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("video/x-raw,width=320,height=180,framerate=60000/1001", args)
         self.assertIn("key-int-max=60", args)
 
+    def test_frozen_pipeline_uses_static_live_source(self):
+        for protocol in ("srt", "dash"):
+            with self.subTest(protocol=protocol), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"):
+                args = video_pipeline_args(VideoFeedConfig(protocol=protocol, port=9910, frozen=True))
+
+            self.assertIn("videotestsrc", args)
+            self.assertNotIn("imagefreeze", args)
+            self.assertNotIn("num-buffers=1", args)
+            self.assertNotIn("clockoverlay", args)
+            self.assertIn("pass=quant", args)
+            self.assertIn("quantizer=0", args)
+
     def test_dash_endpoint_uses_manifest_file_by_default(self):
         config = VideoFeedConfig(protocol="dash", dash_dir="/tmp/videosim-test-dash")
 

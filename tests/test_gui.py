@@ -462,6 +462,22 @@ class GuiTest(unittest.TestCase):
         self.assertTrue(any("Starting srt normal feed: profile=profiles/srt-normal.yaml" in line for line in state.logs))
         self.assertIn("Started srt normal feed at srt://127.0.0.1:9912?mode=caller pid=1234", state.logs)
 
+    def test_start_clears_stale_error_before_logging(self):
+        state = GuiState(feed_port=9912)
+        self.create_feed(state)
+        state.last_error = "old error"
+        state.active_stream.last_error = "old error"
+
+        with patch("videosim.gui.subprocess.Popen") as popen:
+            popen.return_value.stdout = []
+            popen.return_value.pid = 1234
+            popen.return_value.poll.return_value = None
+            state.start()
+
+        self.assertEqual(state.last_error, "")
+        self.assertEqual(state.active_stream.last_error, "")
+        self.assertEqual(state_payload(state)["streams"][0]["lastError"], "none")
+
     def test_start_launches_dash_profile_feed(self):
         state = GuiState(protocol="dash", http_port=18100, feed_port=9912, width=320, height=180, framerate=10)
         self.create_feed(state)

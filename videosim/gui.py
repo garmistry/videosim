@@ -411,6 +411,7 @@ class GuiState:
                 ]
             )
         stream.last_error = ""
+        self.last_error = ""
         container = "yes" if running_in_container() else "no"
         self.log(
             f"Starting {stream.protocol} {stream.mode} feed: profile={profile} endpoint={stream.endpoint} container={container}",

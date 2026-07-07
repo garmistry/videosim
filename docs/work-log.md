@@ -371,3 +371,13 @@
 - Validation run: `python3 -m unittest discover -s tests` passed, 134 tests with 11 live tests skipped locally by default.
 - Containerized shutdown regression proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_cli_video_feed` passed, 19 tests, using the existing Linux test image with current source bind-mounted.
 - Validation run: `git diff --check` passed.
+- Docker alert simulation: inspected running `app` and `monitor` containers, patched the running app container with current source/profile files, created `AlertSmoke`, enabled all alerts with zero delay, and toggled SRT modes `normal`, `audio_only`, `video_only`, `no_captions`, `black_video`, and `frozen_video`.
+- Fixed stale GUI error state where a previous feed failure could be copied back into a successfully restarted stream; final Docker state reported `frozen_video`, `running`, and `lastError=none`.
+- Fixed live frozen-video generation by replacing the unreliable `imagefreeze` branch with a static red live source and lossless x264 settings for frozen profiles; container validation passed for `profiles/srt-frozen-video.yaml`.
+- Verified alert UI presence: `/feeds/stream-1` contained `Monitor alarms`, active alarm names, and alert profile lifecycle controls while `/state.json` reported monitor connected and active alarms for `AlertSmoke`.
+- Validation run: `python3 -m unittest tests.test_profiles tests.test_cli_video_feed tests.test_gui` passed, 72 tests.
+- Validation run: `docker compose exec app python -m videosim validate --profile profiles/srt-frozen-video.yaml --port 9000 --framerate 59.94 --json` passed with `frozen_video=true`.
+- Validation run: `python3 -m unittest discover -s tests` passed, 136 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.
+- Skipped checks: full Docker image rebuild and browser screenshot automation were not run; the running containers were updated with source/profile files and verified through live Docker HTTP, logs, monitor state, and validator checks.

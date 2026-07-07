@@ -4,6 +4,6 @@ protocol: dash
 width: 1280
 height: 720
 framerate: 30
-pattern: smpte
+pattern: red
 audio_frequency: 440
 dash_dir: /tmp/videosim-dash

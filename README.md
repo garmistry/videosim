@@ -157,8 +157,9 @@ to prove actual stream state.
 The optional monitor app runs as a separate process/container, polls GUI feed
 state, validates running feeds, and writes alarm/event history for the GUI to
 review. Current alarms cover feed reachability, video absence, audio absence,
-caption absence, black-video validation, and frozen-video validation. The TR
-101 290 MPEG-2 TS monitor catalogue is documented in [MONITORING.md](MONITORING.md).
+caption absence, black-video validation, frozen-video validation, and parser-
+backed TR 101 290 priority 1/2 MPEG-2 TS indicators. Details are documented in
+[MONITORING.md](MONITORING.md).
 
 Deploy the GUI and SRT listener together with Docker Compose:
 

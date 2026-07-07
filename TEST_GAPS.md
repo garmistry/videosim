@@ -26,7 +26,6 @@ implementation and must pass before those milestones advance.
 
 ## Monitoring
 
-- Full TR 101 290 MPEG-2 TS parser implementation is not complete. The monitor
-  currently implements feed reachability and expected essence checks, and
-  catalogues TR 101 290 priority 1/2 indicators in `MONITORING.md` for the next
-  parser-backed slice.
+- TR 101 290 priority 1/2 indicators have parser-backed unit coverage, but
+  malformed live SRT/DASH fixture streams are not yet generated for end-to-end
+  Docker proof of every indicator.

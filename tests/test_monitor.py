@@ -55,10 +55,35 @@ class MonitorTest(unittest.TestCase):
             history_limit=20,
             srt_host="app",
             validator=validator,
+            tr101_checker=lambda stream, config: [],
         )
 
         self.assertEqual(reports[0].endpoint, "srt://app:9000?mode=caller")
         self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present", "essence_audio_present"})
+
+    def test_monitor_once_adds_tr101_alarm_issues(self):
+        def validator(config):
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            )
+
+        state = run_monitor_once(
+            {"streams": [stream()]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda current, config: [issue(current, "tr101_1_4_continuity_count_error", "PID 200 continuity counter jumped")],
+        )
+
+        self.assertEqual(state["alarms"][0]["monitorId"], "tr101_1_4_continuity_count_error")
+        self.assertEqual(state["events"][0]["type"], "alarm_raised")
 
 
 if __name__ == "__main__":

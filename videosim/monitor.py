@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -9,9 +10,10 @@ from typing import Callable
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from .feed import VideoFeedConfig
+from .feed import DASH_SEGMENT_DURATION_SECONDS, VideoFeedConfig
 from .gui import controls_for_mode, profile_for
 from .profile import load_profile
+from .tr101 import analyze_ts
 from .validator import ValidationReport, validate_config
 
 
@@ -49,22 +51,22 @@ MONITOR_SPECS = [
     MonitorSpec("essence_captions_present", "Captions present", "platform", "major", True, "Expected captions are present."),
     MonitorSpec("black_video_detected", "Black video detected", "platform", "major", True, "Expected black-video profile validates."),
     MonitorSpec("frozen_video_detected", "Frozen video detected", "platform", "major", True, "Expected frozen-video profile validates."),
-    MonitorSpec("tr101_1_1_ts_sync_loss", "TS sync loss", "TR101 priority 1", "critical", False, "Loss of MPEG-2 TS synchronization."),
-    MonitorSpec("tr101_1_2_sync_byte_error", "Sync byte error", "TR101 priority 1", "critical", False, "Sync byte not equal to 0x47."),
-    MonitorSpec("tr101_1_3_pat_error", "PAT error", "TR101 priority 1", "critical", False, "PAT missing, wrong table id, or scrambled."),
-    MonitorSpec("tr101_1_3a_pat_error_2", "PAT error 2", "TR101 priority 1", "critical", False, "Updated PAT repetition/table-id check."),
-    MonitorSpec("tr101_1_4_continuity_count_error", "Continuity count error", "TR101 priority 1", "critical", False, "Incorrect order, repeat, or lost packet."),
-    MonitorSpec("tr101_1_5_pmt_error", "PMT error", "TR101 priority 1", "critical", False, "PMT missing or scrambled."),
-    MonitorSpec("tr101_1_5a_pmt_error_2", "PMT error 2", "TR101 priority 1", "critical", False, "Updated PMT repetition/table-id check."),
-    MonitorSpec("tr101_1_6_pid_error", "PID error", "TR101 priority 1", "critical", False, "Referenced PID missing for configured period."),
-    MonitorSpec("tr101_2_1_transport_error", "Transport error", "TR101 priority 2", "major", False, "Transport error indicator set."),
-    MonitorSpec("tr101_2_2_crc_error", "CRC error", "TR101 priority 2", "major", False, "PSI/SI table CRC error."),
-    MonitorSpec("tr101_2_3_pcr_error", "PCR error", "TR101 priority 2", "major", False, "PCR discontinuity or repetition fault."),
-    MonitorSpec("tr101_2_3a_pcr_repetition_error", "PCR repetition error", "TR101 priority 2", "major", False, "PCR interval greater than 100 ms."),
-    MonitorSpec("tr101_2_3b_pcr_discontinuity_indicator_error", "PCR discontinuity indicator error", "TR101 priority 2", "major", False, "PCR jump without discontinuity indicator."),
-    MonitorSpec("tr101_2_4_pcr_accuracy_error", "PCR accuracy error", "TR101 priority 2", "major", False, "PCR accuracy outside +/-500 ns."),
-    MonitorSpec("tr101_2_5_pts_error", "PTS error", "TR101 priority 2", "major", False, "PTS repetition period greater than 700 ms."),
-    MonitorSpec("tr101_2_6_cat_error", "CAT error", "TR101 priority 2", "major", False, "CAT missing or malformed for scrambled packets."),
+    MonitorSpec("tr101_1_1_ts_sync_loss", "TS sync loss", "TR101 priority 1", "critical", True, "Loss of MPEG-2 TS synchronization."),
+    MonitorSpec("tr101_1_2_sync_byte_error", "Sync byte error", "TR101 priority 1", "critical", True, "Sync byte not equal to 0x47."),
+    MonitorSpec("tr101_1_3_pat_error", "PAT error", "TR101 priority 1", "critical", True, "PAT missing, wrong table id, or scrambled."),
+    MonitorSpec("tr101_1_3a_pat_error_2", "PAT error 2", "TR101 priority 1", "critical", True, "Updated PAT repetition/table-id check."),
+    MonitorSpec("tr101_1_4_continuity_count_error", "Continuity count error", "TR101 priority 1", "critical", True, "Incorrect order, repeat, or lost packet."),
+    MonitorSpec("tr101_1_5_pmt_error", "PMT error", "TR101 priority 1", "critical", True, "PMT missing or scrambled."),
+    MonitorSpec("tr101_1_5a_pmt_error_2", "PMT error 2", "TR101 priority 1", "critical", True, "Updated PMT repetition/table-id check."),
+    MonitorSpec("tr101_1_6_pid_error", "PID error", "TR101 priority 1", "critical", True, "Referenced PID missing for configured period."),
+    MonitorSpec("tr101_2_1_transport_error", "Transport error", "TR101 priority 2", "major", True, "Transport error indicator set."),
+    MonitorSpec("tr101_2_2_crc_error", "CRC error", "TR101 priority 2", "major", True, "PSI/SI table CRC error."),
+    MonitorSpec("tr101_2_3_pcr_error", "PCR error", "TR101 priority 2", "major", True, "PCR discontinuity or repetition fault."),
+    MonitorSpec("tr101_2_3a_pcr_repetition_error", "PCR repetition error", "TR101 priority 2", "major", True, "PCR interval greater than 100 ms."),
+    MonitorSpec("tr101_2_3b_pcr_discontinuity_indicator_error", "PCR discontinuity indicator error", "TR101 priority 2", "major", True, "PCR jump without discontinuity indicator."),
+    MonitorSpec("tr101_2_4_pcr_accuracy_error", "PCR accuracy error", "TR101 priority 2", "major", True, "PCR accuracy outside +/-500 ns."),
+    MonitorSpec("tr101_2_5_pts_error", "PTS error", "TR101 priority 2", "major", True, "PTS repetition period greater than 700 ms."),
+    MonitorSpec("tr101_2_6_cat_error", "CAT error", "TR101 priority 2", "major", True, "CAT missing or malformed for scrambled packets."),
 ]
 
 SPEC_BY_ID = {spec.id: spec for spec in MONITOR_SPECS}
@@ -131,6 +133,43 @@ def issues_for_report(stream: dict, report: ValidationReport) -> list[MonitorIss
     if controls["frozen_video"] and not report.frozen_video:
         issues.append(issue(stream, "frozen_video_detected", "Frozen-video profile did not validate"))
     return issues
+
+
+def tr101_issues_for_stream(stream: dict, config: VideoFeedConfig, sample_seconds: float = 1.0) -> list[MonitorIssue]:
+    data, duration = ts_sample(config, sample_seconds)
+    if not data:
+        return []
+    report = analyze_ts(data, duration)
+    return [
+        issue(stream, indicator, report.messages.get(indicator, SPEC_BY_ID[indicator].description))
+        for indicator, active in report.indicators.items()
+        if active
+    ]
+
+
+def ts_sample(config: VideoFeedConfig, sample_seconds: float) -> tuple[bytes, float | None]:
+    if config.protocol == "dash":
+        paths = sorted(Path(config.dash_dir).glob("*.ts"), key=lambda path: path.stat().st_mtime)[-3:]
+        return b"".join(path.read_bytes() for path in paths), len(paths) * DASH_SEGMENT_DURATION_SECONDS if paths else None
+    return srt_ts_sample(config, sample_seconds), sample_seconds
+
+
+def srt_ts_sample(config: VideoFeedConfig, sample_seconds: float) -> bytes:
+    args = ["gst-launch-1.0", "-q", "srtsrc", f"uri={config.endpoint}", "!", "fdsink", "fd=1"]
+    try:
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError:
+        return b""
+    try:
+        stdout, _ = process.communicate(timeout=sample_seconds)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            stdout, _ = process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, _ = process.communicate(timeout=3)
+    return stdout
 
 
 def issue(stream: dict, monitor_id: str, message: str) -> MonitorIssue:
@@ -220,16 +259,25 @@ def run_monitor_once(
     history_limit: int,
     srt_host: str,
     validator: Callable[[VideoFeedConfig], ValidationReport] = validate_config,
+    tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = tr101_issues_for_stream,
 ) -> dict:
     issues = []
     for stream in gui_state.get("streams", []):
         if stream.get("status") != "running":
             continue
+        config = None
         try:
-            report = validator(config_for_stream(stream, srt_host))
+            config = config_for_stream(stream, srt_host)
+            report = validator(config)
         except Exception as exc:  # ponytail: monitor stays alive; classify probe crashes as feed reachability alarms.
             report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
         issues.extend(issues_for_report(stream, report))
+        if config is None:
+            continue
+        try:
+            issues.extend(tr101_checker(stream, config))
+        except Exception:
+            pass
     return apply_issues(state, issues, now, repeat_seconds, history_limit)
 
 

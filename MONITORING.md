@@ -49,32 +49,33 @@ and shows active alarms plus stream-specific event audit history.
 | Black video detected | major | Platform validator | implemented |
 | Frozen video detected | major | Platform validator | implemented |
 
-## TR 101 290 Catalogue
+## TR 101 290 Monitors
 
-The monitor state includes these TR 101 290 indicators so UI/API consumers can
-see the intended alert taxonomy before each parser is implemented.
+The monitor samples MPEG-2 TS bytes from SRT feeds, or DASH `.ts` segments from
+the shared DASH volume, and parses the following TR 101 290 priority 1/2
+indicators.
 
 | Indicator | Priority | Status |
 |---|---|---|
-| TS_sync_loss | 1 | catalogued |
-| Sync_byte_error | 1 | catalogued |
-| PAT_error | 1 | catalogued |
-| PAT_error_2 | 1 | catalogued |
-| Continuity_count_error | 1 | catalogued |
-| PMT_error | 1 | catalogued |
-| PMT_error_2 | 1 | catalogued |
-| PID_error | 1 | catalogued |
-| Transport_error | 2 | catalogued |
-| CRC_error | 2 | catalogued |
-| PCR_error | 2 | catalogued |
-| PCR_repetition_error | 2 | catalogued |
-| PCR_discontinuity_indicator_error | 2 | catalogued |
-| PCR_accuracy_error | 2 | catalogued |
-| PTS_error | 2 | catalogued |
-| CAT_error | 2 | catalogued |
+| TS_sync_loss | 1 | parser-backed |
+| Sync_byte_error | 1 | parser-backed |
+| PAT_error | 1 | parser-backed |
+| PAT_error_2 | 1 | parser-backed |
+| Continuity_count_error | 1 | parser-backed |
+| PMT_error | 1 | parser-backed |
+| PMT_error_2 | 1 | parser-backed |
+| PID_error | 1 | parser-backed |
+| Transport_error | 2 | parser-backed |
+| CRC_error | 2 | parser-backed |
+| PCR_error | 2 | parser-backed |
+| PCR_repetition_error | 2 | parser-backed |
+| PCR_discontinuity_indicator_error | 2 | parser-backed |
+| PCR_accuracy_error | 2 | parser-backed from sample packet rate |
+| PTS_error | 2 | parser-backed |
+| CAT_error | 2 | parser-backed |
 
 ## Extending
 
-Add a `MonitorSpec` in `videosim.monitor.MONITOR_SPECS`, emit a
-`MonitorIssue` from `issues_for_report` or a new probe, then add one focused
-test in `tests/test_monitor.py`.
+Add a `MonitorSpec` in `videosim.monitor.MONITOR_SPECS`, emit a `MonitorIssue`
+from `issues_for_report`, the TR 101 analyzer, or a new probe, then add one
+focused test in `tests/test_monitor.py` or `tests/test_tr101.py`.

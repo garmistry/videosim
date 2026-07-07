@@ -248,3 +248,10 @@
 - Validation run: `docker compose config --quiet` passed.
 - HTTP/monitor smoke: `VIDEOSIM_MONITOR_STATE=/private/tmp/videosim-monitor-smoke.json python3 -m videosim gui --host 127.0.0.1 --http-port 18152 --feed-port 19022`, `python3 -m videosim monitor --gui-state-url http://127.0.0.1:18152/state.json --state-path /private/tmp/videosim-monitor-smoke.json --once`, and `/state.json` confirmed 22 monitor definitions, zero active alarms after recovery, and alarm raise/clear audit events from the sandbox-blocked first monitor poll.
 - Skipped check: full live monitor validation against broken media streams is pending the parser-backed TR 101 290 implementation; this slice validates monitor state, cadence, UI exposure, and local process/container wiring.
+- Added parser-backed TR 101 290 priority 1/2 MPEG-2 TS checks for sync, sync byte, PAT, continuity count, PMT, PID, transport error, CRC, PCR, PTS, and CAT indicators, and wired those indicators into monitor alarms.
+- Validation run: `python3 -m unittest tests.test_tr101 tests.test_monitor` passed, 6 tests.
+- Validation run: `python3 -m unittest tests.test_gui tests.test_cli_video_feed tests.test_validator` passed, 59 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 100 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Skipped check: no generated malformed live MPEG-TS fixtures exist yet for Docker end-to-end proof of each TR 101 290 indicator; parser behavior is covered by synthetic TS unit tests.

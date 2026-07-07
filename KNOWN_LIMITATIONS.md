@@ -37,7 +37,8 @@
 
 ## Monitoring
 
-- The separate monitor app currently reuses the existing validator and shared
-  JSON state file. It catches unreachable feeds and missing expected video,
-  audio, captions, black-video, or frozen-video validation, but it does not yet
-  parse every TR 101 290 MPEG-2 TS priority 1/2 indicator.
+- The separate monitor app uses a shared JSON state file rather than a database
+  or event broker.
+- TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
+  for simulator regression alarms, not a replacement for calibrated lab
+  measurement equipment.

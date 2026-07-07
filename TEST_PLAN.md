@@ -49,6 +49,7 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 | Monitor detects missing expected video/audio from validator reports | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | TR 101 290 priority 1/2 MPEG-TS analyzer indicators | P1 | implemented | `python3 -m unittest tests.test_tr101` |
 | Monitor converts TR 101 290 analyzer hits into alarms/events | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| Monitor samples DASH TS segments for TR 101 290 alarms | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | GUI payload and fallback render monitor alarms | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | React renders alarm and event audit panels | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 

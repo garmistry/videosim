@@ -255,3 +255,9 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Skipped check: no generated malformed live MPEG-TS fixtures exist yet for Docker end-to-end proof of each TR 101 290 indicator; parser behavior is covered by synthetic TS unit tests.
+- Added monitor regression coverage proving DASH `.ts` segment sampling flows through the TR 101 290 analyzer into monitor issues.
+- Validation run: `python3 -m unittest tests.test_monitor tests.test_tr101 tests.test_live_srt` passed, 18 tests with 11 live tests skipped locally by default.
+- Validation run: `python3 -m unittest discover -s tests` passed, 101 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Skipped check: attempted local `VIDEOSIM_LIVE_SRT=1` monitor proof could not be used because the local SRT receiver pipeline timed out even for a normal feed; Docker malformed-stream fixture proof remains the tracked gap.

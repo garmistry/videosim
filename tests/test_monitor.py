@@ -1,6 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from videosim.monitor import apply_issues, empty_monitor_state, issue, run_monitor_once
+from videosim.feed import VideoFeedConfig
+from videosim.monitor import apply_issues, empty_monitor_state, issue, run_monitor_once, tr101_issues_for_stream
 from videosim.validator import ValidationReport
 
 
@@ -84,6 +87,15 @@ class MonitorTest(unittest.TestCase):
 
         self.assertEqual(state["alarms"][0]["monitorId"], "tr101_1_4_continuity_count_error")
         self.assertEqual(state["events"][0]["type"], "alarm_raised")
+
+    def test_monitor_samples_dash_ts_segments_for_tr101_alarms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "video_0_1.ts").write_bytes(b"\x00" * 188)
+            config = VideoFeedConfig(protocol="dash", dash_dir=directory)
+
+            issues = tr101_issues_for_stream(stream() | {"protocol": "dash"}, config)
+
+        self.assertIn("tr101_1_2_sync_byte_error", {item.monitor_id for item in issues})
 
 
 if __name__ == "__main__":

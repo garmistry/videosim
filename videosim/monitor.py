@@ -99,18 +99,21 @@ def config_for_stream(stream: dict, srt_host: str) -> VideoFeedConfig:
 
 def issues_for_report(stream: dict, report: ValidationReport) -> list[MonitorIssue]:
     controls = controls_for_mode(stream["mode"])
+    profile = alert_profile_from_stream(stream)
+    explicit = set(profile["enabledMonitorIds"] or []) if profile["enabledMonitorIds"] is not None else set()
+    expected = lambda control, monitor_id: controls[control] or monitor_id in explicit
     issues = []
     if not report.reachable:
         issues.append(issue(stream, "feed_reachable", "Feed is unreachable or expected streams are missing"))
-    if controls["video"] and not report.video_present:
+    if expected("video", "essence_video_present") and not report.video_present:
         issues.append(issue(stream, "essence_video_present", "Expected video is absent"))
-    if controls["audio"] and not report.audio_present:
+    if expected("audio", "essence_audio_present") and not report.audio_present:
         issues.append(issue(stream, "essence_audio_present", "Expected audio is absent"))
-    if controls["captions"] and not report.captions_present:
+    if expected("captions", "essence_captions_present") and not report.captions_present:
         issues.append(issue(stream, "essence_captions_present", "Expected captions are absent"))
-    if controls["black_video"] and not report.black_video:
+    if expected("black_video", "black_video_detected") and not report.black_video:
         issues.append(issue(stream, "black_video_detected", "Black-video profile did not validate"))
-    if controls["frozen_video"] and not report.frozen_video:
+    if expected("frozen_video", "frozen_video_detected") and not report.frozen_video:
         issues.append(issue(stream, "frozen_video_detected", "Frozen-video profile did not validate"))
     return issues
 

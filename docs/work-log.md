@@ -381,3 +381,9 @@
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
 - Skipped checks: full Docker image rebuild and browser screenshot automation were not run; the running containers were updated with source/profile files and verified through live Docker HTTP, logs, monitor state, and validator checks.
+- Fixed explicit alert-profile essence checks so selecting `Video present` expects video even when the stream mode is an intentional audio-only profile; default/all-enabled audio-only behavior remains mode-aware.
+- Live Docker verification: patched and restarted the running monitor container, confirmed Feed 2 (`audio_only`) with only `essence_video_present` enabled raised an active `Video present` alarm and `/feeds/stream-2` displayed `Expected video is absent`.
+- Validation run: `python3 -m unittest tests.test_monitor` passed, 19 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 138 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

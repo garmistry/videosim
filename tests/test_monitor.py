@@ -143,6 +143,44 @@ class MonitorTest(unittest.TestCase):
 
         self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present"})
 
+    def test_audio_only_does_not_alert_on_missing_video_by_default(self):
+        def validator(config):
+            return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=False)
+
+        state = run_monitor_once(
+            {"streams": [stream("audio_only")]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertEqual(state["alarms"], [])
+
+    def test_explicit_video_present_alert_overrides_audio_only_mode(self):
+        def validator(config):
+            return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=False)
+
+        state = run_monitor_once(
+            {"streams": [stream("audio_only") | {"alertProfile": {"enabledMonitorIds": ["essence_video_present"], "delaySeconds": 0}}]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertEqual([alarm["monitorId"] for alarm in state["alarms"]], ["essence_video_present"])
+
     def test_stream_alert_profile_disables_and_clears_active_alarm(self):
         def validator(config):
             return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)

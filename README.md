@@ -73,6 +73,7 @@ Run the Linux/Docker gates:
 ```sh
 docker compose run --build --rm test
 docker compose run --build --rm live-srt
+docker compose run --build --rm monitor-fixtures
 ```
 
 ## Run Current CLI

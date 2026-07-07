@@ -300,3 +300,10 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Added a `monitor-fixtures` Docker Compose service that runs the malformed DASH/TR 101 290 monitor fixture suite inside the Linux container image.
+- Updated README, RUNBOOK, TEST_PLAN, and TEST_GAPS with the new Docker monitor fixture gate and the narrower remaining live malformed-stream proof gap.
+- Validation run: `python3 -m unittest tests.test_monitor tests.test_tr101` passed, 16 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 110 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Skipped check: `docker compose run --build --rm monitor-fixtures` was attempted but Docker stalled for roughly two minutes while loading image metadata/build layers; the command was interrupted before reaching project tests.

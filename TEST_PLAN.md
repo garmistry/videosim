@@ -52,6 +52,7 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 | TR 101 290 priority 3 T-STD timing indicators | P1 | implemented | `python3 -m unittest tests.test_tr101 tests.test_monitor` |
 | Monitor converts TR 101 290 analyzer hits into alarms/events | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | Monitor samples DASH TS segments for TR 101 290 alarms | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| Monitor samples malformed DASH fixtures for every TR 101 290 indicator | P1 | implemented | `python3 -m unittest tests.test_monitor` |
 | GUI payload and fallback render monitor alarms | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | React renders alarm and event audit panels | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 

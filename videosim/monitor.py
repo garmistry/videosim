@@ -167,7 +167,7 @@ def tr101_issues_for_stream(stream: dict, config: VideoFeedConfig, sample_second
 
 def ts_sample(config: VideoFeedConfig, sample_seconds: float) -> tuple[bytes, float | None]:
     if config.protocol == "dash":
-        paths = sorted(Path(config.dash_dir).glob("*.ts"), key=lambda path: path.stat().st_mtime)[-3:]
+        paths = sorted(Path(config.dash_dir).glob("*.ts"), key=lambda path: path.stat().st_mtime)[-15:]
         return b"".join(path.read_bytes() for path in paths), len(paths) * DASH_SEGMENT_DURATION_SECONDS if paths else None
     return srt_ts_sample(config, sample_seconds), sample_seconds
 

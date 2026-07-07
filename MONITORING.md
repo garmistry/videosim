@@ -51,8 +51,9 @@ and shows active alarms plus stream-specific event audit history.
 
 ## TR 101 290 Monitors
 
-The monitor samples MPEG-2 TS bytes from SRT feeds, or DASH `.ts` segments from
-the shared DASH volume, and parses the following TR 101 290 indicators.
+The monitor samples MPEG-2 TS bytes from SRT feeds, or up to the latest 15 DASH
+`.ts` segments from the shared DASH volume, and parses the following TR 101 290
+indicators.
 Priority 3 is application-dependent; the current parser covers PSI/SI syntax,
 observed SI repetition/presence windows, EIT P/F pairing, unreferenced PIDs, and
 T-STD timing checks estimated from sample byte rate and PES PTS.

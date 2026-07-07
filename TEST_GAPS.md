@@ -28,6 +28,6 @@ implementation and must pass before those milestones advance.
 
 - TR 101 290 priority 1/2 indicators and parser-backed priority 3 PSI/SI plus
   unreferenced-PID and T-STD timing indicators have unit coverage, and malformed
-  DASH segment sampling is covered through the monitor alarm path. Malformed
-  live SRT/DASH fixture streams are not yet generated for end-to-end Docker
-  proof of every indicator.
+  DASH fixture sampling is covered through the monitor alarm path for every
+  indicator. Malformed live SRT/DASH fixture streams are not yet generated for
+  end-to-end Docker proof of every indicator.

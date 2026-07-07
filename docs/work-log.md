@@ -291,3 +291,12 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Expanded DASH TR 101 290 sampling to the latest 15 `.ts` segments so monitor analysis can cover 10s and 30s SI timing windows.
+- Added malformed DASH fixture coverage proving every implemented TR 101 290 indicator can surface through `tr101_issues_for_stream` as a monitor issue.
+- Updated monitoring docs, test plan, and test gaps for all-indicator DASH fixture monitor proof.
+- Validation run: `python3 -m unittest tests.test_monitor` passed, 7 tests.
+- Validation run: `python3 -m unittest tests.test_monitor tests.test_tr101` passed, 16 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 110 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

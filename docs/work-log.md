@@ -232,3 +232,10 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18149 --feed-port 9912` served `/`, `/static/app.css`, `/static/app.js`, and `/state.json`; saved responses exposed the design-token hooks and initial state.
 - Skipped check: visual browser screenshot verification could not run because the in-app browser runtime listed no available browser backends.
+- Added stream detail traffic graphs for bit rate and outbound data, backed by the React `/state.json` polling loop and a rolling five-minute client-side metrics window.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 37 tests.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.js` and `videosim/static/app.css`.
+- Validation run: `python3 -m unittest discover -s tests` passed, 93 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- HTTP/live metrics smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18151 --feed-port 19012`, created `GraphSmoke`, confirmed served static assets include traffic graph hooks, started `stream-1`, and two `/state.json` polls showed `status=running`, bit rate `4342800`, uptime `7.6 -> 15.0`, and outbound bytes `4126828 -> 8135459`.
+- Skipped check: browser screenshot verification was not run; HTTP/static asset and live state smoke covered the graph path in this headless run.

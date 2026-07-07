@@ -66,7 +66,7 @@
 | Separate create from detail. | `/` exposes the create/list workflow; selected feed detail pages omit the create-feed form. |
 | Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
 | Start empty. | Fresh GUI state has no configured streams, no endpoint, and no running feed until the user creates one. |
-| Show per-feed metrics. | GUI state and React UI expose per-stream estimated bit rate, outbound total data, uptime, and generated frame count with polling updates. |
+| Show per-feed metrics. | GUI state and React UI expose per-stream estimated bit rate, outbound total data, uptime, and generated frame count with polling updates, plus five-minute detail-page traffic graphs. |
 
 ## Milestone Status
 

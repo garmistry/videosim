@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 
 const detailTabs = ["Logs", "Validation"];
+const METRICS_WINDOW_MS = 5 * 60 * 1000;
 const themeKey = "videosim-theme";
 
 function readState() {
@@ -33,6 +34,7 @@ function App() {
   const [copiedEndpoint, setCopiedEndpoint] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [fullPreview, setFullPreview] = useState(null);
+  const [metricHistory, setMetricHistory] = useState({});
   const [previewTick, setPreviewTick] = useState(Date.now());
   const selectedStream = useMemo(
     () => (state.streams || []).find((item) => item.id === state.selectedStreamId),
@@ -96,6 +98,24 @@ function App() {
     }
   }, [state.streams, fullPreview]);
 
+  useEffect(() => {
+    const now = Date.now();
+    setMetricHistory((history) => {
+      const next = {};
+      for (const stream of state.streams || []) {
+        const sample = {
+          time: now,
+          bitrateBps: stream.metrics?.bitrateBps || 0,
+          outboundBytes: stream.metrics?.outboundBytes || 0
+        };
+        next[stream.id] = [...(history[stream.id] || []), sample].filter(
+          (item) => item.time >= now - METRICS_WINDOW_MS
+        );
+      }
+      return next;
+    });
+  }, [state.streams]);
+
   return (
     <div className="app-shell">
       <TopBar theme={theme} onCreate={() => setCreateOpen(true)} onToggleTheme={toggleTheme} />
@@ -109,6 +129,7 @@ function App() {
             setTab={setTab}
             state={state}
             stream={selectedStream}
+            metricSamples={metricHistory[selectedStream.id] || []}
             tab={tab}
           />
         ) : (
@@ -253,7 +274,7 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
   );
 }
 
-function FeedDetail({ state, stream, tab, setTab, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
+function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
   const controls = state.controls || {};
   return (
     <div className="screen-stack">
@@ -319,6 +340,27 @@ function FeedDetail({ state, stream, tab, setTab, previewTick, copiedEndpoint, o
               <MetricStat label="Uptime" value={uptimeText(stream)} />
               <MetricStat label="Frames" value={stream.status === "running" ? stream.metrics.videoFramesLabel : "0"} />
               <MetricStat label="Outbound" value={stream.metrics.outboundLabel} />
+            </div>
+          </article>
+
+          <article className="card">
+            <header className="card-header">
+              <h2>Traffic - last 5 min</h2>
+              <span className="card-meta">{metricSamples.length} samples</span>
+            </header>
+            <div className="chart-grid">
+              <MetricChart
+                label="Bit rate"
+                samples={metricSamples}
+                valueKey="bitrateBps"
+                formatValue={formatBps}
+              />
+              <MetricChart
+                label="Outbound data"
+                samples={metricSamples}
+                valueKey="outboundBytes"
+                formatValue={formatBytesValue}
+              />
             </div>
           </article>
 
@@ -525,6 +567,47 @@ function MetricStat({ label, value }) {
   );
 }
 
+function MetricChart({ label, samples, valueKey, formatValue }) {
+  const latest = samples.at(-1);
+  const latestTime = latest?.time || Date.now();
+  const minTime = latestTime - METRICS_WINDOW_MS;
+  const values = samples.map((sample) => Number(sample[valueKey]) || 0);
+  const maxValue = Math.max(...values, 1);
+  const width = 320;
+  const height = 120;
+  const pad = 18;
+  const plotWidth = width - pad * 2;
+  const plotHeight = height - pad * 2;
+  const points = samples.map((sample) => {
+    const x = pad + ((sample.time - minTime) / METRICS_WINDOW_MS) * plotWidth;
+    const y = height - pad - ((Number(sample[valueKey]) || 0) / maxValue) * plotHeight;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const latestValue = formatValue(latest?.[valueKey] || 0);
+
+  return (
+    <div className="metric-chart">
+      <div className="chart-head">
+        <span>{label}</span>
+        <strong>{latestValue}</strong>
+      </div>
+      <svg aria-label={`${label} graph`} role="img" viewBox={`0 0 ${width} ${height}`}>
+        <line className="chart-grid-line" x1={pad} x2={width - pad} y1={pad} y2={pad} />
+        <line className="chart-grid-line" x1={pad} x2={width - pad} y1={height / 2} y2={height / 2} />
+        <line className="chart-grid-line" x1={pad} x2={width - pad} y1={height - pad} y2={height - pad} />
+        {points.length > 1 ? <polyline className="chart-line" points={points.join(" ")} /> : null}
+        {points.length === 1 ? (
+          <circle className="chart-dot" cx={points[0].split(",")[0]} cy={points[0].split(",")[1]} r="2.5" />
+        ) : null}
+      </svg>
+      <div className="chart-axis">
+        <span>-5 min</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
 function LogViewer({ lines }) {
   return (
     <pre className="log-viewer">
@@ -546,10 +629,7 @@ function bitrateText(stream) {
   if (stream.status !== "running") {
     return "0 b/s";
   }
-  return String(stream.metrics.bitrateLabel || "0 b/s")
-    .replace("Mbps", "Mb/s")
-    .replace("kbps", "kb/s")
-    .replace("bps", "b/s");
+  return formatBps(stream.metrics.bitrateBps);
 }
 
 function uptimeText(stream) {
@@ -562,6 +642,29 @@ function formatSeconds(value) {
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
   return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
+function formatBps(value) {
+  const rate = Math.max(0, Number(value) || 0);
+  if (rate >= 1_000_000) {
+    return `${(rate / 1_000_000).toFixed(1)} Mb/s`;
+  }
+  if (rate >= 1_000) {
+    return `${Math.round(rate / 1_000)} kb/s`;
+  }
+  return `${Math.round(rate)} b/s`;
+}
+
+function formatBytesValue(value) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = Math.max(0, Number(value) || 0);
+  for (const unit of units) {
+    if (amount < 1024 || unit === units.at(-1)) {
+      return unit === "B" ? `${Math.round(amount)} B` : `${amount.toFixed(1)} ${unit}`;
+    }
+    amount /= 1024;
+  }
+  return "0 B";
 }
 
 document.body.classList.add("react-ready");

@@ -162,7 +162,9 @@ validation output, and recent logs as text.
 The React GUI polls `/state.json` every second and shows per-feed estimated bit
 rate, outbound total data, uptime, and generated video frame count. These are
 runtime estimates derived from the configured media tracks and elapsed time;
-use Validate to prove actual receiver-visible stream state.
+feed detail pages keep a rolling five-minute in-browser window and plot bit
+rate plus outbound data in real time. Use Validate to prove actual
+receiver-visible stream state.
 
 Video-present modes include a running clock overlay in the encoded video so
 receivers can visually prove live motion and timing.

@@ -135,6 +135,21 @@ class GuiTest(unittest.TestCase):
         self.assertIn("FullPreviewDialog", source)
         self.assertIn("preview-thumb", source)
 
+    def test_frontend_renders_stream_detail_traffic_graphs(self):
+        source = Path("frontend/src/main.jsx").read_text()
+        style = Path("frontend/src/style.css").read_text()
+
+        self.assertIn("const METRICS_WINDOW_MS = 5 * 60 * 1000", source)
+        self.assertIn("setMetricHistory", source)
+        self.assertIn("metricSamples={metricHistory[selectedStream.id] || []}", source)
+        self.assertIn("Traffic - last 5 min", source)
+        self.assertIn("MetricChart", source)
+        self.assertIn('valueKey="bitrateBps"', source)
+        self.assertIn('valueKey="outboundBytes"', source)
+        self.assertIn("-5 min", source)
+        self.assertIn(".metric-chart", style)
+        self.assertIn(".chart-line", style)
+
     def test_frontend_uses_design_system_tokens(self):
         source = Path("frontend/src/main.jsx").read_text()
         style = Path("frontend/src/style.css").read_text()

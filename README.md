@@ -148,9 +148,11 @@ restart.
 The GUI also shows status, intentional outage state, per-feed estimated bit
 rate, outbound total, uptime, generated video frame count, last error, logs,
 validation output, a copyable endpoint, and a downloadable diagnostics text
-file. Video-present modes include a visible running clock overlay for receiver
-testing. Feed table thumbnails and the preview dialog refresh a local frame
-matching the active mode. Use Validate to prove actual stream state.
+file. Each feed detail page also plots bit rate and outbound data over a
+rolling five-minute client-side metrics window. Video-present modes include a
+visible running clock overlay for receiver testing. Feed table thumbnails and
+the preview dialog refresh a local frame matching the active mode. Use Validate
+to prove actual stream state.
 
 Deploy the GUI and SRT listener together with Docker Compose:
 

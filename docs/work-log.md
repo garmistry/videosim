@@ -405,3 +405,9 @@
 - Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Fixed SQLite feed registration use from GUI request threads by allowing cross-thread SQLite access inside the store boundary and serializing store operations with a lock.
+- Added a feed-store regression proving a store created on one thread accepts a feed upsert from another request-like thread.
+- Validation run: `python3 -m unittest tests.test_feed_store tests.test_gui` passed, 47 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 148 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.

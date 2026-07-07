@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Mapping, Protocol
 
@@ -30,20 +31,22 @@ class SqliteFeedStore:
     def __init__(self, path: str | Path):
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.path)
+        self._lock = threading.RLock()
+        self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._closed = False
         self._migrate()
 
     def load(self) -> list[dict]:
-        rows = self._connection.execute(
-            """
-            SELECT id, name, source, external_url, protocol, mode, http_port, feed_port,
-                   width, height, framerate, dash_dir, alert_enabled_ids, alert_delay_seconds
-            FROM feeds
-            ORDER BY created_at, id
-            """
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT id, name, source, external_url, protocol, mode, http_port, feed_port,
+                       width, height, framerate, dash_dir, alert_enabled_ids, alert_delay_seconds
+                FROM feeds
+                ORDER BY created_at, id
+                """
+            ).fetchall()
         return [self._row_to_feed(row) for row in rows]
 
     def upsert(self, feed: Mapping) -> None:
@@ -63,43 +66,46 @@ class SqliteFeedStore:
             "alert_enabled_ids": json.dumps(feed.get("alert_enabled_ids")) if feed.get("alert_enabled_ids") is not None else None,
             "alert_delay_seconds": int(feed.get("alert_delay_seconds", 0)),
         }
-        self._connection.execute(
-            """
-            INSERT INTO feeds (
-              id, name, source, external_url, protocol, mode, http_port, feed_port,
-              width, height, framerate, dash_dir, alert_enabled_ids, alert_delay_seconds
-            ) VALUES (
-              :id, :name, :source, :external_url, :protocol, :mode, :http_port, :feed_port,
-              :width, :height, :framerate, :dash_dir, :alert_enabled_ids, :alert_delay_seconds
+        with self._lock:
+            self._connection.execute(
+                """
+                INSERT INTO feeds (
+                  id, name, source, external_url, protocol, mode, http_port, feed_port,
+                  width, height, framerate, dash_dir, alert_enabled_ids, alert_delay_seconds
+                ) VALUES (
+                  :id, :name, :source, :external_url, :protocol, :mode, :http_port, :feed_port,
+                  :width, :height, :framerate, :dash_dir, :alert_enabled_ids, :alert_delay_seconds
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  source = excluded.source,
+                  external_url = excluded.external_url,
+                  protocol = excluded.protocol,
+                  mode = excluded.mode,
+                  http_port = excluded.http_port,
+                  feed_port = excluded.feed_port,
+                  width = excluded.width,
+                  height = excluded.height,
+                  framerate = excluded.framerate,
+                  dash_dir = excluded.dash_dir,
+                  alert_enabled_ids = excluded.alert_enabled_ids,
+                  alert_delay_seconds = excluded.alert_delay_seconds,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                values,
             )
-            ON CONFLICT(id) DO UPDATE SET
-              name = excluded.name,
-              source = excluded.source,
-              external_url = excluded.external_url,
-              protocol = excluded.protocol,
-              mode = excluded.mode,
-              http_port = excluded.http_port,
-              feed_port = excluded.feed_port,
-              width = excluded.width,
-              height = excluded.height,
-              framerate = excluded.framerate,
-              dash_dir = excluded.dash_dir,
-              alert_enabled_ids = excluded.alert_enabled_ids,
-              alert_delay_seconds = excluded.alert_delay_seconds,
-              updated_at = CURRENT_TIMESTAMP
-            """,
-            values,
-        )
-        self._connection.commit()
+            self._connection.commit()
 
     def delete(self, feed_id: str) -> None:
-        self._connection.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
-        self._connection.commit()
+        with self._lock:
+            self._connection.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
+            self._connection.commit()
 
     def close(self) -> None:
-        if not getattr(self, "_closed", True):
-            self._connection.close()
-            self._closed = True
+        with getattr(self, "_lock", threading.RLock()):
+            if not getattr(self, "_closed", True):
+                self._connection.close()
+                self._closed = True
 
     def __del__(self):
         try:
@@ -108,29 +114,30 @@ class SqliteFeedStore:
             pass
 
     def _migrate(self) -> None:
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS feeds (
-              id TEXT PRIMARY KEY,
-              name TEXT NOT NULL,
-              source TEXT NOT NULL DEFAULT 'generated',
-              external_url TEXT NOT NULL DEFAULT '',
-              protocol TEXT NOT NULL,
-              mode TEXT NOT NULL,
-              http_port INTEGER NOT NULL,
-              feed_port INTEGER NOT NULL,
-              width INTEGER NOT NULL,
-              height INTEGER NOT NULL,
-              framerate TEXT NOT NULL,
-              dash_dir TEXT NOT NULL,
-              alert_enabled_ids TEXT,
-              alert_delay_seconds INTEGER NOT NULL DEFAULT 0,
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        with self._lock:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS feeds (
+                  id TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  source TEXT NOT NULL DEFAULT 'generated',
+                  external_url TEXT NOT NULL DEFAULT '',
+                  protocol TEXT NOT NULL,
+                  mode TEXT NOT NULL,
+                  http_port INTEGER NOT NULL,
+                  feed_port INTEGER NOT NULL,
+                  width INTEGER NOT NULL,
+                  height INTEGER NOT NULL,
+                  framerate TEXT NOT NULL,
+                  dash_dir TEXT NOT NULL,
+                  alert_enabled_ids TEXT,
+                  alert_delay_seconds INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
             )
-            """
-        )
-        self._connection.commit()
+            self._connection.commit()
 
     @staticmethod
     def _row_to_feed(row: sqlite3.Row) -> dict:

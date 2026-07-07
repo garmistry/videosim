@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -6,28 +7,29 @@ from videosim.feed_store import SqliteFeedStore
 
 
 class FeedStoreTest(unittest.TestCase):
+    def feed(self, feed_id="stream-1"):
+        return {
+            "id": feed_id,
+            "name": "External camera",
+            "source": "external",
+            "external_url": "srt://camera.local:9999?mode=caller",
+            "protocol": "srt",
+            "mode": "normal",
+            "http_port": 8080,
+            "feed_port": 9000,
+            "width": 1280,
+            "height": 720,
+            "framerate": "59.94",
+            "dash_dir": f"/tmp/videosim-dash/{feed_id}",
+            "alert_enabled_ids": ["essence_video_present"],
+            "alert_delay_seconds": 3,
+        }
+
     def test_sqlite_store_round_trips_feed_registration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "feeds.sqlite3"
             store = SqliteFeedStore(path)
-            store.upsert(
-                {
-                    "id": "stream-1",
-                    "name": "External camera",
-                    "source": "external",
-                    "external_url": "srt://camera.local:9999?mode=caller",
-                    "protocol": "srt",
-                    "mode": "normal",
-                    "http_port": 8080,
-                    "feed_port": 9000,
-                    "width": 1280,
-                    "height": 720,
-                    "framerate": "59.94",
-                    "dash_dir": "/tmp/videosim-dash/stream-1",
-                    "alert_enabled_ids": ["essence_video_present"],
-                    "alert_delay_seconds": 3,
-                }
-            )
+            store.upsert(self.feed())
             store.close()
 
             reloaded = SqliteFeedStore(path)
@@ -38,6 +40,25 @@ class FeedStoreTest(unittest.TestCase):
         self.assertEqual(feeds[0]["external_url"], "srt://camera.local:9999?mode=caller")
         self.assertEqual(feeds[0]["alert_enabled_ids"], ["essence_video_present"])
         self.assertEqual(feeds[0]["alert_delay_seconds"], 3)
+
+    def test_sqlite_store_accepts_gui_request_thread_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SqliteFeedStore(Path(directory) / "feeds.sqlite3")
+            errors = []
+
+            def write_from_request_thread():
+                try:
+                    store.upsert(self.feed("stream-2"))
+                except Exception as exc:
+                    errors.append(exc)
+
+            thread = threading.Thread(target=write_from_request_thread)
+            thread.start()
+            thread.join()
+            feeds = store.load()
+
+        self.assertEqual(errors, [])
+        self.assertEqual([feed["id"] for feed in feeds], ["stream-2"])
 
 
 if __name__ == "__main__":

@@ -239,3 +239,12 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - HTTP/live metrics smoke: `python3 -m videosim gui --host 127.0.0.1 --http-port 18151 --feed-port 19012`, created `GraphSmoke`, confirmed served static assets include traffic graph hooks, started `stream-1`, and two `/state.json` polls showed `status=running`, bit rate `4342800`, uptime `7.6 -> 15.0`, and outbound bytes `4126828 -> 8135459`.
 - Skipped check: browser screenshot verification was not run; HTTP/static asset and live state smoke covered the graph path in this headless run.
+- Added a separate `videosim monitor` app and Docker Compose `monitor` service that polls GUI state, validates running feeds, writes active/steady alarms plus event audit history, and repeats active alarm events every 5 seconds.
+- Added GUI alarm review panels, monitor state exposure in `/state.json`, TR 101 290 monitor catalogue documentation, and tests for alarm cadence, missing video/audio detection, and GUI alarm payload rendering.
+- Validation run: `python3 -m unittest tests.test_monitor tests.test_gui tests.test_cli_video_feed tests.test_validator tests.test_docs_contract` passed, 65 tests.
+- Validation run: `npm run build-ui` passed and rebuilt `videosim/static/app.js` and `videosim/static/app.css`.
+- Validation run: `python3 -m unittest discover -s tests` passed, 96 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- HTTP/monitor smoke: `VIDEOSIM_MONITOR_STATE=/private/tmp/videosim-monitor-smoke.json python3 -m videosim gui --host 127.0.0.1 --http-port 18152 --feed-port 19022`, `python3 -m videosim monitor --gui-state-url http://127.0.0.1:18152/state.json --state-path /private/tmp/videosim-monitor-smoke.json --once`, and `/state.json` confirmed 22 monitor definitions, zero active alarms after recovery, and alarm raise/clear audit events from the sandbox-blocked first monitor poll.
+- Skipped check: full live monitor validation against broken media streams is pending the parser-backed TR 101 290 implementation; this slice validates monitor state, cadence, UI exposure, and local process/container wiring.

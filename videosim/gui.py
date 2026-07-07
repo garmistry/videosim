@@ -41,6 +41,7 @@ MODE_CONTROLS = {
 }
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+DEFAULT_MONITOR_STATE_PATH = "/tmp/videosim-monitor/state.json"
 
 
 def controls_for_mode(mode: str) -> dict[str, bool]:
@@ -179,6 +180,7 @@ class GuiState:
     height: int = 720
     framerate: int = 30
     dash_dir: str = "/tmp/videosim-dash"
+    monitor_state_path: str = ""
     mode: str = "normal"
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
@@ -771,6 +773,8 @@ class GuiHandler(BaseHTTPRequestHandler):
 
 def render_page(state: GuiState) -> str:
     active = state.active_stream
+    monitor = monitor_payload(state)
+    active_alarms = [alarm for alarm in monitor.get("alarms", []) if alarm.get("active")]
     logs_source = state.logs or (active.logs if active else [])
     logs = "\n".join(html.escape(line) for line in logs_source[-80:])
     status = html.escape(state.status)
@@ -803,6 +807,16 @@ def render_page(state: GuiState) -> str:
           <td><a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a></td>
         </tr>"""
         for stream in state.streams.values()
+    )
+    alarm_rows = "\n".join(
+        f"""<tr>
+          <td>{html.escape(alarm.get("streamName", ""))}</td>
+          <td>{html.escape(alarm.get("monitorName", ""))}</td>
+          <td>{html.escape(alarm.get("severity", ""))}</td>
+          <td>{html.escape(alarm.get("status", ""))}</td>
+          <td>{html.escape(alarm.get("message", ""))}</td>
+        </tr>"""
+        for alarm in monitor.get("alarms", [])[:20]
     )
     create_form = f"""
   <form method="post" action="/streams/create" class="row">
@@ -899,6 +913,11 @@ def render_page(state: GuiState) -> str:
     <thead><tr><th>Preview</th><th>Feed</th><th>Status</th><th>Endpoint</th><th>Metrics</th><th>Actions</th></tr></thead>
     <tbody>{stream_rows}</tbody>
   </table>
+  <h2>Monitor alarms ({len(active_alarms)} active)</h2>
+  <table class="feed-table">
+    <thead><tr><th>Feed</th><th>Monitor</th><th>Severity</th><th>Status</th><th>Message</th></tr></thead>
+    <tbody>{alarm_rows}</tbody>
+  </table>
   {selected_detail if active else create_form}
   </div>
 </main>
@@ -931,6 +950,7 @@ def state_payload(state: GuiState) -> dict:
             for mode, (label, _) in PROFILE_OPTIONS.items()
         ],
         "controls": controls,
+        "monitor": monitor_payload(state),
     }
 
 
@@ -1055,6 +1075,7 @@ def preview_placeholder(message: str) -> bytes:
 
 def diagnostics_text(state: GuiState) -> str:
     active = state.active_stream
+    monitor = monitor_payload(state)
     logs_source = state.logs or (active.logs if active else [])
     return "\n".join(
         [
@@ -1073,6 +1094,10 @@ def diagnostics_text(state: GuiState) -> str:
             "logs:",
             *logs_source[-200:],
             "",
+            "monitor:",
+            f"active_alarms={sum(1 for alarm in monitor.get('alarms', []) if alarm.get('active'))}",
+            f"events={len(monitor.get('events', []))}",
+            "",
             "streams:",
             *[
                 (
@@ -1086,6 +1111,22 @@ def diagnostics_text(state: GuiState) -> str:
             "",
         ]
     )
+
+
+def monitor_payload(state: GuiState) -> dict:
+    path = Path(state.monitor_state_path or os.environ.get("VIDEOSIM_MONITOR_STATE", DEFAULT_MONITOR_STATE_PATH))
+    if not path.is_file():
+        return {"updatedAt": "", "alarms": [], "events": [], "monitors": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"updatedAt": "", "alarms": [], "events": [], "monitors": []}
+    return {
+        "updatedAt": payload.get("updatedAt", ""),
+        "alarms": payload.get("alarms", [])[-100:],
+        "events": payload.get("events", [])[-200:],
+        "monitors": payload.get("monitors", []),
+    }
 
 
 def run_gui(host: str, port: int, state: GuiState):

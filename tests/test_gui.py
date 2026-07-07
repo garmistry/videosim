@@ -1,3 +1,5 @@
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -97,6 +99,41 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(payload["streams"][0]["previewUrl"], "/feeds/stream-1/preview.jpg")
         self.assertFalse(payload["streams"][0]["previewAvailable"])
 
+    def test_gui_payload_and_fallback_render_monitor_alarms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "updatedAt": "2026-07-07T00:00:00Z",
+                        "alarms": [
+                            {
+                                "id": "stream-1:essence_video_present",
+                                "streamId": "stream-1",
+                                "streamName": "Primary feed",
+                                "monitorName": "Video present",
+                                "severity": "critical",
+                                "status": "active",
+                                "active": True,
+                                "message": "Expected video is absent",
+                            }
+                        ],
+                        "events": [{"id": "1", "streamId": "stream-1", "type": "alarm_raised"}],
+                        "monitors": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = GuiState(feed_port=9912, monitor_state_path=str(path))
+            self.create_feed(state)
+
+            payload = state_payload(state)
+            page = render_page(state)
+
+        self.assertEqual(payload["monitor"]["alarms"][0]["monitorName"], "Video present")
+        self.assertIn("Monitor alarms (1 active)", page)
+        self.assertIn("Expected video is absent", page)
+
     def test_stream_metrics_payload_updates_for_each_running_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)
         self.create_feed(state)
@@ -144,6 +181,8 @@ class GuiTest(unittest.TestCase):
         self.assertIn("metricSamples={metricHistory[selectedStream.id] || []}", source)
         self.assertIn("Traffic - last 5 min", source)
         self.assertIn("MetricChart", source)
+        self.assertIn("MonitorPanel", source)
+        self.assertIn("Event audit", source)
         self.assertIn('valueKey="bitrateBps"', source)
         self.assertIn('valueKey="outboundBytes"', source)
         self.assertIn("-5 min", source)

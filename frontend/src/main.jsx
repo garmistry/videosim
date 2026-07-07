@@ -185,6 +185,7 @@ function FeedList({ state, previewTick, copiedEndpoint, onCopyEndpoint, onCreate
         </div>
         <button className="button primary" onClick={onCreate} type="button">Create feed</button>
       </header>
+      <MonitorSummary monitor={state.monitor || {}} />
       <section className="card flush">
         {streams.length === 0 ? (
           <div className="empty-state">
@@ -363,6 +364,8 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
               />
             </div>
           </article>
+
+          <MonitorPanel monitor={state.monitor || {}} stream={stream} />
 
           <article className="card">
             <header className="card-header"><h2>Configuration</h2></header>
@@ -604,6 +607,69 @@ function MetricChart({ label, samples, valueKey, formatValue }) {
         <span>-5 min</span>
         <span>now</span>
       </div>
+    </div>
+  );
+}
+
+function MonitorSummary({ monitor }) {
+  const active = (monitor.alarms || []).filter((alarm) => alarm.active);
+  if (active.length === 0) {
+    return null;
+  }
+  return (
+    <section className="card alarm-card">
+      <header className="card-header">
+        <h2>Monitor alarms</h2>
+        <span className="card-meta">{active.length} active</span>
+      </header>
+      <div className="alarm-list">
+        {active.slice(0, 4).map((alarm) => (
+          <AlarmRow alarm={alarm} key={alarm.id} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MonitorPanel({ stream, monitor }) {
+  const alarms = (monitor.alarms || []).filter((alarm) => alarm.streamId === stream.id);
+  const events = (monitor.events || []).filter((event) => event.streamId === stream.id).slice(-8).reverse();
+  return (
+    <article className="card alarm-card">
+      <header className="card-header">
+        <h2>Alarms</h2>
+        <span className="card-meta">{alarms.filter((alarm) => alarm.active).length} active</span>
+      </header>
+      <div className="alarm-list">
+        {alarms.length === 0 ? <p className="empty-copy">No monitor alarms</p> : alarms.map((alarm) => <AlarmRow alarm={alarm} key={alarm.id} />)}
+      </div>
+      <header className="card-header subhead">
+        <h2>Event audit</h2>
+        <span className="card-meta">{events.length} recent</span>
+      </header>
+      <div className="event-list">
+        {events.length === 0 ? <p className="empty-copy">No monitor events</p> : events.map((event) => <EventRow event={event} key={event.id} />)}
+      </div>
+    </article>
+  );
+}
+
+function AlarmRow({ alarm }) {
+  return (
+    <div className={`alarm-row ${alarm.active ? "active" : "steady"}`}>
+      <span>{alarm.severity}</span>
+      <strong>{alarm.monitorName}</strong>
+      <p>{alarm.message}</p>
+    </div>
+  );
+}
+
+function EventRow({ event }) {
+  return (
+    <div className="event-row">
+      <span>{event.time}</span>
+      <strong>{event.type}</strong>
+      <p>{event.monitorName}: {event.message}</p>
     </div>
   );
 }

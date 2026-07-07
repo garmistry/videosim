@@ -67,6 +67,8 @@
 | Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
 | Start empty. | Fresh GUI state has no configured streams, no endpoint, and no running feed until the user creates one. |
 | Show per-feed metrics. | GUI state and React UI expose per-stream estimated bit rate, outbound total data, uptime, and generated frame count with polling updates, plus five-minute detail-page traffic graphs. |
+| Monitor running feeds. | A separate monitor process/container polls GUI state, validates running feeds, writes alarm/event history, and repeats active alarm events every 5 seconds. |
+| Review alarms in UI. | GUI state and React UI expose monitor alarms plus per-stream event audit history. |
 
 ## Milestone Status
 

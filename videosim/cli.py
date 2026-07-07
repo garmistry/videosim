@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .gui import GuiState, run_gui
+from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
 from .profile import ProfileError, load_profile
 from .soak import check_reports
 from .soak import check_summary
@@ -46,6 +47,15 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--dash-dir", help="directory containing DASH MPD and media segments")
     validate.add_argument("--dash-base-url", help="base URL used when reporting DASH endpoint")
     validate.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    monitor = subparsers.add_parser("monitor", help="poll GUI feeds and write monitor alarms/events")
+    monitor.add_argument("--gui-state-url", default="http://127.0.0.1:8080/state.json")
+    monitor.add_argument("--state-path", default=DEFAULT_MONITOR_STATE_PATH)
+    monitor.add_argument("--poll-interval-seconds", type=float, default=5)
+    monitor.add_argument("--repeat-interval-seconds", type=float, default=5)
+    monitor.add_argument("--history-limit", type=int, default=1000)
+    monitor.add_argument("--srt-host", default="127.0.0.1")
+    monitor.add_argument("--once", action="store_true", help="poll once and exit")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -173,6 +183,23 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(report.to_json() if args.json else gui_summary(report))
             return 0 if report.passed else 1
+
+        if args.command == "monitor":
+            if args.poll_interval_seconds <= 0:
+                raise ValueError("poll_interval_seconds must be greater than 0")
+            if args.repeat_interval_seconds <= 0:
+                raise ValueError("repeat_interval_seconds must be greater than 0")
+            if args.history_limit < 1:
+                raise ValueError("history_limit must be greater than 0")
+            return run_monitor(
+                args.gui_state_url,
+                args.state_path,
+                args.poll_interval_seconds,
+                args.repeat_interval_seconds,
+                args.history_limit,
+                args.srt_host,
+                args.once,
+            )
 
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()
         overrides = {

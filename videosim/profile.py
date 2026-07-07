@@ -14,6 +14,7 @@ ALLOWED_KEYS = {
     "schema_version",
     "mode",
     "protocol",
+    "srt_host",
     "port",
     "width",
     "height",

@@ -24,6 +24,7 @@ DASH_CAPTION_FILE = "captions.vtt"
 @dataclass(frozen=True)
 class VideoFeedConfig:
     protocol: str = "srt"
+    srt_host: str = "127.0.0.1"
     port: int = 9000
     width: int = 1280
     height: int = 720
@@ -58,7 +59,7 @@ class VideoFeedConfig:
             if self.dash_base_url:
                 return f"{self.dash_base_url.rstrip('/')}/{self.dash_manifest}"
             return f"file://{Path(self.dash_dir).resolve()}/{self.dash_manifest}"
-        return f"srt://127.0.0.1:{self.port}?mode=caller"
+        return f"srt://{self.srt_host}:{self.port}?mode=caller"
 
 
 def require_gst_launch() -> str:

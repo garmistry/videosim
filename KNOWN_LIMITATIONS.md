@@ -34,3 +34,10 @@
   Audio-only mode has no video preview.
 - GUI feed metrics are estimates from configured media tracks and elapsed run
   time. They are not actual SRT socket byte counters or per-receiver telemetry.
+
+## Monitoring
+
+- The separate monitor app currently reuses the existing validator and shared
+  JSON state file. It catches unreachable feeds and missing expected video,
+  audio, captions, black-video, or frozen-video validation, but it does not yet
+  parse every TR 101 290 MPEG-2 TS priority 1/2 indicator.

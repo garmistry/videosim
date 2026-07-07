@@ -41,6 +41,15 @@ Multiple feed instances are additive beyond the original single-feed SRT MVP.
 | Real-time per-stream GUI metrics payload, polling, and 5-minute detail graphs | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 | Multi-stream Docker GUI smoke | P1 | manual smoke implemented | documented in `docs/work-log.md` |
 
+## Added Monitoring Coverage
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| Monitor alarm raise/repeat/clear cadence | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| Monitor detects missing expected video/audio from validator reports | P1 | implemented | `python3 -m unittest tests.test_monitor` |
+| GUI payload and fallback render monitor alarms | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| React renders alarm and event audit panels | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
+
 ## Milestone Gates
 
 Each milestone may advance only when all P0 tests for that milestone are

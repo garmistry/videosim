@@ -3,11 +3,28 @@ services:
     build: .
     environment:
       VIDEOSIM_VERBOSE: "${VIDEOSIM_VERBOSE:-1}"
+      VIDEOSIM_MONITOR_STATE: /tmp/videosim-monitor/state.json
     ports:
       - "${VIDEOSIM_HTTP_PORT:-8080}:8080"
       - "${VIDEOSIM_FEED_PORT:-9000}:${VIDEOSIM_FEED_PORT:-9000}/udp"
       - "9001-9010:9001-9010/udp"
+    volumes:
+      - monitor-state:/tmp/videosim-monitor
+      - dash-data:/tmp/videosim-dash
     command: python -m videosim gui --host 0.0.0.0 --http-port 8080 --feed-port ${VIDEOSIM_FEED_PORT:-9000}
+  monitor:
+    build: .
+    depends_on:
+      - app
+    volumes:
+      - monitor-state:/tmp/videosim-monitor
+      - dash-data:/tmp/videosim-dash
+    command: >
+      python -m videosim monitor --gui-state-url http://app:8080/state.json
+      --state-path /tmp/videosim-monitor/state.json
+      --srt-host app
+      --poll-interval-seconds 5
+      --repeat-interval-seconds 5
   test:
     build: .
     command: python -m unittest discover -s tests
@@ -42,3 +59,7 @@ services:
       --validation-interval-seconds "$${GUI_VALIDATION_INTERVAL_SECONDS}"
       --poll-interval-seconds "$${GUI_POLL_INTERVAL_SECONDS}"
       --json | tee /app/reports/m12-gui-soak.json'
+
+volumes:
+  monitor-state:
+  dash-data:

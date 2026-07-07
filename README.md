@@ -154,6 +154,12 @@ visible running clock overlay for receiver testing. Feed table thumbnails and
 the preview dialog refresh a local frame matching the active mode. Use Validate
 to prove actual stream state.
 
+The optional monitor app runs as a separate process/container, polls GUI feed
+state, validates running feeds, and writes alarm/event history for the GUI to
+review. Current alarms cover feed reachability, video absence, audio absence,
+caption absence, black-video validation, and frozen-video validation. The TR
+101 290 MPEG-2 TS monitor catalogue is documented in [MONITORING.md](MONITORING.md).
+
 Deploy the GUI and SRT listener together with Docker Compose:
 
 ```sh
@@ -199,3 +205,4 @@ Stop the feed with Ctrl-C.
 - [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) - receiver compatibility evidence.
 - [STABILITY_REPORT.md](STABILITY_REPORT.md) - soak harness and pending long-run evidence.
 - [RUNBOOK.md](RUNBOOK.md) - install, run, verify, and troubleshoot steps.
+- [MONITORING.md](MONITORING.md) - monitor service, alarm behavior, and TR 101 290 coverage.

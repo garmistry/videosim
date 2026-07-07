@@ -307,3 +307,4 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Skipped check: `docker compose run --build --rm monitor-fixtures` was attempted but Docker stalled for roughly two minutes while loading image metadata/build layers; the command was interrupted before reaching project tests.
+- Containerized monitor fixture proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_monitor tests.test_tr101` passed, 16 tests, using the existing Linux test image with current source bind-mounted.

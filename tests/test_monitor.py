@@ -19,6 +19,15 @@ def stream(mode="normal"):
 
 
 class MonitorTest(unittest.TestCase):
+    def test_monitor_catalogue_exposes_tr101_priority_3_status(self):
+        monitors = {item["id"]: item for item in empty_monitor_state()["monitors"]}
+
+        self.assertTrue(monitors["tr101_3_4_unreferenced_pid"]["implemented"])
+        self.assertTrue(monitors["tr101_3_8_tdt_error"]["implemented"])
+        self.assertFalse(monitors["tr101_3_3_buffer_error"]["implemented"])
+        self.assertFalse(monitors["tr101_3_9_empty_buffer_error"]["implemented"])
+        self.assertFalse(monitors["tr101_3_10_data_delay_error"]["implemented"])
+
     def test_alarm_events_repeat_every_five_seconds_and_clear_to_steady(self):
         item = issue(stream(), "essence_video_present", "Expected video is absent")
         state = empty_monitor_state()

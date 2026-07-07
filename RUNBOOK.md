@@ -208,7 +208,8 @@ The monitor polls `http://app:8080/state.json`, validates running feeds, writes
 `/tmp/videosim-monitor/state.json`, and repeats active alarm events every 5
 seconds until the alarm clears. The GUI reads that shared state file and shows
 monitor alarms plus event audit history. It also samples MPEG-2 TS bytes and
-raises TR 101 290 priority 1/2 TS alarms when parser checks fail.
+raises TR 101 290 priority 1/2 TS alarms plus parser-backed priority 3 PSI/SI
+and unreferenced-PID alarms when checks fail.
 
 Verbose logging is enabled by default for the Compose app. Watch feed creation,
 container status, subprocess PID, and the exact GStreamer pipeline:

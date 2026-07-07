@@ -52,8 +52,10 @@ and shows active alarms plus stream-specific event audit history.
 ## TR 101 290 Monitors
 
 The monitor samples MPEG-2 TS bytes from SRT feeds, or DASH `.ts` segments from
-the shared DASH volume, and parses the following TR 101 290 priority 1/2
-indicators.
+the shared DASH volume, and parses the following TR 101 290 indicators.
+Priority 3 is application-dependent; the current parser covers PSI/SI syntax,
+observed SI repetition/presence windows, EIT P/F pairing, and unreferenced PIDs.
+The T-STD buffer-model checks are catalogued but not implemented.
 
 | Indicator | Priority | Status |
 |---|---|---|
@@ -73,6 +75,24 @@ indicators.
 | PCR_accuracy_error | 2 | parser-backed from sample packet rate |
 | PTS_error | 2 | parser-backed |
 | CAT_error | 2 | parser-backed |
+| NIT_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| NIT_actual_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| NIT_other_error | 3 | parser-backed when NIT_other is present |
+| SI_repetition_error | 3 | parser-backed for observed SI timing windows |
+| Buffer_error | 3 | catalogued; T-STD model pending |
+| Unreferenced_PID | 3 | parser-backed |
+| Unreferenced_PID 2 | 3 | parser-backed |
+| SDT_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| SDT_actual_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| SDT_other_error | 3 | parser-backed when SDT_other is present |
+| EIT_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| EIT_actual_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| EIT_other_error | 3 | parser-backed when EIT_other is present |
+| EIT_PF_error | 3 | parser-backed |
+| RST_error | 3 | parser-backed for table-id and repetition |
+| TDT_error | 3 | parser-backed for table-id, observed presence, and repetition |
+| Empty_buffer_error | 3 | catalogued; T-STD model pending |
+| Data_delay_error | 3 | catalogued; T-STD model pending |
 
 ## Extending
 

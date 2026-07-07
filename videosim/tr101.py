@@ -7,6 +7,12 @@ PACKET_SIZE = 188
 PCR_LIMIT_SECONDS = 0.1
 PCR_ACCURACY_LIMIT_SECONDS = 0.0000005
 PTS_LIMIT_SECONDS = 0.7
+SI_REPEAT_MIN_SECONDS = 0.025
+UNREFERENCED_PID_SECONDS = 0.5
+NIT_REPEAT_SECONDS = 10
+SDT_EIT_REPEAT_SECONDS = 2
+OTHER_SI_REPEAT_SECONDS = 10
+TDT_REPEAT_SECONDS = 30
 
 
 @dataclass
@@ -24,6 +30,8 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
     packets = [data[index : index + PACKET_SIZE] for index in range(0, len(data), PACKET_SIZE) if len(data[index : index + PACKET_SIZE]) == PACKET_SIZE]
     if not packets:
         report.set("tr101_1_1_ts_sync_loss", "No complete MPEG-TS packets in sample")
+        for indicator in TR101_INDICATORS:
+            report.indicators.setdefault(indicator, False)
         return report
 
     pat_seen = False
@@ -37,6 +45,9 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
     continuity = {}
     pcr_seen = {}
     pts_seen = {}
+    si_tables_seen = {}
+    si_section_counts = {}
+    si_section_last_packet = {}
     byte_rate = (len(packets) * PACKET_SIZE / sample_seconds) if sample_seconds and sample_seconds > 0 else None
     bad_sync_run = 0
     good_sync_run = 0
@@ -164,6 +175,22 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
             elif section:
                 report.set("tr101_2_6_cat_error", "PID 0x0001 contains a non-CAT section")
 
+        if pid in SI_PIDS and payload_start:
+            section = section_from_payload(payload)
+            if section:
+                check_si_section(report, pid, section)
+                table_id = section[0]
+                section_key = (pid, table_id, section_number(section))
+                si_tables_seen.setdefault(pid, set()).add(table_id)
+                si_section_counts[section_key] = si_section_counts.get(section_key, 0) + 1
+                previous_packet_index = si_section_last_packet.get(section_key)
+                if previous_packet_index is not None and byte_rate:
+                    arrival_delta = ((packet_index - previous_packet_index) * PACKET_SIZE) / byte_rate
+                    check_si_repeat(report, pid, table_id, arrival_delta)
+                si_section_last_packet[section_key] = packet_index
+                if section_has_crc(section) and mpeg_crc32(section) != 0:
+                    report.set("tr101_2_2_crc_error", "SI table CRC check failed")
+
         if pid in referenced_pids and payload_start:
             pts = parse_pts(payload)
             if pts is not None:
@@ -187,6 +214,13 @@ def analyze_ts(data: bytes, sample_seconds: float | None = None) -> TR101Report:
         report.set("tr101_2_3_pcr_error", f"PCR PID(s) missing: {', '.join(str(pid) for pid in missing_pcr)}")
     if scrambled_seen and not cat_seen:
         report.set("tr101_2_6_cat_error", "Scrambled packets are present but CAT is missing")
+    if sample_seconds is None or sample_seconds >= UNREFERENCED_PID_SECONDS:
+        unreferenced = sorted(seen_pids - referenced_pids - pcr_pids - pmt_pids - set(range(0x20)) - {0x1FFF})
+        if pmt_seen and unreferenced:
+            message = f"PID(s) not referenced by PMT/CAT: {', '.join(str(pid) for pid in unreferenced)}"
+            report.set("tr101_3_4_unreferenced_pid", message)
+            report.set("tr101_3_4a_unreferenced_pid", message)
+    check_si_presence(report, seen_pids, si_tables_seen, si_section_counts, sample_seconds)
 
     for indicator in TR101_INDICATORS:
         report.indicators.setdefault(indicator, False)
@@ -210,7 +244,27 @@ TR101_INDICATORS = (
     "tr101_2_4_pcr_accuracy_error",
     "tr101_2_5_pts_error",
     "tr101_2_6_cat_error",
+    "tr101_3_1_nit_error",
+    "tr101_3_1a_nit_actual_error",
+    "tr101_3_1b_nit_other_error",
+    "tr101_3_2_si_repetition_error",
+    "tr101_3_3_buffer_error",
+    "tr101_3_4_unreferenced_pid",
+    "tr101_3_4a_unreferenced_pid",
+    "tr101_3_5_sdt_error",
+    "tr101_3_5a_sdt_actual_error",
+    "tr101_3_5b_sdt_other_error",
+    "tr101_3_6_eit_error",
+    "tr101_3_6a_eit_actual_error",
+    "tr101_3_6b_eit_other_error",
+    "tr101_3_6c_eit_pf_error",
+    "tr101_3_7_rst_error",
+    "tr101_3_8_tdt_error",
+    "tr101_3_9_empty_buffer_error",
+    "tr101_3_10_data_delay_error",
 )
+
+SI_PIDS = {0x0010, 0x0011, 0x0012, 0x0013, 0x0014}
 
 
 def section_from_payload(payload: bytes) -> bytes:
@@ -272,6 +326,96 @@ def parse_pts(payload: bytes) -> float | None:
     value |= (((raw[1] << 8) | raw[2]) >> 1) << 15
     value |= ((raw[3] << 8) | raw[4]) >> 1
     return value / 90_000
+
+
+def section_number(section: bytes) -> int:
+    return section[6] if len(section) > 6 else 0
+
+
+def section_has_crc(section: bytes) -> bool:
+    return len(section) >= 7 and bool(section[1] & 0x80)
+
+
+def check_si_section(report: TR101Report, pid: int, section: bytes):
+    table_id = section[0]
+    if pid == 0x0010 and table_id not in {0x40, 0x41, 0x72}:
+        report.set("tr101_3_1_nit_error", "PID 0x0010 contains a non-NIT/ST section")
+        report.set("tr101_3_1a_nit_actual_error", "PID 0x0010 contains a non-NIT/ST section")
+    elif pid == 0x0011 and table_id not in {0x42, 0x46, 0x4A, 0x72}:
+        report.set("tr101_3_5_sdt_error", "PID 0x0011 contains a non-SDT/BAT/ST section")
+        report.set("tr101_3_5a_sdt_actual_error", "PID 0x0011 contains a non-SDT/BAT/ST section")
+    elif pid == 0x0012 and not (0x4E <= table_id <= 0x6F or table_id == 0x72):
+        report.set("tr101_3_6_eit_error", "PID 0x0012 contains a non-EIT/ST section")
+        report.set("tr101_3_6a_eit_actual_error", "PID 0x0012 contains a non-EIT/ST section")
+    elif pid == 0x0013 and table_id not in {0x71, 0x72}:
+        report.set("tr101_3_7_rst_error", "PID 0x0013 contains a non-RST/ST section")
+    elif pid == 0x0014 and table_id not in {0x70, 0x72, 0x73}:
+        report.set("tr101_3_8_tdt_error", "PID 0x0014 contains a non-TDT/ST/TOT section")
+
+
+def check_si_repeat(report: TR101Report, pid: int, table_id: int, arrival_delta: float):
+    if arrival_delta > SI_REPEAT_MIN_SECONDS:
+        return
+    report.set("tr101_3_2_si_repetition_error", "SI section repeated within 25 ms")
+    if pid == 0x0010 and table_id == 0x40:
+        report.set("tr101_3_1_nit_error", "NIT_actual section repeated within 25 ms")
+        report.set("tr101_3_1a_nit_actual_error", "NIT_actual section repeated within 25 ms")
+    elif pid == 0x0011 and table_id == 0x42:
+        report.set("tr101_3_5_sdt_error", "SDT_actual section repeated within 25 ms")
+        report.set("tr101_3_5a_sdt_actual_error", "SDT_actual section repeated within 25 ms")
+    elif pid == 0x0012 and table_id == 0x4E:
+        report.set("tr101_3_6_eit_error", "EIT actual P/F section repeated within 25 ms")
+        report.set("tr101_3_6a_eit_actual_error", "EIT actual P/F section repeated within 25 ms")
+    elif pid == 0x0013 and table_id == 0x71:
+        report.set("tr101_3_7_rst_error", "RST section repeated within 25 ms")
+    elif pid == 0x0014 and table_id == 0x70:
+        report.set("tr101_3_8_tdt_error", "TDT section repeated within 25 ms")
+
+
+def check_si_presence(
+    report: TR101Report,
+    seen_pids: set[int],
+    si_tables_seen: dict[int, set[int]],
+    si_section_counts: dict[tuple[int, int, int], int],
+    sample_seconds: float | None,
+):
+    if not sample_seconds:
+        return
+    if sample_seconds >= NIT_REPEAT_SECONDS and 0x0010 in seen_pids and 0x40 not in si_tables_seen.get(0x0010, set()):
+        report.set("tr101_3_1_nit_error", "NIT_actual did not occur within 10 seconds")
+        report.set("tr101_3_1a_nit_actual_error", "NIT_actual did not occur within 10 seconds")
+        report.set("tr101_3_2_si_repetition_error", "NIT_actual repetition outside limit")
+    if sample_seconds >= SDT_EIT_REPEAT_SECONDS and 0x0011 in seen_pids and 0x42 not in si_tables_seen.get(0x0011, set()):
+        report.set("tr101_3_5_sdt_error", "SDT_actual did not occur within 2 seconds")
+        report.set("tr101_3_5a_sdt_actual_error", "SDT_actual did not occur within 2 seconds")
+        report.set("tr101_3_2_si_repetition_error", "SDT_actual repetition outside limit")
+    if sample_seconds >= SDT_EIT_REPEAT_SECONDS and 0x0012 in seen_pids and 0x4E not in si_tables_seen.get(0x0012, set()):
+        report.set("tr101_3_6_eit_error", "EIT actual P/F did not occur within 2 seconds")
+        report.set("tr101_3_6a_eit_actual_error", "EIT actual P/F did not occur within 2 seconds")
+        report.set("tr101_3_2_si_repetition_error", "EIT actual P/F repetition outside limit")
+    if sample_seconds >= TDT_REPEAT_SECONDS and 0x0014 in seen_pids and 0x70 not in si_tables_seen.get(0x0014, set()):
+        report.set("tr101_3_8_tdt_error", "TDT did not occur within 30 seconds")
+        report.set("tr101_3_2_si_repetition_error", "TDT repetition outside limit")
+
+    if sample_seconds >= OTHER_SI_REPEAT_SECONDS:
+        for pid, table_id, indicator in (
+            (0x0010, 0x41, "tr101_3_1b_nit_other_error"),
+            (0x0011, 0x46, "tr101_3_5b_sdt_other_error"),
+            (0x0012, 0x4F, "tr101_3_6b_eit_other_error"),
+        ):
+            for (current_pid, current_table_id, _section), count in si_section_counts.items():
+                if current_pid == pid and current_table_id == table_id and count < 2:
+                    report.set(indicator, "Other SI section did not repeat within 10 seconds")
+                    report.set("tr101_3_2_si_repetition_error", "Other SI repetition outside limit")
+
+    for current_table_id in {0x4E, 0x4F}:
+        sections = {
+            section
+            for pid, table_id, section in si_section_counts
+            if pid == 0x0012 and table_id == current_table_id and section in {0, 1}
+        }
+        if sections and sections != {0, 1}:
+            report.set("tr101_3_6c_eit_pf_error", "EIT P/F section 0 or 1 is present without its pair")
 
 
 def mpeg_crc32(data: bytes) -> int:

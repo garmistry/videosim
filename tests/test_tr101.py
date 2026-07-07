@@ -63,6 +63,10 @@ def pmt_section(video_pid=VIDEO_PID, audio_pid=AUDIO_PID):
     return with_crc(bytes(body))
 
 
+def si_section(table_id, section_number=0):
+    return with_crc(bytes([table_id, 0xB0, 9, 0x00, 0x01, 0xC1, section_number, 0x00]))
+
+
 def packet(pid, payload=b"", cc=0, pusi=False, transport_error=False, scrambled=False, adaptation=b""):
     afc = 3 if adaptation else 1
     header = bytes(
@@ -178,6 +182,37 @@ class TR101Test(unittest.TestCase):
         self.assertTrue(report.indicators["tr101_2_3b_pcr_discontinuity_indicator_error"])
         self.assertTrue(report.indicators["tr101_2_4_pcr_accuracy_error"])
         self.assertTrue(report.indicators["tr101_2_5_pts_error"])
+
+    def test_detects_priority_3_unreferenced_pid(self):
+        report = analyze_ts(valid_ts() + packet(300, b"private"), sample_seconds=1.0)
+
+        self.assertTrue(report.indicators["tr101_3_4_unreferenced_pid"])
+        self.assertTrue(report.indicators["tr101_3_4a_unreferenced_pid"])
+
+    def test_detects_priority_3_si_syntax_repetition_and_pairing(self):
+        data = b"".join(
+            [
+                valid_ts(),
+                section_packet(0x0011, si_section(0x40), cc=0),
+                section_packet(0x0012, si_section(0x4E, section_number=0), cc=0),
+                section_packet(0x0013, si_section(0x71), cc=0),
+                section_packet(0x0013, si_section(0x71), cc=1),
+            ]
+        )
+
+        report = analyze_ts(data, sample_seconds=0.1)
+
+        self.assertTrue(report.indicators["tr101_3_5_sdt_error"])
+        self.assertTrue(report.indicators["tr101_3_5a_sdt_actual_error"])
+        self.assertTrue(report.indicators["tr101_3_6c_eit_pf_error"])
+        self.assertTrue(report.indicators["tr101_3_7_rst_error"])
+        self.assertTrue(report.indicators["tr101_3_2_si_repetition_error"])
+
+    def test_detects_priority_3_observed_si_presence_gap(self):
+        report = analyze_ts(valid_ts() + packet(0x0014, b""), sample_seconds=31)
+
+        self.assertTrue(report.indicators["tr101_3_8_tdt_error"])
+        self.assertTrue(report.indicators["tr101_3_2_si_repetition_error"])
 
 
 if __name__ == "__main__":

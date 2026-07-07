@@ -261,3 +261,11 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `docker compose config --quiet` passed.
 - Skipped check: attempted local `VIDEOSIM_LIVE_SRT=1` monitor proof could not be used because the local SRT receiver pipeline timed out even for a normal feed; Docker malformed-stream fixture proof remains the tracked gap.
+- Added parser-backed TR 101 290 priority 3 PSI/SI checks for NIT, SI repetition, unreferenced PID, SDT, EIT, EIT P/F pairing, RST, and TDT indicators, plus monitor catalogue entries for the remaining T-STD buffer/data-delay indicators.
+- Updated monitoring docs, test plan, gaps, limitations, runbook, README, and acceptance matrix for the priority 3 parser-backed scope and T-STD pending scope.
+- Validation run: `python3 -m unittest tests.test_tr101 tests.test_monitor` passed, 11 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 105 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.
+- Skipped check: malformed live SRT/DASH fixture streams for end-to-end proof of every TR 101 290 indicator remain pending; parser behavior is covered by synthetic TS unit tests.

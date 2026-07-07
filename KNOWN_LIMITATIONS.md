@@ -42,3 +42,5 @@
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.
+- TR 101 290 priority 3 T-STD buffer, empty-buffer, and data-delay checks are
+  catalogued but not implemented.

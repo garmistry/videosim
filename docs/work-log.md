@@ -314,3 +314,12 @@
 - Verified existing stream detail traffic graphs for bit rate and outbound data, backed by the React `/state.json` polling loop and a rolling five-minute client-side metrics window.
 - Validation run: `python3 -m unittest tests.test_gui` passed, 38 tests.
 - Validation run: `npm run build-ui` passed with no source or generated asset diff.
+- Completed monitor objective audit: separate monitor app/container wiring, feed validation alarms, TR 101 290 monitor catalogue, 5-second alarm repeat behavior, clear-to-steady state, GUI alarm review, event audit history, and extensibility docs are implemented and covered by current tests/docs.
+- Validation run: `python3 -m unittest tests.test_monitor tests.test_tr101 tests.test_gui tests.test_docs_contract` passed, 58 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `docker compose config --quiet` passed.
+- Containerized monitor fixture proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_monitor tests.test_tr101` passed, 16 tests, using the existing Linux test image with current source bind-mounted.
+- Validation run: `python3 -m unittest discover -s tests` passed, 110 tests with 11 live tests skipped locally by default.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `git diff --check` passed.
+- Skipped check: `docker compose run --rm --pull never monitor-fixtures` still attempted a service image build and stalled for roughly one minute while loading Docker base-image metadata; the command was interrupted before project tests. The bind-mounted existing Linux test image proof above covered the same monitor fixture suite.

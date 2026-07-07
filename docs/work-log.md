@@ -308,3 +308,9 @@
 - Validation run: `docker compose config --quiet` passed.
 - Skipped check: `docker compose run --build --rm monitor-fixtures` was attempted but Docker stalled for roughly two minutes while loading image metadata/build layers; the command was interrupted before reaching project tests.
 - Containerized monitor fixture proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_monitor tests.test_tr101` passed, 16 tests, using the existing Linux test image with current source bind-mounted.
+
+## 2026-07-07
+
+- Verified existing stream detail traffic graphs for bit rate and outbound data, backed by the React `/state.json` polling loop and a rolling five-minute client-side metrics window.
+- Validation run: `python3 -m unittest tests.test_gui` passed, 38 tests.
+- Validation run: `npm run build-ui` passed with no source or generated asset diff.

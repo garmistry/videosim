@@ -354,3 +354,15 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Containerized alert-profile monitor/GUI proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_gui tests.test_monitor` passed, 56 tests, using the existing Linux test image with current source bind-mounted.
 - Validation run: `git diff --check` passed.
+- Fixed the alert-profile lifecycle UI so stream detail pages always show the built-in monitor catalogue before the monitor service has written state.
+- Added alert-profile lifecycle controls for save selected, enable all, disable all, plus per-alert Off/On/Pending/Active status and monitor connectivity state.
+- Moved monitor catalogue definitions into a shared module used by both the GUI and monitor, and exposed pending alert state in `/state.json`.
+- Updated README, runbook, monitoring docs, acceptance matrix, test plan, and test gaps for the always-available alert lifecycle UI.
+- Validation run: `python3 -m unittest tests.test_gui tests.test_monitor` passed, 58 tests.
+- Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
+- Validation run: `npm run build-ui` passed.
+- Validation run: `python3 -m unittest discover -s tests` passed, 133 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Containerized alert lifecycle UI proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_gui tests.test_monitor` passed, 58 tests, using the existing Linux test image with current source bind-mounted.
+- Validation run: `git diff --check` passed.

@@ -55,11 +55,13 @@ and shows active alarms plus stream-specific event audit history.
 ## Alert Profiles
 
 Each stream payload includes an `alertProfile` with `enabledMonitorIds` and
-`delaySeconds`. The stream detail page renders those settings as an alert
-profile form when the monitor catalogue is available. Disabled monitor IDs do
-not raise alarms for that stream and clear any existing active alarm on the next
-poll. Enabled issues are stored as pending until they persist for the configured
-delay, then they raise normally.
+`delaySeconds`. The stream detail page always renders the built-in monitor
+catalogue, so alert profiles can be created before the monitor service has
+written state. Users can save a selected set, enable all alerts, or disable all
+alerts for the selected stream. Disabled monitor IDs do not raise alarms for
+that stream and clear any existing active alarm on the next poll. Enabled issues
+are stored as pending until they persist for the configured delay, then they
+raise normally.
 
 ## Implemented Monitors
 
@@ -150,6 +152,6 @@ T-STD timing checks estimated from sample byte rate and PES PTS.
 
 ## Extending
 
-Add a `MonitorSpec` in `videosim.monitor.MONITOR_SPECS`, emit a `MonitorIssue`
+Add a `MonitorSpec` in `videosim.monitor_catalog.MONITOR_SPECS`, emit a `MonitorIssue`
 from `issues_for_report`, the TR 101 analyzer, or a new probe, then add one
 focused test in `tests/test_monitor.py` or `tests/test_tr101.py`.

@@ -99,8 +99,24 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(payload["streams"][0]["framerate"], "59.94")
         self.assertEqual(payload["framerate"], "59.94")
         self.assertIn({"value": "59.94", "label": "59.94 fps"}, payload["framerates"])
+        self.assertFalse(payload["monitor"]["connected"])
+        self.assertIn({"id": "feed_reachable", "name": "Feed reachable", "priority": "platform", "severity": "critical", "implemented": True, "description": "Input feed can be ingested."}, payload["alertOptions"])
         self.assertEqual(payload["streams"][0]["previewUrl"], "/feeds/stream-1/preview.jpg")
         self.assertFalse(payload["streams"][0]["previewAvailable"])
+
+    def test_alert_profile_ui_exists_without_running_monitor(self):
+        state = GuiState(feed_port=9912)
+        self.create_feed(state)
+
+        payload = state_payload(state)
+        page = render_page(state)
+
+        self.assertGreater(len(payload["alertOptions"]), 1)
+        self.assertFalse(payload["monitor"]["connected"])
+        self.assertIn('action="/streams/alerts"', page)
+        self.assertIn('name="alert_action" value="enable_all"', page)
+        self.assertIn('name="alert_action" value="disable_all"', page)
+        self.assertIn('value="feed_reachable"', page)
 
     def test_gui_payload_and_fallback_render_monitor_alarms(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -192,6 +208,9 @@ class GuiTest(unittest.TestCase):
         self.assertIn("AlertProfileCard", source)
         self.assertIn('name="alert_monitor"', source)
         self.assertIn('name="alert_delay_seconds"', source)
+        self.assertIn('value="enable_all"', source)
+        self.assertIn('value="disable_all"', source)
+        self.assertIn("alertState", source)
 
     def test_frontend_renders_stream_detail_traffic_graphs(self):
         source = Path("frontend/src/main.jsx").read_text()
@@ -287,6 +306,12 @@ class GuiTest(unittest.TestCase):
         self.assertFalse(profile["allEnabled"])
         self.assertEqual(profile["enabledMonitorIds"], ["feed_reachable", "essence_video_present"])
         self.assertEqual(profile["delaySeconds"], 15)
+
+        state.update_alert_profile("stream-1", [], 0)
+        self.assertEqual(state_payload(state)["streams"][0]["alertProfile"]["enabledMonitorIds"], [])
+
+        state.update_alert_profile("stream-1", None, 0)
+        self.assertTrue(state_payload(state)["streams"][0]["alertProfile"]["allEnabled"])
 
     def test_create_stream_supports_selected_frame_rate(self):
         state = GuiState(feed_port=9912)

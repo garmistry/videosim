@@ -676,11 +676,16 @@ function AlertProfileCard({ state, stream }) {
   const profile = stream.alertProfile || { allEnabled: true, enabledMonitorIds: null, delaySeconds: 0 };
   const enabled = profile.enabledMonitorIds;
   const isEnabled = (id) => profile.allEnabled || !Array.isArray(enabled) || enabled.includes(id);
+  const activeIds = new Set((state.monitor?.alarms || []).filter((alarm) => alarm.streamId === stream.id && alarm.active).map((alarm) => alarm.monitorId));
+  const pendingIds = new Set((state.monitor?.pending || []).filter((item) => item.streamId === stream.id).map((item) => item.monitorId));
+  const enabledCount = options.filter((option) => isEnabled(option.id)).length;
+  const monitorStatus = state.monitor?.connected ? "monitor connected" : "monitor offline";
+  const alertState = (id) => activeIds.has(id) ? "Active" : pendingIds.has(id) ? "Pending" : isEnabled(id) ? "On" : "Off";
   return (
     <article className="card">
       <header className="card-header">
         <h2>Alert profile</h2>
-        <span className="card-meta">{options.length} alerts</span>
+        <span className="card-meta">{enabledCount}/{options.length} on - {monitorStatus}</span>
       </header>
       <div className="card-body">
         <form action="/streams/alerts" className="alert-profile-form" method="post">
@@ -699,12 +704,17 @@ function AlertProfileCard({ state, stream }) {
                     <input defaultChecked={isEnabled(option.id)} name="alert_monitor" type="checkbox" value={option.id} />
                     <span>
                       <strong>{option.name}</strong>
+                      <em className={`alert-state ${alertState(option.id).toLowerCase()}`}>{alertState(option.id)}</em>
                       <em>{option.severity}</em>
                     </span>
                   </label>
                 ))}
               </div>
-              <button className="button secondary" type="submit">Save alerts</button>
+              <div className="row-actions">
+                <button className="button secondary" name="alert_action" type="submit" value="save">Save selected</button>
+                <button className="button ghost" name="alert_action" type="submit" value="enable_all">Enable all</button>
+                <button className="button ghost" name="alert_action" type="submit" value="disable_all">Disable all</button>
+              </div>
             </>
           )}
         </form>

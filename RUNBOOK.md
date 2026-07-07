@@ -207,10 +207,13 @@ docker compose up --build app monitor
 The monitor polls `http://app:8080/state.json`, validates running feeds, writes
 `/tmp/videosim-monitor/state.json`, and repeats active alarm events every 5
 seconds until the alarm clears. The GUI reads that shared state file and shows
-monitor alarms plus event audit history. Open a feed detail page and use
-`Alert profile` to select enabled alarms for that stream and set the alarm
-delay in seconds. Disabled alarms clear on the next monitor poll; enabled issues
-must persist for the configured delay before they raise.
+monitor alarms plus event audit history. Create or open a feed detail page and
+use `Alert profile` to select enabled alarms for that stream, disable alarms,
+enable all alarms, and set the alarm delay in seconds. The alert profile UI is
+available even before the monitor writes state; alarms begin evaluating after
+`docker compose up --build app monitor` starts the monitor service. Disabled
+active alarms clear on the next monitor poll; enabled issues must persist for
+the configured delay before they raise.
 
 The monitor also samples MPEG-2 TS bytes and raises TR 101 290 priority 1/2 TS
 alarms plus parser-backed priority 3 PSI/SI, unreferenced-PID, and T-STD timing

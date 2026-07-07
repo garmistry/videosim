@@ -803,11 +803,11 @@ input:focus-visible {
   align-items: center;
   display: flex;
   gap: var(--space-4);
-  justify-content: space-between;
   min-width: 0;
 }
 
 .check-row strong {
+  flex: 1;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   overflow: hidden;
@@ -821,6 +821,25 @@ input:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-style: normal;
+}
+
+.alert-state {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+}
+
+.alert-state.on,
+.alert-state.pending {
+  color: var(--status-fault);
+}
+
+.alert-state.active {
+  color: var(--status-error);
+}
+
+.alert-state.off {
+  color: var(--text-3);
 }
 
 .form-grid,

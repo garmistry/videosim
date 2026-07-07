@@ -143,6 +143,38 @@ class MonitorTest(unittest.TestCase):
 
         self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present"})
 
+    def test_stream_alert_profile_disables_and_clears_active_alarm(self):
+        def validator(config):
+            return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)
+
+        state = run_monitor_once(
+            {"streams": [stream() | {"alertProfile": {"enabledMonitorIds": ["essence_video_present"], "delaySeconds": 0}}]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+        state = run_monitor_once(
+            {"streams": [stream() | {"alertProfile": {"enabledMonitorIds": [], "delaySeconds": 0}}]},
+            state,
+            now=105,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+        )
+
+        self.assertFalse(state["alarms"][0]["active"])
+        self.assertEqual(state["events"][-1]["type"], "alarm_cleared")
+
     def test_stream_alert_profile_delays_alarm_until_issue_persists(self):
         def validator(config):
             return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)

@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
 from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
+from .monitor_catalog import monitor_catalog_payload
 
 
 PROFILE_OPTIONS = {
@@ -693,9 +694,11 @@ class GuiHandler(BaseHTTPRequestHandler):
             if stream_id:
                 redirect_stream_id = stream_id
                 try:
+                    action = params.get("alert_action", ["save"])[0]
+                    enabled_ids = None if action == "enable_all" else [] if action == "disable_all" else params.get("alert_monitor", [])
                     self.state.update_alert_profile(
                         stream_id,
-                        params.get("alert_monitor", []),
+                        enabled_ids,
                         params.get("alert_delay_seconds", [0])[0],
                     )
                 except ValueError as exc:
@@ -897,7 +900,9 @@ def render_page(state: GuiState) -> str:
       <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
       <div class="row">
         <label>Alarm delay seconds <input type="number" min="0" step="1" name="alert_delay_seconds" value="{active.alert_delay_seconds}"></label>
-        <button type="submit">Save alerts</button>
+        <button type="submit" name="alert_action" value="save">Save selected</button>
+        <button type="submit" name="alert_action" value="enable_all">Enable all</button>
+        <button type="submit" name="alert_action" value="disable_all">Disable all</button>
       </div>
       <div class="row">{alert_inputs}</div>
     </fieldset>
@@ -1207,16 +1212,18 @@ def diagnostics_text(state: GuiState) -> str:
 def monitor_payload(state: GuiState) -> dict:
     path = Path(state.monitor_state_path or os.environ.get("VIDEOSIM_MONITOR_STATE", DEFAULT_MONITOR_STATE_PATH))
     if not path.is_file():
-        return {"updatedAt": "", "alarms": [], "events": [], "monitors": []}
+        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "connected": False}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"updatedAt": "", "alarms": [], "events": [], "monitors": []}
+        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "connected": False}
     return {
         "updatedAt": payload.get("updatedAt", ""),
         "alarms": payload.get("alarms", [])[-100:],
         "events": payload.get("events", [])[-200:],
-        "monitors": payload.get("monitors", []),
+        "pending": payload.get("pending", [])[-100:],
+        "monitors": payload.get("monitors", []) or monitor_catalog_payload(),
+        "connected": True,
     }
 
 

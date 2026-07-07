@@ -210,6 +210,33 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("Starting SRT video feed", stdout.getvalue())
         self.assertIn("Stopping SRT video feed", stdout.getvalue())
 
+    def test_keyboard_interrupt_ignores_broken_stdin_close(self):
+        class BrokenStdin:
+            def close(self):
+                raise BrokenPipeError("caption pipe already closed")
+
+        class FakeProcess:
+            stdin = BrokenStdin()
+
+            def __init__(self):
+                self.waits = 0
+
+            def wait(self, timeout=None):
+                self.waits += 1
+                if self.waits == 1:
+                    raise KeyboardInterrupt
+                return 0
+
+            def send_signal(self, signum):
+                pass
+
+        with redirect_stdout(StringIO()), patch("videosim.feed.shutil.which", return_value="/usr/bin/gst-launch-1.0"), patch(
+            "videosim.feed.subprocess.Popen", return_value=FakeProcess()
+        ):
+            code = run_video_feed(VideoFeedConfig(port=9910, captions=False))
+
+        self.assertEqual(code, 0)
+
     def test_keyboard_interrupt_kills_stuck_feed(self):
         class FakeProcess:
             def __init__(self):

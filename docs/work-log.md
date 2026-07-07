@@ -366,3 +366,8 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Containerized alert lifecycle UI proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_gui tests.test_monitor` passed, 58 tests, using the existing Linux test image with current source bind-mounted.
 - Validation run: `git diff --check` passed.
+- Fixed feed shutdown after `KeyboardInterrupt` so a closed caption stdin pipe cannot surface as `BrokenPipeError` and make GUI stop/restart flows report a feed process failure.
+- Validation run: `python3 -m unittest tests.test_cli_video_feed` passed, 19 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 134 tests with 11 live tests skipped locally by default.
+- Containerized shutdown regression proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_cli_video_feed` passed, 19 tests, using the existing Linux test image with current source bind-mounted.
+- Validation run: `git diff --check` passed.

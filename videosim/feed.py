@@ -272,7 +272,10 @@ def run_video_feed(config: VideoFeedConfig) -> int:
                 proc.wait(timeout=5)
         stdin = getattr(proc, "stdin", None)
         if stdin:
-            stdin.close()
+            try:
+                stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
         if writer:
             writer.join(timeout=1)
         return 0

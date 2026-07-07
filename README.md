@@ -160,7 +160,8 @@ state, validates running feeds, and writes alarm/event history for the GUI to
 review. Current alarms cover feed reachability, video absence, audio absence,
 caption absence, black-video validation, frozen-video validation, and parser-
 backed TR 101 290 priority 1/2 indicators plus priority 3 PSI/SI,
-unreferenced-PID, and T-STD timing checks. Details are documented in
+unreferenced-PID, T-STD timing checks, and audio loudness alarms for ITU-R
+BS.1770 measurement, EBU R 128, and ATSC A/85. Details are documented in
 [MONITORING.md](MONITORING.md).
 
 Deploy the GUI and SRT listener together with Docker Compose:
@@ -208,4 +209,4 @@ Stop the feed with Ctrl-C.
 - [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) - receiver compatibility evidence.
 - [STABILITY_REPORT.md](STABILITY_REPORT.md) - soak harness and pending long-run evidence.
 - [RUNBOOK.md](RUNBOOK.md) - install, run, verify, and troubleshoot steps.
-- [MONITORING.md](MONITORING.md) - monitor service, alarm behavior, and TR 101 290 coverage.
+- [MONITORING.md](MONITORING.md) - monitor service, alarm behavior, TR 101 290 coverage, and loudness alarms.

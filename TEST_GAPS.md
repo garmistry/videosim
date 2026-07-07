@@ -32,3 +32,7 @@ implementation and must pass before those milestones advance.
   indicator. A Docker `monitor-fixtures` gate is defined for that fixture suite.
   Malformed live SRT/DASH fixture streams are not yet generated for end-to-end
   Docker proof of every indicator.
+- Audio loudness alarms for ITU-R BS.1770 measurement availability, EBU R 128,
+  and ATSC A/85 have unit coverage. Full-program loudness compliance runs are
+  not part of the live monitor slice; the monitor samples live audio for alarm
+  detection.

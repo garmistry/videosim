@@ -70,6 +70,7 @@
 | Monitor running feeds. | A separate monitor process/container polls GUI state, validates running feeds, writes alarm/event history, and repeats active alarm events every 5 seconds. |
 | Review alarms in UI. | GUI state and React UI expose monitor alarms plus per-stream event audit history. |
 | TR 101 290 monitoring. | Parser-backed MPEG-2 TS analyzer raises monitor alarms for priority 1/2 indicators plus priority 3 PSI/SI, unreferenced-PID, and T-STD timing indicators. |
+| Loudness monitoring. | Audio-present feeds raise alarms for ITU-R BS.1770 measurement failure, EBU R 128 integrated/true-peak loudness violations, and ATSC A/85 integrated loudness violations. |
 
 ## Milestone Status
 

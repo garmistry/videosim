@@ -12,6 +12,15 @@ from urllib.request import urlopen
 
 from .feed import DASH_SEGMENT_DURATION_SECONDS, VideoFeedConfig
 from .gui import controls_for_mode, profile_for
+from .loudness import (
+    ATSC_A85_TARGET_LKFS,
+    ATSC_A85_TOLERANCE_LU,
+    EBU_R128_TARGET_LUFS,
+    EBU_R128_TOLERANCE_LU,
+    EBU_R128_TRUE_PEAK_MAX_DBTP,
+    LoudnessError,
+    measure_loudness,
+)
 from .profile import load_profile
 from .tr101 import analyze_ts
 from .validator import ValidationReport, validate_config
@@ -51,6 +60,10 @@ MONITOR_SPECS = [
     MonitorSpec("essence_captions_present", "Captions present", "platform", "major", True, "Expected captions are present."),
     MonitorSpec("black_video_detected", "Black video detected", "platform", "major", True, "Expected black-video profile validates."),
     MonitorSpec("frozen_video_detected", "Frozen video detected", "platform", "major", True, "Expected frozen-video profile validates."),
+    MonitorSpec("loudness_bs1770_measurement", "ITU-R BS.1770 loudness measurement", "audio loudness", "major", True, "Audio loudness can be measured with a BS.1770-compatible meter."),
+    MonitorSpec("loudness_ebu_r128_integrated", "EBU R 128 integrated loudness", "audio loudness", "major", True, "Integrated loudness is within the EBU R 128 target window."),
+    MonitorSpec("loudness_ebu_r128_true_peak", "EBU R 128 true peak", "audio loudness", "major", True, "True peak does not exceed the EBU R 128 maximum."),
+    MonitorSpec("loudness_atsc_a85_integrated", "ATSC A/85 integrated loudness", "audio loudness", "major", True, "Integrated loudness is within the ATSC A/85 target window."),
     MonitorSpec("tr101_1_1_ts_sync_loss", "TS sync loss", "TR101 priority 1", "critical", True, "Loss of MPEG-2 TS synchronization."),
     MonitorSpec("tr101_1_2_sync_byte_error", "Sync byte error", "TR101 priority 1", "critical", True, "Sync byte not equal to 0x47."),
     MonitorSpec("tr101_1_3_pat_error", "PAT error", "TR101 priority 1", "critical", True, "PAT missing, wrong table id, or scrambled."),
@@ -163,6 +176,44 @@ def tr101_issues_for_stream(stream: dict, config: VideoFeedConfig, sample_second
         for indicator, active in report.indicators.items()
         if active
     ]
+
+
+def loudness_issues_for_stream(stream: dict, config: VideoFeedConfig, sample_seconds: float = 5.0) -> list[MonitorIssue]:
+    if not controls_for_mode(stream["mode"])["audio"]:
+        return []
+    try:
+        report = measure_loudness(config, sample_seconds)
+    except LoudnessError as exc:
+        return [issue(stream, "loudness_bs1770_measurement", f"BS.1770 loudness measurement failed: {exc}")]
+
+    issues = []
+    ebu_delta = report.integrated_lufs - EBU_R128_TARGET_LUFS
+    if abs(ebu_delta) > EBU_R128_TOLERANCE_LU:
+        issues.append(
+            issue(
+                stream,
+                "loudness_ebu_r128_integrated",
+                f"Integrated loudness {report.integrated_lufs:.1f} LUFS is {ebu_delta:+.1f} LU from EBU R 128 target {EBU_R128_TARGET_LUFS:.1f} LUFS",
+            )
+        )
+    if report.true_peak_dbtp > EBU_R128_TRUE_PEAK_MAX_DBTP:
+        issues.append(
+            issue(
+                stream,
+                "loudness_ebu_r128_true_peak",
+                f"True peak {report.true_peak_dbtp:.1f} dBTP exceeds EBU R 128 maximum {EBU_R128_TRUE_PEAK_MAX_DBTP:.1f} dBTP",
+            )
+        )
+    atsc_delta = report.integrated_lufs - ATSC_A85_TARGET_LKFS
+    if abs(atsc_delta) > ATSC_A85_TOLERANCE_LU:
+        issues.append(
+            issue(
+                stream,
+                "loudness_atsc_a85_integrated",
+                f"Integrated loudness {report.integrated_lufs:.1f} LKFS is {atsc_delta:+.1f} LU from ATSC A/85 target {ATSC_A85_TARGET_LKFS:.1f} LKFS",
+            )
+        )
+    return issues
 
 
 def ts_sample(config: VideoFeedConfig, sample_seconds: float) -> tuple[bytes, float | None]:
@@ -278,6 +329,7 @@ def run_monitor_once(
     srt_host: str,
     validator: Callable[[VideoFeedConfig], ValidationReport] = validate_config,
     tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = tr101_issues_for_stream,
+    loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = loudness_issues_for_stream,
 ) -> dict:
     issues = []
     for stream in gui_state.get("streams", []):
@@ -296,6 +348,11 @@ def run_monitor_once(
             issues.extend(tr101_checker(stream, config))
         except Exception:
             pass
+        if report.audio_present:
+            try:
+                issues.extend(loudness_checker(stream, config))
+            except Exception:
+                pass
     return apply_issues(state, issues, now, repeat_seconds, history_limit)
 
 

@@ -323,3 +323,13 @@
 - Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
 - Validation run: `git diff --check` passed.
 - Skipped check: `docker compose run --rm --pull never monitor-fixtures` still attempted a service image build and stalled for roughly one minute while loading Docker base-image metadata; the command was interrupted before project tests. The bind-mounted existing Linux test image proof above covered the same monitor fixture suite.
+- Added audio loudness monitor alarms using FFmpeg `ebur128` measurements for ITU-R BS.1770 measurement availability, EBU R 128 integrated loudness/true peak, and ATSC A/85 integrated loudness.
+- Updated monitoring docs, runbook, test plan, gaps, limitations, README, and acceptance matrix for loudness alarms and the short-sample limitation.
+- Validation run: `python3 -m unittest tests.test_loudness tests.test_monitor` passed, 14 tests.
+- Validation run: `python3 -m unittest tests.test_gui tests.test_docs_contract` passed, 42 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 117 tests with 11 live tests skipped locally by default.
+- Validation run: `npm run build-ui` passed with no generated asset diff.
+- Validation run: `docker compose config --quiet` passed.
+- Containerized monitor/loudness fixture proof: `docker compose run --rm --pull never -v /Users/sagarmistry/Projects/videosim:/app test python -m unittest tests.test_loudness tests.test_monitor tests.test_tr101` passed, 23 tests, using the existing Linux test image with current source bind-mounted.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `git diff --check` passed.

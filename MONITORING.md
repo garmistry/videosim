@@ -9,6 +9,19 @@ and lets the GUI display active alarms plus event audit history.
 ETSI TR 101 290 V1.4.1 is the source for the MPEG-2 TS monitor catalogue:
 https://www.etsi.org/deliver/etsi_tr/101200_101299/101290/01.04.01_60/tr_101290v010401p.pdf
 
+Audio loudness monitoring uses FFmpeg's `ebur128` filter as the local
+ITU-R BS.1770-compatible meter. EBU R 128 is the source for the -23 LUFS
+target and -1 dBTP true-peak ceiling:
+https://tech.ebu.ch/publications/r128/
+
+ITU-R BS.1770-5 defines the K-weighted gated loudness algorithm used for LKFS
+and true-peak measurement:
+https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I!!PDF-E.pdf
+
+The U.S. loudness monitor uses ATSC A/85 practice with a -24 LKFS target. The
+implementation treats the request's "ARSC A/8" as ATSC A/85:
+https://www.atsc.org/atsc-documents/a85-techniques-for-establishing-and-maintaining-audio-loudness-for-digital-television/
+
 ## Run
 
 Docker Compose starts the GUI and monitor as separate services:
@@ -48,6 +61,27 @@ and shows active alarms plus stream-specific event audit history.
 | Captions present | major | Platform validator | implemented |
 | Black video detected | major | Platform validator | implemented |
 | Frozen video detected | major | Platform validator | implemented |
+| ITU-R BS.1770 loudness measurement | major | FFmpeg ebur128 | implemented |
+| EBU R 128 integrated loudness | major | FFmpeg ebur128 | implemented |
+| EBU R 128 true peak | major | FFmpeg ebur128 | implemented |
+| ATSC A/85 integrated loudness | major | FFmpeg ebur128 | implemented |
+
+## Audio Loudness Monitors
+
+Audio-present feeds are sampled through FFmpeg and measured with the `ebur128`
+filter. For SRT, the monitor reads a short live sample from the SRT endpoint.
+For DASH, it measures the latest audio `.ts` segment in the shared DASH volume.
+
+| Monitor | Alarm condition |
+|---|---|
+| ITU-R BS.1770 loudness measurement | FFmpeg cannot produce finite integrated loudness and true-peak values. |
+| EBU R 128 integrated loudness | Measured integrated loudness is outside -23 LUFS +/- 1 LU. |
+| EBU R 128 true peak | Measured true peak is above -1 dBTP. |
+| ATSC A/85 integrated loudness | Measured integrated loudness is outside -24 LKFS +/- 2 LU. |
+
+These are live monitor samples, not full-program compliance certificates.
+Program-level acceptance should still be measured across the full item when
+that matters.
 
 ## TR 101 290 Monitors
 

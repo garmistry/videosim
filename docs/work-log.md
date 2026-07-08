@@ -419,3 +419,12 @@
 - Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
 - Validation run: `docker compose config --quiet` passed.
 - Validation run: `git diff --check` passed.
+- Added the first master/worker control-plane slice: worker assignment/report APIs in the GUI master, a `python -m videosim worker` polling loop that reuses monitor checks, and a sample Compose `worker` service.
+- Added `docs/distributed-architecture.md` and updated README, runbook, test plan, and known limitations for distributed monitoring, current round-robin assignment, in-memory worker registry, and deferred HA/auth/storage work.
+- Added regression coverage for worker assignment splitting, generated DASH master monitor endpoints, worker report merge isolation, worker CLI dispatch, and worker loop polling/reporting.
+- Validation run: `python3 -m unittest tests.test_gui tests.test_monitor tests.test_worker tests.test_cli_video_feed` passed, 94 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 155 tests with 11 live tests skipped locally by default.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: `git diff --check` passed.
+- Validation run: `npm run build-ui` passed.
+- Skipped checks: live multi-container worker smoke was not run; worker behavior was covered by unit tests and Compose config validation in this slice.

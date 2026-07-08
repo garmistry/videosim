@@ -17,6 +17,7 @@ from .soak import human_summary as soak_summary
 from .soak import run_gui_soak
 from .soak import run_soak
 from .validator import human_summary, validate_config
+from .worker import default_worker_id, run_worker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -58,6 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
     monitor.add_argument("--history-limit", type=int, default=1000)
     monitor.add_argument("--srt-host", default="127.0.0.1")
     monitor.add_argument("--once", action="store_true", help="poll once and exit")
+
+    worker = subparsers.add_parser("worker", help="poll a master control plane and monitor assigned feeds")
+    worker.add_argument("--control-plane-url", default="http://127.0.0.1:8080")
+    worker.add_argument("--worker-id", default=default_worker_id())
+    worker.add_argument("--poll-interval-seconds", type=float, default=5)
+    worker.add_argument("--repeat-interval-seconds", type=float, default=5)
+    worker.add_argument("--history-limit", type=int, default=1000)
+    worker.add_argument("--srt-host", default="127.0.0.1")
+    worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -198,6 +208,25 @@ def main(argv: list[str] | None = None) -> int:
             return run_monitor(
                 args.gui_state_url,
                 args.state_path,
+                args.poll_interval_seconds,
+                args.repeat_interval_seconds,
+                args.history_limit,
+                args.srt_host,
+                args.once,
+            )
+
+        if args.command == "worker":
+            if args.poll_interval_seconds <= 0:
+                raise ValueError("poll_interval_seconds must be greater than 0")
+            if args.repeat_interval_seconds <= 0:
+                raise ValueError("repeat_interval_seconds must be greater than 0")
+            if args.history_limit < 1:
+                raise ValueError("history_limit must be greater than 0")
+            if not args.worker_id.strip():
+                raise ValueError("worker_id is required")
+            return run_worker(
+                args.control_plane_url,
+                args.worker_id.strip(),
                 args.poll_interval_seconds,
                 args.repeat_interval_seconds,
                 args.history_limit,

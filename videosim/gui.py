@@ -50,6 +50,7 @@ MODE_CONTROLS = {
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_MONITOR_STATE_PATH = "/tmp/videosim-monitor/state.json"
+WORKER_TTL_SECONDS = 60
 
 
 def controls_for_mode(mode: str) -> dict[str, bool]:
@@ -251,6 +252,8 @@ class GuiState:
     streams: dict[str, FeedRecord] = field(default_factory=dict)
     selected_stream_id: str = ""
     feed_store: FeedRegistrationStore | None = None
+    worker_seen: dict[str, float] = field(default_factory=dict)
+    monitor_state_lock: threading.RLock = field(default_factory=threading.RLock)
     _next_stream_number: int = 1
 
     def __post_init__(self):
@@ -787,12 +790,21 @@ class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed_request = urlparse(self.path)
+        path = parsed_request.path
         if path == "/diagnostics.txt":
             self._send_text(diagnostics_text(self.state))
             return
         if path == "/state.json":
             self._send_json(state_payload(self.state))
+            return
+        if path == "/api/workers/assignments":
+            params = parse_qs(parsed_request.query)
+            worker_id = params.get("worker_id", [""])[0]
+            if not worker_id:
+                self.send_error(400)
+                return
+            self._send_json(worker_assignments_payload(self.state, worker_id, request_base_url(self)))
             return
         if path == "/preview.jpg":
             body, content_type = preview_image(self.state)
@@ -905,6 +917,22 @@ class GuiHandler(BaseHTTPRequestHandler):
                 redirect_stream_id = stream_id
                 if clear_monitor_events(self.state, stream_id):
                     self.state.log("Cleared event audit", stream_id)
+        elif self.path == "/api/workers/register":
+            payload = self._read_json()
+            worker_id = payload.get("workerId", "")
+            if not worker_id:
+                self.send_error(400)
+                return
+            self._send_json(register_worker(self.state, worker_id))
+            return
+        elif self.path == "/api/workers/report":
+            payload = self._read_json()
+            worker_id = payload.get("workerId", "")
+            if not worker_id:
+                self.send_error(400)
+                return
+            self._send_json(apply_worker_report(self.state, worker_id, payload.get("streamIds", []), payload.get("state", {})))
+            return
         elif self.path == "/streams/delete":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
@@ -1019,6 +1047,14 @@ class GuiHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8") if length else ""
         return parse_qs(body)
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8") if length else "{}"
+        try:
+            return json.loads(body or "{}")
+        except json.JSONDecodeError:
+            return {}
 
 
 def render_page(state: GuiState) -> str:
@@ -1301,6 +1337,54 @@ def stream_payload(stream: FeedRecord) -> dict:
     }
 
 
+def worker_assignments_payload(state: GuiState, worker_id: str, base_url: str) -> dict:
+    worker = register_worker(state, worker_id)
+    active_workers = active_worker_ids(state)
+    worker_index = active_workers.index(worker["id"]) if worker["id"] in active_workers else 0
+    streams = [
+        control_plane_stream_payload(stream, base_url, worker["id"])
+        for index, stream in enumerate(sorted(state.streams.values(), key=lambda item: item.id))
+        if stream.status == "running" and (not active_workers or index % len(active_workers) == worker_index)
+    ]
+    return {"workerId": worker["id"], "workers": worker_status_payload(state), "streams": streams}
+
+
+def control_plane_stream_payload(stream: FeedRecord, base_url: str, worker_id: str) -> dict:
+    payload = stream_payload(stream)
+    payload["assignedWorkerId"] = worker_id
+    if stream.protocol == "dash" and stream.source == "generated":
+        endpoint = f"{base_url.rstrip('/')}/dash/{quote(stream.id, safe='')}/manifest.mpd"
+        payload["endpoint"] = endpoint
+        payload["monitorEndpoint"] = endpoint
+    return payload
+
+
+def register_worker(state: GuiState, worker_id: str) -> dict:
+    worker_id = worker_id.strip()
+    if not worker_id:
+        raise ValueError("worker_id is required")
+    with state.monitor_state_lock:
+        state.worker_seen[worker_id] = time.time()
+        return {"id": worker_id, "lastSeenAt": round(state.worker_seen[worker_id], 3)}
+
+
+def active_worker_ids(state: GuiState, now: float | None = None) -> list[str]:
+    now = time.time() if now is None else now
+    with state.monitor_state_lock:
+        state.worker_seen = {worker_id: seen for worker_id, seen in state.worker_seen.items() if now - seen <= WORKER_TTL_SECONDS}
+        return sorted(state.worker_seen)
+
+
+def worker_status_payload(state: GuiState) -> list[dict]:
+    with state.monitor_state_lock:
+        return [{"id": worker_id, "lastSeenAt": round(seen, 3)} for worker_id, seen in sorted(state.worker_seen.items())]
+
+
+def request_base_url(handler: BaseHTTPRequestHandler) -> str:
+    host = handler.headers.get("Host") or f"{handler.server.server_address[0]}:{handler.server.server_address[1]}"
+    return f"http://{host}"
+
+
 def script_json(payload) -> str:
     return json.dumps(payload).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 
@@ -1448,17 +1532,18 @@ def diagnostics_text(state: GuiState) -> str:
 def monitor_payload(state: GuiState) -> dict:
     path = monitor_state_path(state)
     if not path.is_file():
-        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "connected": False}
+        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": [], "connected": False}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "connected": False}
+        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": [], "connected": False}
     return {
         "updatedAt": payload.get("updatedAt", ""),
         "alarms": payload.get("alarms", [])[-100:],
         "events": payload.get("events", [])[-200:],
         "pending": payload.get("pending", [])[-100:],
         "monitors": payload.get("monitors", []) or monitor_catalog_payload(),
+        "workers": payload.get("workers", []),
         "connected": True,
     }
 
@@ -1467,13 +1552,59 @@ def clear_monitor_events(state: GuiState, stream_id: str) -> bool:
     path = monitor_state_path(state)
     if not path.is_file():
         return False
+    with state.monitor_state_lock:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        events = payload.get("events", [])
+        payload["events"] = [event for event in events if event.get("streamId") != stream_id]
+        return write_monitor_payload(path, payload)
+
+
+def apply_worker_report(state: GuiState, worker_id: str, stream_ids: list[str], worker_state: dict) -> dict:
+    register_worker(state, worker_id)
+    stream_ids = {str(stream_id) for stream_id in stream_ids}
+    with state.monitor_state_lock:
+        path = monitor_state_path(state)
+        payload = load_monitor_payload(path)
+        if stream_ids:
+            payload["alarms"] = [alarm for alarm in payload.get("alarms", []) if alarm.get("streamId") not in stream_ids]
+            payload["events"] = [event for event in payload.get("events", []) if event.get("streamId") not in stream_ids]
+            payload["pending"] = [item for item in payload.get("pending", []) if item.get("streamId") not in stream_ids]
+        payload["alarms"].extend(with_worker(item, worker_id) for item in worker_state.get("alarms", []))
+        payload["events"].extend(with_worker(item, worker_id) for item in worker_state.get("events", []))
+        payload["pending"].extend(with_worker(item, worker_id) for item in worker_state.get("pending", []))
+        payload["updatedAt"] = worker_state.get("updatedAt", payload.get("updatedAt", ""))
+        payload["monitors"] = monitor_catalog_payload()
+        payload["workers"] = worker_status_payload(state)
+        write_monitor_payload(path, payload)
+    return {"ok": True, "workerId": worker_id, "streamIds": sorted(stream_ids)}
+
+
+def with_worker(item: dict, worker_id: str) -> dict:
+    copy = dict(item)
+    copy["workerId"] = worker_id
+    return copy
+
+
+def load_monitor_payload(path: Path) -> dict:
+    if not path.is_file():
+        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": []}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return False
-    events = payload.get("events", [])
-    payload["events"] = [event for event in events if event.get("streamId") != stream_id]
+        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": []}
+    payload.setdefault("alarms", [])
+    payload.setdefault("events", [])
+    payload.setdefault("pending", [])
+    payload.setdefault("workers", [])
+    return payload
+
+
+def write_monitor_payload(path: Path, payload: dict) -> bool:
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(path.suffix + ".tmp")
         temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         temp_path.replace(path)

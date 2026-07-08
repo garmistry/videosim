@@ -344,6 +344,20 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(config.endpoint, "srt://camera.local:9999?mode=caller")
         self.assertTrue(config.passive)
 
+    def test_config_for_worker_dash_stream_uses_master_monitor_endpoint(self):
+        config = config_for_stream(
+            stream()
+            | {
+                "protocol": "dash",
+                "endpoint": "http://127.0.0.1:8080/dash/stream-1/manifest.mpd",
+                "monitorEndpoint": "http://master:8080/dash/stream-1/manifest.mpd",
+            },
+            "app",
+        )
+
+        self.assertEqual(config.protocol, "dash")
+        self.assertEqual(config.endpoint, "http://master:8080/dash/stream-1/manifest.mpd")
+
     def test_monitor_once_ignores_external_missing_video_until_alert_selected(self):
         def validator(config):
             return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=True, captions_present=True)

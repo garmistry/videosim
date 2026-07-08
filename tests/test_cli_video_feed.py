@@ -159,6 +159,30 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("gst-launch-1.0", stdout.getvalue())
         self.assertIn("srt://127.0.0.1:9910?mode=caller", stdout.getvalue())
 
+    def test_worker_command_runs_control_plane_worker(self):
+        with patch("videosim.cli.run_worker", return_value=0) as worker:
+            code = main(
+                [
+                    "worker",
+                    "--control-plane-url",
+                    "http://master:8080",
+                    "--worker-id",
+                    "worker-a",
+                    "--poll-interval-seconds",
+                    "1",
+                    "--repeat-interval-seconds",
+                    "2",
+                    "--history-limit",
+                    "3",
+                    "--srt-host",
+                    "app",
+                    "--once",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        worker.assert_called_once_with("http://master:8080", "worker-a", 1.0, 2.0, 3, "app", True)
+
     def test_verbose_feed_logs_pipeline_command_and_pid(self):
         class FakeProcess:
             pid = 1234

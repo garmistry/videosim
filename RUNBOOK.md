@@ -227,6 +227,36 @@ available even before the monitor writes state; alarms begin evaluating after
 active alarms clear on the next monitor poll; enabled issues must persist for
 the configured delay before they raise.
 
+## Run Master/Worker Monitoring
+
+Use the GUI as the master control plane and start one or more workers that poll
+for assignments:
+
+```sh
+docker compose up --build app worker
+```
+
+The sample worker calls `http://app:8080/api/workers/assignments`, monitors
+assigned feeds, and posts reports back to
+`http://app:8080/api/workers/report`. Run additional workers by overriding the
+worker id:
+
+```sh
+docker compose run --rm worker python -m videosim worker \
+  --control-plane-url http://app:8080 \
+  --worker-id worker-2 \
+  --srt-host app
+```
+
+For a local worker outside Compose:
+
+```sh
+python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 --worker-id local-worker
+```
+
+Generated DASH assignments include a master-served manifest URL. Generated SRT
+assignments use the worker's `--srt-host` value to reach listener feeds.
+
 The monitor also samples MPEG-2 TS bytes and raises TR 101 290 priority 1/2 TS
 alarms plus parser-backed priority 3 PSI/SI, unreferenced-PID, and T-STD timing
 alarms when checks fail. Video-present feeds get an FFprobe frame-rate check

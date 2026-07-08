@@ -25,6 +25,16 @@ services:
       --srt-host app
       --poll-interval-seconds 5
       --repeat-interval-seconds 5
+  worker:
+    build: .
+    depends_on:
+      - app
+    command: >
+      python -m videosim worker --control-plane-url http://app:8080
+      --worker-id worker-1
+      --srt-host app
+      --poll-interval-seconds 5
+      --repeat-interval-seconds 5
   test:
     build: .
     command: python -m unittest discover -s tests

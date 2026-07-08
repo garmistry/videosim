@@ -48,6 +48,12 @@ receiver compatibility and validation where useful. GStreamer is favored because
 it exposes SRT, MPEG-TS muxing, test sources, and caption insertion elements as
 pipeline pieces that map cleanly to the required modes.
 
+The distributed refit is documented in
+[docs/distributed-architecture.md](docs/distributed-architecture.md). The first
+implemented slice keeps the GUI as the master control plane and adds worker
+nodes that poll assignments, run the existing monitor checks, and report
+alarms/events back to the master.
+
 ## Setup
 
 Install system dependencies:
@@ -192,6 +198,12 @@ Run the GUI with the alarming monitor:
 
 ```sh
 docker compose up --build app monitor
+```
+
+Run the GUI as a master control plane with a polling worker node:
+
+```sh
+docker compose up --build app worker
 ```
 
 Open `http://127.0.0.1:8080`. The GUI and feed subprocesses run inside the

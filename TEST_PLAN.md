@@ -76,6 +76,18 @@ the first persistence adapter behind the feed-store boundary.
 | GUI payload and fallback render monitor alarms | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | React renders alarm and event audit panels | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 
+## Added Distributed Monitoring Coverage
+
+The master/worker control-plane slice is additive to the local monitor service.
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| Master assigns running streams across active workers | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Master rewrites generated DASH monitor endpoints for workers | P1 | implemented | `python3 -m unittest tests.test_gui tests.test_monitor` |
+| Master merges worker alarm/event reports without clearing other workers' streams | P1 | implemented | `python3 -m unittest tests.test_gui` |
+| Worker CLI loop polls assignments, reuses monitor checks, and posts reports | P1 | implemented | `python3 -m unittest tests.test_worker tests.test_cli_video_feed` |
+| Compose exposes a sample worker node service | P1 | implemented | `docker compose config --quiet` |
+
 ## Milestone Gates
 
 Each milestone may advance only when all P0 tests for that milestone are

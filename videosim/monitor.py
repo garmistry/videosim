@@ -86,6 +86,8 @@ def config_for_stream(stream: dict, srt_host: str) -> VideoFeedConfig:
     }
     if stream.get("source") == "external":
         return replace(config, **overrides, protocol=stream["protocol"], external_endpoint=stream["endpoint"], passive=True)
+    if stream.get("monitorEndpoint"):
+        return replace(config, **overrides, protocol=stream["protocol"], external_endpoint=stream["monitorEndpoint"])
     if stream["protocol"] == "dash":
         return VideoFeedConfig(
             **{

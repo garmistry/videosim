@@ -10,6 +10,7 @@ from videosim.gui import (
     MODE_CONTROLS,
     PROFILE_OPTIONS,
     PROTOCOL_OPTIONS,
+    apply_worker_report,
     clear_monitor_events,
     diagnostics_text,
     mode_from_controls,
@@ -19,6 +20,7 @@ from videosim.gui import (
     render_page,
     rgb_frame_to_bmp,
     state_payload,
+    worker_assignments_payload,
 )
 
 
@@ -192,6 +194,79 @@ class GuiTest(unittest.TestCase):
 
         self.assertTrue(cleared)
         self.assertEqual(payload["events"], [{"id": "2", "streamId": "stream-2", "type": "alarm_raised"}])
+
+    def test_worker_assignments_split_running_streams_across_active_workers(self):
+        state = GuiState()
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        state.create_stream(name="Camera B", source="external", external_url="srt://camera-b.local:9000?mode=caller")
+
+        worker_assignments_payload(state, "worker-a", "http://master:8080")
+        worker_assignments_payload(state, "worker-b", "http://master:8080")
+        a_payload = worker_assignments_payload(state, "worker-a", "http://master:8080")
+        b_payload = worker_assignments_payload(state, "worker-b", "http://master:8080")
+
+        self.assertEqual([item["id"] for item in a_payload["workers"]], ["worker-a", "worker-b"])
+        self.assertEqual([stream["id"] for stream in a_payload["streams"]], ["stream-1"])
+        self.assertEqual([stream["id"] for stream in b_payload["streams"]], ["stream-2"])
+        self.assertEqual(a_payload["streams"][0]["assignedWorkerId"], "worker-a")
+        self.assertEqual(b_payload["streams"][0]["assignedWorkerId"], "worker-b")
+
+    def test_worker_assignment_rewrites_generated_dash_monitor_endpoint_to_master_url(self):
+        state = GuiState(http_port=8080)
+        stream = state.create_stream(name="Dash", protocol="dash")
+        stream.process = Mock(stdout=[], pid=123)
+        stream.process.poll.return_value = None
+
+        payload = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        self.assertEqual(payload["streams"][0]["endpoint"], "http://master:8080/dash/stream-1/manifest.mpd")
+        self.assertEqual(payload["streams"][0]["monitorEndpoint"], "http://master:8080/dash/stream-1/manifest.mpd")
+
+    def test_apply_worker_report_replaces_only_assigned_stream_monitor_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "updatedAt": "old",
+                        "alarms": [
+                            {"id": "stream-1:old", "streamId": "stream-1"},
+                            {"id": "stream-2:old", "streamId": "stream-2"},
+                        ],
+                        "events": [
+                            {"id": "event-1", "streamId": "stream-1"},
+                            {"id": "event-2", "streamId": "stream-2"},
+                        ],
+                        "pending": [
+                            {"id": "pending-1", "streamId": "stream-1"},
+                            {"id": "pending-2", "streamId": "stream-2"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = GuiState(monitor_state_path=str(path))
+
+            response = apply_worker_report(
+                state,
+                "worker-a",
+                ["stream-1"],
+                {
+                    "updatedAt": "new",
+                    "alarms": [{"id": "stream-1:new", "streamId": "stream-1"}],
+                    "events": [{"id": "event-new", "streamId": "stream-1"}],
+                    "pending": [{"id": "pending-new", "streamId": "stream-1"}],
+                },
+            )
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(response["streamIds"], ["stream-1"])
+        self.assertEqual([alarm["id"] for alarm in payload["alarms"]], ["stream-2:old", "stream-1:new"])
+        self.assertEqual(payload["alarms"][1]["workerId"], "worker-a")
+        self.assertEqual([event["id"] for event in payload["events"]], ["event-2", "event-new"])
+        self.assertEqual(payload["events"][1]["workerId"], "worker-a")
+        self.assertEqual([item["id"] for item in payload["pending"]], ["pending-2", "pending-new"])
+        self.assertEqual(payload["workers"][0]["id"], "worker-a")
 
     def test_stream_metrics_payload_updates_for_each_running_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)

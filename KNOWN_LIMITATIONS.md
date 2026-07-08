@@ -41,6 +41,9 @@
 - External DASH validation supports reachable MPDs with common `SegmentURL` or
   `SegmentTemplate` media references. Unusual DASH packaging may need a new
   resolver in the validation layer.
+- Master/worker monitoring is a first distributed slice. The GUI process is the
+  only master, workers poll it over plain HTTP, and worker identity is a caller
+  supplied string.
 
 ## Monitoring
 
@@ -48,6 +51,12 @@
   or event broker.
 - Feed definitions and alert profiles are persisted by the GUI, but monitor
   alarm/event history still lives in the shared JSON monitor state file.
+- Worker registration is in-memory with a 60-second TTL; worker assignments are
+  simple round-robin across active workers and are not capacity-aware.
+- Worker report aggregation still writes the shared JSON monitor state file,
+  not a database-backed alarm/event history.
+- There is no worker authentication, TLS, lease fencing, or high-availability
+  master failover yet.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

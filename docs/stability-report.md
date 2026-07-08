@@ -1,5 +1,3 @@
-# STABILITY_REPORT.md
-
 # Soak And Stability Report
 
 Milestone 12 is in progress. The repo now includes a timed soak harness:

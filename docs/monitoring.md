@@ -1,5 +1,3 @@
-# MONITORING.md
-
 # Feed Monitoring
 
 The monitor is a separate application process that polls the GUI feed inventory,

@@ -1,5 +1,3 @@
-# COMPATIBILITY_REPORT.md
-
 # Receiver Compatibility Report
 
 Milestone 11 compatibility is tested in Docker with

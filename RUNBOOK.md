@@ -296,7 +296,7 @@ ffprobe -hide_banner "http://127.0.0.1:8080/dash/manifest.mpd"
 ```
 
 Receiver compatibility evidence is maintained in
-[COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md).
+[docs/compatibility-report.md](docs/compatibility-report.md).
 
 ## Troubleshooting
 

@@ -1,60 +1,23 @@
 # Video Feed Simulator
 
-Video Feed Simulator generates local SRT and DASH live video feeds for testing receivers,
-monitoring systems, and outage handling. The MVP target is a GUI that can start,
-stop, and validate normal and fault-mode SRT feeds.
+Video Feed Simulator generates local live video feeds for testing receivers,
+monitoring systems, outage handling, and alert workflows. It provides a browser
+GUI, command-line tools, SRT/DASH feed generation, validation, and optional
+distributed monitoring workers.
 
-## Current Status
+## Features
 
-Milestones 0 through 11 are complete. The CLI and React-enhanced local browser
-GUI can create, list, open, update, delete, start, stop, restart, and validate
-multiple synthetic SRT or DASH feeds through GStreamer. DASH feed generation is
-available for the same six simulation modes, with MPD/TS output and WebVTT
-captions served by the GUI.
+- Generate SRT and DASH feeds from synthetic media.
+- Run normal video/audio/caption feeds and fault modes: audio only, video only,
+  no captions, black video, and frozen video.
+- Register external SRT or DASH feeds for validation and alerting.
+- Start, stop, validate, and inspect feeds from the GUI.
+- Copy receiver endpoints and view feed logs, errors, preview frames, metrics,
+  alarms, and event history.
+- Persist feed definitions and alert profiles in SQLite by default.
+- Run local monitoring or master/worker monitoring for assigned feeds.
 
-## MVP Scope
-
-The critical MVP must support:
-
-- Linux runtime, with macOS development support where practical.
-- Visual GUI.
-- Local SRT feed generation with a running clock overlay on video modes.
-- Normal feed with video, audio, and closed captions.
-- Fault modes: audio only, video only, no captions, black video, frozen video.
-- Copyable SRT endpoint URL.
-- Start/stop controls.
-- Basic logs and clear errors.
-- Validation proving actual stream state.
-- Install/run documentation and tests for critical behavior.
-
-Still out of scope until the critical MVP is done: packet/jitter simulation,
-REST API, Prometheus metrics, and release packaging such as AppImage/Flatpak.
-Docker is present as a Linux test harness, not a release package.
-
-## Architecture
-
-The planned layers are:
-
-1. GUI layer.
-2. Feed orchestration layer.
-3. Feed profile/config layer.
-4. Media pipeline layer.
-5. Protocol output layer.
-6. Validation layer.
-7. Observability/logging layer.
-
-The current media stack choice is GStreamer, with FFmpeg/ffprobe used for
-receiver compatibility and validation where useful. GStreamer is favored because
-it exposes SRT, MPEG-TS muxing, test sources, and caption insertion elements as
-pipeline pieces that map cleanly to the required modes.
-
-The distributed refit is documented in
-[docs/distributed-architecture.md](docs/distributed-architecture.md). The first
-implemented slice keeps the GUI as the master control plane and adds worker
-nodes that poll assignments, run the existing monitor checks, and report
-alarms/events back to the master.
-
-## Setup
+## Quick Start
 
 Install system dependencies:
 
@@ -62,17 +25,66 @@ Install system dependencies:
 scripts/install-deps.sh
 ```
 
-The installer supports common Linux package managers and Homebrew on macOS.
+Start the GUI with Docker Compose:
+
+```sh
+docker compose up --build app
+```
+
+Open:
+
+```text
+http://127.0.0.1:8080
+```
+
+Start the GUI with the monitor:
+
+```sh
+docker compose up --build app monitor
+```
+
+Start the GUI with a worker node polling the master control plane:
+
+```sh
+docker compose up --build app worker
+```
+
+Run a feed directly from the CLI:
+
+```sh
+python3 -m videosim start --profile profiles/srt-normal.yaml --port 9000
+```
+
+Validate a running feed:
+
+```sh
+python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
+```
+
+Receiver URL:
+
+```text
+srt://127.0.0.1:9000?mode=caller
+```
+
+## Supported Modes
+
+| Mode | Video | Audio | Captions |
+|---|---|---|---|
+| `normal` | moving/generated | present | present |
+| `audio_only` | absent | present | absent/unsupported |
+| `video_only` | moving/generated | absent | present |
+| `no_captions` | moving/generated | present | absent |
+| `black_video` | black frames | present | present |
+| `frozen_video` | static/repeated frames | present | present |
 
 ## Verification
 
-Run the current checks:
+Run the local test suite:
 
 ```sh
-python3 -m unittest tests.test_docs_contract tests.test_cli_video_feed tests.test_live_srt
+python3 -m unittest discover -s tests
 ```
-
-The live SRT test is skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
 
 Run the Linux/Docker gates:
 
@@ -82,167 +94,19 @@ docker compose run --build --rm live-srt
 docker compose run --build --rm monitor-fixtures
 ```
 
-## Run Current CLI
-
-Start a synthetic audio/video SRT listener feed:
-
-```sh
-python3 -m videosim start --port 9000
-```
-
-Use `--audio-frequency 1000` to change the generated tone, `--no-audio` for the
-earlier video-only feed, or `--no-captions` to disable caption insertion.
-
-Start from the sample normal profile:
-
-```sh
-python3 -m videosim start --profile profiles/srt-normal.yaml
-```
-
-Start a DASH feed with the same normal/fault profile modes:
-
-```sh
-python3 -m videosim start --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash
-```
-
-Validate a running feed against a profile:
-
-```sh
-python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000
-python3 -m videosim validate --profile profiles/srt-normal.yaml --port 9000 --json
-python3 -m videosim validate --profile profiles/dash-normal.yaml --dash-dir /tmp/videosim-dash --json
-```
-
-Run a timed soak with periodic validation:
-
-```sh
-python3 -m videosim soak --profile profiles/srt-normal.yaml --port 9000 --duration-seconds 86400 --validation-interval-seconds 900 --json
-```
-
-Static outage profile files also exist for `audio_only`, `video_only`,
-`no_captions`, `black_video`, and `frozen_video`; Docker live validation covers
-all six profiles.
-
-Launch the local browser GUI:
-
-```sh
-python3 -m videosim gui --http-port 8080 --feed-port 9000
-```
-
-Then open `http://127.0.0.1:8080`.
-
-The GUI starts with zero configured feeds. Use Create feed as the entry point,
-then manage feeds from the active-feed table:
-
-- Create a named generated SRT/DASH feed or register an external SRT/DASH URL.
-- List streams in the root active-feed table.
-- Read/open a stream at `/feeds/<stream-id>` to see endpoint, status, validation, and logs.
-- Update selected stream name, source, protocol, and the source-specific fields.
-- Delete the selected stream.
-
-Feed registrations are persisted in SQLite when the GUI is launched from the
-CLI. By default the database is
-`$XDG_DATA_HOME/videosim/feeds.sqlite3` or `~/.local/share/videosim/feeds.sqlite3`;
-set `VIDEOSIM_DB_PATH` to use another location. The GUI stores feed
-definitions and alert profiles there, while local subprocess runtime state is
-recreated after restart.
-
-The React/Vite GUI follows the `design_docs` model: IBM Plex Sans UI text, IBM
-Plex Mono for endpoints/logs/metrics, a dark-primary warm neutral palette,
-broadcast amber actions, and dot-plus-label status badges. The primary GUI view
-is an active-feed table with status, endpoint, metrics, actions, and a small
-preview thumbnail for each feed. Create feed opens a modal. Clicking a row
-preview opens a full preview dialog, and each feed detail page can still be
-bookmarked directly. Generated feeds can be started, stopped, validated, and
-copied independently. Generated feed forms show protocol, mode, and frame rate;
-external feed forms show protocol and URL only. External SRT URLs and external
-DASH manifest URLs are ingested as-is, with no configured mode or frame-rate
-expectation. Normal, audio-only, video-only, no-captions, black-video, and
-frozen-video generated modes can be selected at 23.97, 24, 25, 50, 59.94, or
-60 fps. Changing generated feed controls while a feed is running uses a
-controlled stream restart.
-
-The GUI also shows status, intentional outage state, per-feed estimated bit
-rate, outbound total, uptime, generated video frame count, last error, logs,
-validation output, a copyable endpoint, and a downloadable diagnostics text
-file. Each feed detail page also plots bit rate and outbound data over a
-rolling five-minute client-side metrics window and includes a stream-specific
-alert profile for enabling/disabling monitor alarms plus alarm delay. Alert
-profiles can be configured before the monitor service is running; alarms begin
-evaluating when the monitor is started. External feeds have no local start/stop
-or fault controls; Validate and the monitor probe the registered URL and report
-whatever tracks are present. External absence alarms are raised only for alert
-checks enabled in that feed's alert profile. Video-present generated modes
-include a visible running clock overlay for receiver testing. Feed table
-thumbnails and the preview dialog refresh a local frame matching the active
-generated mode. Use Validate to prove actual stream state.
-
-The optional monitor app runs as a separate process/container, polls GUI feed
-state, validates running feeds, and writes alarm/event history for the GUI to
-review. Each stream can enable only the alarms it cares about, disable active
-alarms, and delay alarm raising until an issue persists. Current alarms cover
-feed reachability, video absence, audio absence, caption absence, black-video
-validation, frozen-video validation, and parser-backed TR 101 290 priority 1/2
-indicators plus priority 3 PSI/SI, unreferenced-PID, T-STD timing checks,
-measured frame-rate mismatches, and audio loudness alarms for ITU-R BS.1770
-measurement, EBU R 128, and ATSC A/85. Details are documented in
-[MONITORING.md](MONITORING.md).
-
-Run the basic GUI and SRT listener:
-
-```sh
-docker compose up --build app
-```
-
-Run the GUI with the alarming monitor:
-
-```sh
-docker compose up --build app monitor
-```
-
-Run the GUI as a master control plane with a polling worker node:
-
-```sh
-docker compose up --build app worker
-```
-
-Open `http://127.0.0.1:8080`. The GUI and feed subprocesses run inside the
-`videosim-app-1` container. The default Compose file publishes UDP 9000-9010 for
-multiple SRT streams and TCP 8080 for the GUI/DASH server. Verbose container
-logs show feed mode, profile, endpoint, subprocess PID, and the GStreamer
-pipeline:
-
-```sh
-docker compose logs -f app
-```
-
-Receiver URL:
-
-```text
-srt://127.0.0.1:9000?mode=caller
-```
-
-DASH feeds are served by the GUI at:
-
-```text
-http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd
-```
-
-The SRT listener accepts receiver clients at that caller URL and keeps running
-when a receiver disconnects. This Docker image does not pass a `maxconn` URI
-option to GStreamer's `srtsink`; inspection showed that option is not a
-supported property in the packaged plugin and it can crash the listener.
-
-Stop the feed with Ctrl-C.
+The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
 
 ## Documentation
 
-- [CODEX_GOALS.md](CODEX_GOALS.md) - milestone plan.
-- [TEST_PLAN.md](TEST_PLAN.md) - weighted test plan and requirement mapping.
-- [ACCEPTANCE_MATRIX.md](ACCEPTANCE_MATRIX.md) - acceptance criteria by mode and milestone.
-- [TEST_GAPS.md](TEST_GAPS.md) - missing tests and allowed gaps.
-- [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) - current limitations.
-- [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) - receiver compatibility evidence.
-- [STABILITY_REPORT.md](STABILITY_REPORT.md) - soak harness and pending long-run evidence.
-- [RUNBOOK.md](RUNBOOK.md) - install, run, verify, and troubleshoot steps.
-- [MONITORING.md](MONITORING.md) - monitor service, alert profiles, alarm behavior, TR 101 290 coverage, and loudness alarms.
+- [Runbook](RUNBOOK.md): install, run, verify, operate, and troubleshoot.
+- [Implementation notes](docs/implementation.md): architecture, persistence,
+  GUI behavior, and internal runtime details.
+- [Monitoring](docs/monitoring.md): alert profiles, alarm lifecycle, TR 101 290,
+  frame-rate checks, and loudness checks.
+- [Distributed architecture](docs/distributed-architecture.md): master control
+  plane and worker-node design.
+- [Compatibility report](docs/compatibility-report.md): tested receivers.
+- [Stability report](docs/stability-report.md): soak harness and pending
+  long-run evidence.
+- [Test plan](TEST_PLAN.md), [acceptance matrix](ACCEPTANCE_MATRIX.md),
+  [known limitations](KNOWN_LIMITATIONS.md), and [test gaps](TEST_GAPS.md).

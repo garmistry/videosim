@@ -428,3 +428,8 @@
 - Validation run: `git diff --check` passed.
 - Validation run: `npm run build-ui` passed.
 - Skipped checks: live multi-container worker smoke was not run; worker behavior was covered by unit tests and Compose config validation in this slice.
+- 2026-07-08: Reworked the top-level README into a brief public-facing project overview with quick start, supported modes, verification, and links to deeper docs.
+- 2026-07-08: Moved implementation-heavy README content into `docs/implementation.md` and moved optional root reports to `docs/monitoring.md`, `docs/compatibility-report.md`, and `docs/stability-report.md`.
+- 2026-07-08: Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
+- 2026-07-08: Validation run: repository-shape checks confirmed optional report docs live under `docs/` and stale root report links are gone.
+- 2026-07-08: Skipped checks: full unit suite and live Docker gates were not run; this was documentation-only and covered by the docs contract plus link/reference checks.

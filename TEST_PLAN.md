@@ -287,7 +287,7 @@ Milestone 10 weighted coverage: 26 / 26 = 100%.
 | M11-P0-ffprobe-detects-required-tracks | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M11-P0-gstreamer-receiver-consumes-required-modes | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M11-P0-required-target-receivers | P0 | 5 | not applicable | no project-specific target receiver is defined |
-| M11-P1-known-limitations-documented | P1 | 3 | implemented | `COMPATIBILITY_REPORT.md`; `KNOWN_LIMITATIONS.md` |
+| M11-P1-known-limitations-documented | P1 | 3 | implemented | `docs/compatibility-report.md`; `KNOWN_LIMITATIONS.md` |
 | M11-P1-vlc-smoke-test | P1 | 3 | not applicable | VLC is not feasible in the minimal headless Docker harness |
 
 Milestone 11 weighted coverage: 18 / 18 = 100% for applicable tests.
@@ -300,7 +300,7 @@ Milestone 11 weighted coverage: 18 / 18 = 100% for applicable tests.
 | M12-P0-required-outage-soak-tests | P0 | 5 | short proof implemented, long run pending | `docker compose run --build --rm live-srt`; tracked in `TEST_GAPS.md` |
 | M12-P0-repeated-start-stop-test | P0 | 5 | implemented | `docker compose run --build --rm live-srt` |
 | M12-P0-gui-remains-responsive-during-long-run | P0 | 5 | short proof and runner implemented, long run pending | `docker compose run --build --rm live-srt`; `docker compose run --build --rm m12-gui-soak`; tracked in `TEST_GAPS.md` |
-| M12-P1-resource-usage-report | P1 | 3 | implemented | `python3 -m unittest tests.test_soak`; `python3 -m videosim soak-check --report-dir ...`; `STABILITY_REPORT.md` |
+| M12-P1-resource-usage-report | P1 | 3 | implemented | `python3 -m unittest tests.test_soak`; `python3 -m videosim soak-check --report-dir ...`; `docs/stability-report.md` |
 | M12-P1-validation-every-15-minutes-during-soak | P1 | 3 | supported by harness and runner, long run pending | `python3 -m unittest tests.test_soak`; `scripts/run-m12-soak.sh` |
 
 Milestone 12 weighted coverage: 11 / 26 = 42.3%; milestone remains open until long-run P0 evidence exists.

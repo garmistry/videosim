@@ -103,8 +103,11 @@ The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
   GUI behavior, and internal runtime details.
 - [Monitoring](docs/monitoring.md): alert profiles, alarm lifecycle, TR 101 290,
   frame-rate checks, and loudness checks.
-- [Distributed architecture](docs/distributed-architecture.md): master control
-  plane and worker-node design.
+- [Distributed architecture](docs/distributed-architecture.md): implemented
+  master/worker slice and current boundaries.
+- [Production-readiness scaling audit](docs/production-readiness-audit.md):
+  evidence-backed risks, target architecture, capacity model, and roadmap for
+  monitoring thousands of streams.
 - [Compatibility report](docs/compatibility-report.md): tested receivers.
 - [Stability report](docs/stability-report.md): soak harness and pending
   long-run evidence.

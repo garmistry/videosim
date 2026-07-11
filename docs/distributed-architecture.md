@@ -1,5 +1,11 @@
 # Distributed Architecture Refit
 
+> This document describes the implemented first slice and near-term seams. It is
+> not a production-scale design or capacity claim. See
+> [Production-Readiness and Thousand-Stream Scaling Audit](production-readiness-audit.md)
+> for the evidence-backed risk assessment, target architecture, capacity model,
+> migration gates, and verification requirements for 1,000+ monitored streams.
+
 ## Target Shape
 
 VideoSim should split into a master control plane and many worker nodes:
@@ -46,3 +52,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - Move monitor report writes from the JSON file to the same DB boundary used by feed registrations.
 - Add signed worker credentials before this runs outside a trusted lab network.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
+
+These upgrade points are necessary but not sufficient for production. The audit
+requires authenticated and bounded APIs, durable fenced leases, idempotent
+result ingestion, explicit unknown/stale semantics, backpressure, HA storage and
+control-plane deployment, data-plane separation, and measured scale admission
+gates before claiming support for thousands of streams.

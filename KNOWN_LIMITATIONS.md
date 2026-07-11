@@ -43,7 +43,10 @@
   resolver in the validation layer.
 - Master/worker monitoring is a first distributed slice. The GUI process is the
   only master, workers poll it over plain HTTP, and worker identity is a caller
-  supplied string.
+  supplied string. It has not been load-tested or certified for 1,000, 5,000,
+  or 10,000 monitored streams; modeled demand must not be treated as measured
+  capacity. See `docs/production-readiness-audit.md` for production blockers,
+  target architecture, migration gates, and required evidence.
 
 ## Monitoring
 

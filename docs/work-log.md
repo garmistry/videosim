@@ -433,3 +433,17 @@
 - 2026-07-08: Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
 - 2026-07-08: Validation run: repository-shape checks confirmed optional report docs live under `docs/` and stale root report links are gone.
 - 2026-07-08: Skipped checks: full unit suite and live Docker gates were not run; this was documentation-only and covered by the docs contract plus link/reference checks.
+
+## 2026-07-11
+
+- Added `docs/production-readiness-audit.md`, an evidence-backed static audit of the current control-plane/worker slice and a production target architecture, explicit 1,000/5,000/10,000-stream demand models, security/HA/operations requirements, protocol-specific guidance, FMEA, phased migration/rollback gates, and measurable verification plan.
+- Traced feed persistence, local runtime orchestration, worker registration/assignment, serial monitor execution, report ingestion, alarm/event state, DASH serving, and browser polling to repository code; documented a high-severity retained/out-of-scope worker-state merge defect without changing application behavior.
+- Added audit discoverability and scale-claim disclaimers to `README.md`, `docs/distributed-architecture.md`, and `KNOWN_LIMITATIONS.md`.
+- Independent fresh-context reviews checked current distributed behavior and the audit against all 11 requested requirements; follow-up edits added report-scope integrity analysis, retry/API contracts, complete capacity formulas/storage dimensions, additional failure modes, measurable rollback controls, and a reproducible evidence manifest.
+- Validation run: `python3 -m unittest tests.test_docs_contract` passed, 4 tests.
+- Validation run: `python3 -m unittest discover -s tests` passed, 155 tests with 11 live SRT tests skipped by their default environment gate.
+- Validation run: `npm run build-ui` passed; generated assets had no tracked diff.
+- Validation run: `npm audit --omit=dev` passed with zero reported vulnerabilities.
+- Validation run: `docker compose config --quiet` passed.
+- Validation run: audit path/link verification checked 16 referenced repository paths with no missing paths; `git diff --check` passed.
+- Skipped checks: live SRT/Docker media gates were not rerun because this task changes documentation only and the full non-live regression suite passed. Production-scale load, security, failover, chaos, and DR tests could not run because the target architecture, representative workload, credentials, and production-like 1,000/5,000/10,000-stream environment do not yet exist; the audit labels those claims unverified and defines the evidence needed.

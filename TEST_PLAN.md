@@ -76,6 +76,21 @@ the first persistence adapter behind the feed-store boundary.
 | GUI payload and fallback render monitor alarms | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | React renders alarm and event audit panels | P1 | implemented | `python3 -m unittest tests.test_gui`; `npm run build-ui` |
 
+## Added Production Security Boundary Coverage
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| Trusted proxy secret is required and compared before identity headers are accepted | P0 | implemented | `python3 -m unittest tests.test_security` |
+| mTLS-derived worker identity must exactly match requested/reported worker ID | P0 | implemented | `python3 -m unittest tests.test_security` |
+| OIDC viewer/admin groups enforce read versus mutation authorization | P0 | implemented | `python3 -m unittest tests.test_security` |
+| Health endpoints remain public while control-plane endpoints require identity | P1 | implemented | `python3 -m unittest tests.test_security` |
+| Trusted mode rejects inline credentials and unsafe destination addresses by default | P0 | implemented | `python3 -m unittest tests.test_security` |
+| Request bodies, report collections, and identifiers have hard limits | P0 | implemented | `python3 -m unittest tests.test_security tests.test_worker_api tests.test_gui` |
+| Worker TLS context loads CA and client certificate/key | P0 | implemented | `python3 -m unittest tests.test_worker` |
+| Transient transport failures use bounded jittered retries while 409 refetch remains distinct | P0 | implemented | `python3 -m unittest tests.test_worker` |
+| Production Compose interpolation and Nginx TLS/mTLS configuration validate | P1 | implemented | `docker compose -f docker-compose.production.yml config --quiet`; Nginx `-t` smoke in `docs/work-log.md` |
+| Live worker certificate CN accepted and mismatched worker ID denied through Nginx | P0 | implemented smoke | documented in `docs/work-log.md` |
+
 ## Added Distributed Monitoring Coverage
 
 The master/worker control-plane slice is additive to the local monitor service.

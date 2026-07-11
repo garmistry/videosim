@@ -41,15 +41,25 @@
 - External DASH validation supports reachable MPDs with common `SegmentURL` or
   `SegmentTemplate` media references. Unusual DASH packaging may need a new
   resolver in the validation layer.
-- Master/worker monitoring remains a transitional distributed slice. The GUI
-  process is the only master, workers poll it over plain HTTP, and worker
-  identity is caller supplied. Versioned process-instance/generation/token
+- Master/worker monitoring remains a transitional distributed slice. On the
+  default trusted-lab Compose path, the GUI process is the only master, workers
+  poll it over plain HTTP, and worker identity is caller supplied. Versioned
+  process-instance/generation/token
   fencing, server-derived report scope, retained-state pruning, and independent
   heartbeat prevent known stale-report and long-batch TTL failures in this
   single-process design, but they are not durable authenticated leases.
 - Strict versioned worker reports are the default. The explicit
   `--allow-legacy-worker-reports` compatibility mode cannot fence stale
   generations and is unsuitable for production.
+- The production Compose/VM overlay enforces mTLS worker certificates and OIDC
+  viewer/admin identities through Nginx plus oauth2-proxy, but a real
+  organization OIDC tenant, automated certificate rotation/revocation, and
+  durable identity/audit records are not implemented in the repository.
+- Trusted-mode destination checks deny private addresses by default and support
+  explicit private/suffix policy. They do not replace VM firewall/egress rules
+  and do not yet provide redirect-aware DNS rebinding protection.
+- The production Compose overlay does not expose generated SRT UDP listener
+  ports; generated-feed data-plane placement remains a later architecture gate.
 - The in-process control-plane benchmark opens no media and has not certified
   1,000, 5,000, or 10,000 monitored streams; modeled or control-plane-only
   demand must not be treated as measured media capacity. See
@@ -68,8 +78,9 @@
   assignments remain simple round-robin and are not capacity-aware.
 - Worker report aggregation still writes the shared JSON monitor state file,
   not a database-backed alarm/event history.
-- There is no worker authentication, TLS, durable lease fencing, or
-  high-availability master failover yet; current fencing is process-local.
+- The default direct-app/trusted-lab path has no worker authentication or TLS;
+  the production Compose/VM proxy overlay adds mTLS. Neither path yet has
+  durable lease fencing or high-availability master failover.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

@@ -7,6 +7,9 @@ from typing import Mapping, Sequence
 
 
 WORKER_API_VERSION = "videosim.worker/v1"
+MAX_REPORT_STREAMS = 10_000
+MAX_REPORT_ITEMS_PER_COLLECTION = 50_000
+MAX_IDENTIFIER_LENGTH = 512
 
 
 class WorkerContractError(ValueError):
@@ -126,6 +129,8 @@ def validate_monitor_items(worker_state: Mapping, accepted_stream_ids: set[str])
 
     if not isinstance(worker_state, Mapping):
         raise WorkerReportValidationError("state must be an object")
+    if len(accepted_stream_ids) > MAX_REPORT_STREAMS:
+        raise WorkerReportValidationError(f"accepted report scope exceeds {MAX_REPORT_STREAMS} streams")
 
     scoped = {
         "updatedAt": str(worker_state.get("updatedAt", "")),
@@ -138,12 +143,18 @@ def validate_monitor_items(worker_state: Mapping, accepted_stream_ids: set[str])
         items = worker_state.get(collection, [])
         if not isinstance(items, list):
             raise WorkerReportValidationError(f"state.{collection} must be an array")
+        if len(items) > MAX_REPORT_ITEMS_PER_COLLECTION:
+            raise WorkerReportValidationError(
+                f"state.{collection} exceeds {MAX_REPORT_ITEMS_PER_COLLECTION} items"
+            )
         for index, item in enumerate(items):
             if not isinstance(item, Mapping):
                 raise WorkerReportValidationError(f"state.{collection}[{index}] must be an object")
             stream_id = item.get("streamId")
             if not isinstance(stream_id, str) or not stream_id:
                 raise WorkerReportValidationError(f"state.{collection}[{index}].streamId is required")
+            if len(stream_id) > MAX_IDENTIFIER_LENGTH or len(str(item.get("id", ""))) > MAX_IDENTIFIER_LENGTH:
+                raise WorkerReportValidationError(f"state.{collection}[{index}] identifier is too long")
             if stream_id in accepted_stream_ids:
                 scoped[collection].append(dict(item))
             else:
@@ -156,6 +167,10 @@ def validate_monitor_items(worker_state: Mapping, accepted_stream_ids: set[str])
         metric_items = metrics.get("streams", [])
         if not isinstance(metric_items, list):
             raise WorkerReportValidationError("state.probeMetrics.streams must be an array")
+        if len(metric_items) > MAX_REPORT_ITEMS_PER_COLLECTION:
+            raise WorkerReportValidationError(
+                f"state.probeMetrics.streams exceeds {MAX_REPORT_ITEMS_PER_COLLECTION} items"
+            )
         accepted_metrics = []
         for index, item in enumerate(metric_items):
             if not isinstance(item, Mapping):
@@ -163,6 +178,8 @@ def validate_monitor_items(worker_state: Mapping, accepted_stream_ids: set[str])
             stream_id = item.get("streamId")
             if not isinstance(stream_id, str) or not stream_id:
                 raise WorkerReportValidationError(f"state.probeMetrics.streams[{index}].streamId is required")
+            if len(stream_id) > MAX_IDENTIFIER_LENGTH or len(str(item.get("check", ""))) > MAX_IDENTIFIER_LENGTH:
+                raise WorkerReportValidationError(f"state.probeMetrics.streams[{index}] identifier is too long")
             if stream_id in accepted_stream_ids:
                 accepted_metrics.append(dict(item))
             else:

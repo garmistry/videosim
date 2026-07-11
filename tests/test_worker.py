@@ -3,12 +3,18 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from unittest.mock import Mock, patch
 
 from videosim.gui import GuiState, apply_worker_report, register_worker, worker_assignments_payload
 from videosim.monitor import monitor_state_for_stream_ids
-from videosim.worker import post_report, run_worker
+from videosim.worker import build_ssl_context, call_with_retry, post_report, run_worker
+
+
+class RetryableServiceError(HTTPError):
+    def __init__(self):
+        Exception.__init__(self, "service unavailable")
+        self.code = 503
 
 
 class AssignmentConflict(HTTPError):
@@ -40,14 +46,14 @@ class WorkerTest(unittest.TestCase):
             code = run_worker("http://master:8080", "worker-a", 5, 7, 20, "app", once=True)
 
         self.assertEqual(code, 0)
-        fetch.assert_called_once_with("http://master:8080", "worker-a")
+        fetch.assert_called_once_with("http://master:8080", "worker-a", None)
         monitor.assert_called_once()
         self.assertEqual(monitor.call_args.args[0], {"streams": assignments["streams"]})
         self.assertEqual(monitor.call_args.args[2], 123.0)
         self.assertEqual(monitor.call_args.args[3], 7)
         self.assertEqual(monitor.call_args.args[4], 20)
         self.assertEqual(monitor.call_args.args[5], "app")
-        post.assert_called_once_with("http://master:8080", "worker-a", ["stream-1"], monitor_state, assignments)
+        post.assert_called_once_with("http://master:8080", "worker-a", ["stream-1"], monitor_state, assignments, None)
 
     def test_heartbeat_keeps_worker_active_during_probe_batch_longer_than_ttl(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -62,17 +68,17 @@ class WorkerTest(unittest.TestCase):
                 external_url="srt://camera-a.local:9000?mode=caller",
             )
 
-            def fetch(control_plane_url, worker_id):
+            def fetch(control_plane_url, worker_id, ssl_context):
                 return worker_assignments_payload(state, worker_id, "http://master:8080")
 
-            def heartbeat(control_plane_url, worker_id):
+            def heartbeat(control_plane_url, worker_id, ssl_context):
                 return register_worker(state, worker_id)
 
             def slow_monitor(gui_state, monitor_state, *args):
                 time.sleep(0.05)
                 return {"updatedAt": "now", "alarms": [], "events": [], "pending": []}
 
-            def report(control_plane_url, worker_id, stream_ids, monitor_state, assignments):
+            def report(control_plane_url, worker_id, stream_ids, monitor_state, assignments, ssl_context):
                 return apply_worker_report(state, worker_id, stream_ids, monitor_state, assignments)
 
             with patch("videosim.gui.WORKER_TTL_SECONDS", 0.02), patch(
@@ -148,6 +154,54 @@ class WorkerTest(unittest.TestCase):
                 run_worker("http://master:8080", "worker-a", 5, 7, 20, "app", once=True)
 
         self.assertEqual(post.call_count, 3)
+
+    def test_transport_retry_uses_bounded_exponential_full_jitter(self):
+        outcomes = iter([URLError("offline"), RetryableServiceError(), {"ok": True}])
+        sleeps = []
+
+        def operation():
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        result = call_with_retry(
+            operation,
+            attempts=3,
+            base_seconds=0.25,
+            sleep=sleeps.append,
+            random_value=lambda: 0,
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(sleeps, [0.125, 0.25])
+
+    def test_assignment_conflict_is_not_transport_retried(self):
+        calls = []
+
+        def operation():
+            calls.append(True)
+            raise AssignmentConflict()
+
+        with self.assertRaises(HTTPError):
+            call_with_retry(operation, attempts=5, sleep=lambda seconds: None)
+
+        self.assertEqual(len(calls), 1)
+
+    def test_build_ssl_context_loads_worker_certificate_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ca = Path(directory) / "ca.crt"
+            cert = Path(directory) / "worker.crt"
+            key = Path(directory) / "worker.key"
+            for path in (ca, cert, key):
+                path.write_text("test", encoding="utf-8")
+            context = Mock()
+            with patch("videosim.worker.ssl.create_default_context", return_value=context) as create:
+                result = build_ssl_context(str(ca), str(cert), str(key))
+
+        self.assertIs(result, context)
+        create.assert_called_once_with(cafile=str(ca))
+        context.load_cert_chain.assert_called_once_with(certfile=str(cert), keyfile=str(key))
 
     def test_post_report_carries_assignment_contract(self):
         response = Mock()

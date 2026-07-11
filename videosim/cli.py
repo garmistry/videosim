@@ -15,6 +15,7 @@ from .feed_store import SqliteFeedStore, default_feed_db_path
 from .gui import GuiState, run_gui
 from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
 from .profile import ProfileError, load_profile
+from .security import SecurityConfig
 from .soak import check_reports
 from .soak import check_summary
 from .soak import gui_summary
@@ -22,7 +23,7 @@ from .soak import human_summary as soak_summary
 from .soak import run_gui_soak
 from .soak import run_soak
 from .validator import human_summary, validate_config
-from .worker import default_worker_id, run_worker
+from .worker import build_ssl_context, default_worker_id, run_worker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -73,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument("--history-limit", type=int, default=1000)
     worker.add_argument("--srt-host", default="127.0.0.1")
     worker.add_argument("--heartbeat-interval-seconds", type=float, default=20)
+    worker.add_argument("--tls-ca-file", default="")
+    worker.add_argument("--tls-cert-file", default="")
+    worker.add_argument("--tls-key-file", default="")
+    worker.add_argument("--retry-attempts", type=int, default=5)
+    worker.add_argument("--retry-base-seconds", type=float, default=0.25)
     worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     control_plane_benchmark = subparsers.add_parser(
@@ -93,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     gui.add_argument("--width", type=int, default=1280)
     gui.add_argument("--height", type=int, default=720)
     gui.add_argument("--framerate", default="59.94")
+    gui.add_argument("--worker-base-url", default="", help="externally reachable control-plane origin used in worker assignments")
     gui.add_argument(
         "--allow-legacy-worker-reports",
         action="store_true",
@@ -145,8 +152,10 @@ def main(argv: list[str] | None = None) -> int:
                     width=args.width,
                     height=args.height,
                     framerate=args.framerate,
+                    worker_base_url=args.worker_base_url,
                     feed_store=SqliteFeedStore(default_feed_db_path()),
                     allow_legacy_worker_reports=args.allow_legacy_worker_reports,
+                    security=SecurityConfig.from_env(),
                 ),
             )
             return 0
@@ -258,8 +267,13 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("history_limit must be greater than 0")
             if args.heartbeat_interval_seconds <= 0:
                 raise ValueError("heartbeat_interval_seconds must be greater than 0")
+            if args.retry_attempts < 1:
+                raise ValueError("retry_attempts must be at least 1")
+            if args.retry_base_seconds < 0:
+                raise ValueError("retry_base_seconds must be zero or greater")
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
+            ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
             return run_worker(
                 args.control_plane_url,
                 args.worker_id.strip(),
@@ -269,6 +283,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.srt_host,
                 args.once,
                 args.heartbeat_interval_seconds,
+                ssl_context,
+                args.retry_attempts,
+                args.retry_base_seconds,
             )
 
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()

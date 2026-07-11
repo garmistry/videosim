@@ -1,0 +1,91 @@
+services:
+  app:
+    build: .
+    environment:
+      VIDEOSIM_VERBOSE: "1"
+      VIDEOSIM_MONITOR_STATE: /var/lib/videosim/monitor/state.json
+      VIDEOSIM_DB_PATH: /var/lib/videosim/feeds.sqlite3
+      VIDEOSIM_SECURITY_MODE: trusted-proxy
+      VIDEOSIM_PROXY_SHARED_SECRET: "${VIDEOSIM_PROXY_SHARED_SECRET:?set a 32+ character proxy secret}"
+      VIDEOSIM_VIEWER_GROUP: "${VIDEOSIM_VIEWER_GROUP:-videosim-viewer}"
+      VIDEOSIM_ADMIN_GROUP: "${VIDEOSIM_ADMIN_GROUP:-videosim-admin}"
+      VIDEOSIM_ALLOW_PRIVATE_FEEDS: "${VIDEOSIM_ALLOW_PRIVATE_FEEDS:-0}"
+      VIDEOSIM_ALLOWED_FEED_HOST_SUFFIXES: "${VIDEOSIM_ALLOWED_FEED_HOST_SUFFIXES:-}"
+    expose:
+      - "8080"
+    volumes:
+      - app-data:/var/lib/videosim
+      - dash-data:/tmp/videosim-dash
+    command: >
+      python -m videosim gui --host 0.0.0.0 --http-port 8080 --feed-port 9000
+      --worker-base-url https://proxy:9443
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:?set the OIDC issuer URL}"
+      OAUTH2_PROXY_CLIENT_ID: "${OIDC_CLIENT_ID:?set the OIDC client ID}"
+      OAUTH2_PROXY_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:?set the OIDC client secret}"
+      OAUTH2_PROXY_COOKIE_SECRET: "${OIDC_COOKIE_SECRET:?set a 32-byte base64 cookie secret}"
+      OAUTH2_PROXY_REDIRECT_URL: "${VIDEOSIM_OPERATOR_URL:-https://localhost:8443}/oauth2/callback"
+      OAUTH2_PROXY_EMAIL_DOMAINS: "${OIDC_EMAIL_DOMAINS:-*}"
+      OAUTH2_PROXY_SCOPE: "openid profile email groups"
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "false"
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_UPSTREAMS: static://202
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+      OAUTH2_PROXY_COOKIE_CSRF_PER_REQUEST: "true"
+    expose:
+      - "4180"
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:1.27-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+      oauth2-proxy:
+        condition: service_started
+    environment:
+      NGINX_ENVSUBST_FILTER: ^VIDEOSIM_PROXY_SHARED_SECRET$
+      VIDEOSIM_PROXY_SHARED_SECRET: "${VIDEOSIM_PROXY_SHARED_SECRET:?set a 32+ character proxy secret}"
+    ports:
+      - "${VIDEOSIM_OPERATOR_PORT:-8443}:8443"
+      - "${VIDEOSIM_WORKER_PORT:-9443}:9443"
+    volumes:
+      - ./deploy/nginx/videosim.conf.template:/etc/nginx/templates/videosim.conf.template:ro
+      - ./deploy/certs:/etc/videosim/certs:ro
+    restart: unless-stopped
+
+  worker:
+    build: .
+    depends_on:
+      proxy:
+        condition: service_started
+    volumes:
+      - ./deploy/certs:/etc/videosim/certs:ro
+    command: >
+      python -m videosim worker
+      --control-plane-url https://proxy:9443
+      --worker-id worker-1
+      --srt-host app
+      --heartbeat-interval-seconds 20
+      --tls-ca-file /etc/videosim/certs/server-ca.crt
+      --tls-cert-file /etc/videosim/certs/worker-1.crt
+      --tls-key-file /etc/videosim/certs/worker-1.key
+    restart: unless-stopped
+
+volumes:
+  app-data:
+  dash-data:

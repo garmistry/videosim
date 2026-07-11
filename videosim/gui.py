@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import copy
 import html
 import json
 import mimetypes
@@ -19,6 +20,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
 from .control_plane import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_REPORT_STREAMS,
     WORKER_API_VERSION,
     AssignmentContract,
     WorkerReportConflict,
@@ -33,6 +36,7 @@ from .feed_store import FeedRegistrationStore
 from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
 from .monitor_catalog import monitor_catalog_payload
 from .profile import load_profile
+from .security import AuthenticationError, AuthorizationError, EndpointPolicyError, Principal, SecurityConfig, audit_event
 from .validator import human_summary, validate_config
 
 
@@ -63,6 +67,7 @@ MODE_CONTROLS = {
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_MONITOR_STATE_PATH = "/tmp/videosim-monitor/state.json"
 WORKER_TTL_SECONDS = 60
+MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
 
 def controls_for_mode(mode: str) -> dict[str, bool]:
@@ -125,6 +130,20 @@ def normalize_source(source: str) -> str:
     if source not in SOURCE_OPTIONS:
         raise ValueError(f"Unsupported feed source: {source}")
     return source
+
+
+def validate_worker_base_url(url: str, security: SecurityConfig) -> str:
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError("worker base URL must be an http(s) origin without credentials")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("worker base URL must not contain a path, query, or fragment")
+    if security.enabled and parsed.scheme != "https":
+        raise ValueError("trusted-proxy worker base URL must use https")
+    return url
 
 
 def validate_external_url(protocol: str, url: str) -> str:
@@ -256,6 +275,7 @@ class GuiState:
     framerate: str | int | float = "59.94"
     dash_dir: str = "/tmp/videosim-dash"
     monitor_state_path: str = ""
+    worker_base_url: str = ""
     mode: str = "normal"
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
@@ -273,12 +293,17 @@ class GuiState:
     assignment_dirty: bool = True
     allow_legacy_worker_reports: bool = False
     deleting_stream_ids: set[str] = field(default_factory=set)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
     _next_stream_number: int = 1
 
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
+        self.worker_base_url = validate_worker_base_url(self.worker_base_url, self.security)
         if self.feed_store and not self.streams:
             self._load_streams_from_store()
+        for stream in list(self.streams.values()):
+            if stream.source == "external":
+                self.security.validate_external_endpoint(stream.external_url)
         if self.streams:
             self._next_stream_number = max(self._next_stream_number, next_stream_number(self.streams))
         if self.streams and not self.selected_stream_id:
@@ -350,6 +375,8 @@ class GuiState:
                 external_url=external_url,
                 alert_enabled_ids=[] if source == "external" else None,
             )
+            if stream.source == "external":
+                self.security.validate_external_endpoint(stream.external_url)
             self._persist_stream(stream)
             self.streams[stream_id] = stream
             mark_assignment_dirty(self)
@@ -404,6 +431,8 @@ class GuiState:
             self.fail(f"Unsupported mode: {next_mode}")
             return False
         next_external_url = validate_external_url(next_protocol, next_external_url) if next_source == "external" else ""
+        if next_source == "external":
+            self.security.validate_external_endpoint(next_external_url)
         restart = stream.source == "generated" and stream.status == "running"
         if restart:
             self.stop(stream_id)
@@ -599,9 +628,10 @@ class GuiState:
                     stream.mode = mode
                     stream.protocol = protocol
                     stream.external_url = validate_external_url(stream.protocol, stream.external_url)
+                    self.security.validate_external_endpoint(stream.external_url)
                     self._persist_stream(stream)
                     mark_assignment_dirty(self)
-            except ValueError as exc:
+            except (AuthorizationError, ValueError) as exc:
                 self.fail(str(exc), stream.id)
                 return False
             self._sync_from_active()
@@ -758,7 +788,9 @@ class GuiState:
         for feed in feeds:
             try:
                 stream = FeedRecord(**feed)
-            except (TypeError, ValueError) as exc:
+                if stream.source == "external":
+                    self.security.validate_external_endpoint(stream.external_url)
+            except (EndpointPolicyError, TypeError, ValueError) as exc:
                 self.logs.append(f"Skipped stored feed {feed.get('id', '<unknown>')}: {exc}")
                 continue
             self.streams[stream.id] = stream
@@ -852,22 +884,78 @@ def next_stream_number(streams: dict[str, FeedRecord]) -> int:
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
+    def _authorize_worker(self, worker_id: str) -> Principal | None:
+        try:
+            principal = self.state.security.authenticate_worker(self.headers, worker_id)
+        except (AuthenticationError, AuthorizationError) as exc:
+            status = 401 if isinstance(exc, AuthenticationError) else 403
+            audit_event("worker_auth", "denied", workerId=worker_id, reason=str(exc), remote=self.client_address[0])
+            self._send_json({"ok": False, "error": str(exc)}, status=status)
+            return None
+        if self.state.security.enabled:
+            audit_event("worker_auth", "allowed", principal, workerId=worker_id, remote=self.client_address[0])
+        return principal
+
+    def _authorize_operator(self, *, write: bool) -> Principal | None:
+        try:
+            principal = self.state.security.authenticate_operator(self.headers, write=write)
+        except (AuthenticationError, AuthorizationError) as exc:
+            status = 401 if isinstance(exc, AuthenticationError) else 403
+            audit_event("operator_auth", "denied", operation=self.path, reason=str(exc), remote=self.client_address[0])
+            self._send_json({"ok": False, "error": str(exc)}, status=status)
+            return None
+        if self.state.security.enabled:
+            audit_event(
+                "operator_write" if write else "operator_read",
+                "allowed",
+                principal,
+                operation=self.path,
+                remote=self.client_address[0],
+            )
+        return principal
+
+    def _authorize_proxy(self) -> bool:
+        try:
+            self.state.security.authenticate_proxy_request(self.headers)
+        except AuthenticationError as exc:
+            audit_event("proxy_auth", "denied", operation=self.path, reason=str(exc), remote=self.client_address[0])
+            self._send_json({"ok": False, "error": str(exc)}, status=401)
+            return False
+        return True
+
     def do_GET(self):
         parsed_request = urlparse(self.path)
         path = parsed_request.path
+        if path in {"/healthz", "/readyz"}:
+            self._send_json({"ok": True, "status": "ready" if path == "/readyz" else "healthy"})
+            return
+        if path == "/api/workers/assignments":
+            params = parse_qs(parsed_request.query)
+            worker_id = params.get("worker_id", [""])[0]
+            if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
+                self._send_json({"ok": False, "error": "worker_id must be a bounded non-empty string"}, status=400)
+                return
+            if self._authorize_worker(worker_id) is None:
+                return
+            try:
+                base_url = request_base_url(self, self.state)
+            except WorkerReportValidationError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self._send_json(worker_assignments_payload(self.state, worker_id, base_url))
+            return
+        if path.startswith("/dash/"):
+            if not self._authorize_proxy():
+                return
+            self._send_dash(path.removeprefix("/dash/"))
+            return
+        if self._authorize_operator(write=False) is None:
+            return
         if path == "/diagnostics.txt":
             self._send_text(diagnostics_text(self.state))
             return
         if path == "/state.json":
             self._send_json(state_payload(self.state))
-            return
-        if path == "/api/workers/assignments":
-            params = parse_qs(parsed_request.query)
-            worker_id = params.get("worker_id", [""])[0]
-            if not worker_id:
-                self.send_error(400)
-                return
-            self._send_json(worker_assignments_payload(self.state, worker_id, request_base_url(self)))
             return
         if path == "/preview.jpg":
             body, content_type = preview_image(self.state)
@@ -878,15 +966,22 @@ class GuiHandler(BaseHTTPRequestHandler):
             body, content_type = preview_image(self.state, stream_id)
             self._send_bytes(body, content_type)
             return
-        if path.startswith("/dash/"):
-            self._send_dash(path.removeprefix("/dash/"))
-            return
         if path.startswith("/static/"):
             self._send_static(path.removeprefix("/static/"))
             return
         if path.startswith("/feeds/"):
             stream_id = unquote(path.removeprefix("/feeds/").strip("/"))
-            if not stream_id or not self.state.select_stream(stream_id):
+            if not stream_id:
+                self.send_error(404)
+                return
+            if self.state.security.enabled:
+                with self.state.control_plane_lock:
+                    if stream_id not in self.state.streams:
+                        self.send_error(404)
+                        return
+                self._send_html(render_page(request_state_view(self.state, stream_id)))
+                return
+            if not self.state.select_stream(stream_id):
                 self.send_error(404)
                 return
             self._send_html(render_page(self.state))
@@ -894,11 +989,19 @@ class GuiHandler(BaseHTTPRequestHandler):
         if path != "/":
             self.send_error(404)
             return
-        self.state.clear_selection()
-        self._send_html(render_page(self.state))
+        if self.state.security.enabled:
+            self._send_html(render_page(request_state_view(self.state, "")))
+        else:
+            self.state.clear_selection()
+            self._send_html(render_page(self.state))
 
     def do_POST(self):
+        if not self._request_body_allowed():
+            return
         redirect_stream_id = self.state.selected_stream_id
+        if self.path not in {"/api/workers/register", "/api/workers/report"}:
+            if self._authorize_operator(write=True) is None:
+                return
         if self.path == "/start":
             params = self._read_form()
             try:
@@ -933,7 +1036,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                     framerate=params.get("framerate", [self.state.framerate])[0],
                 )
                 redirect_stream_id = stream.id
-            except ValueError as exc:
+            except (AuthorizationError, ValueError) as exc:
                 self.state.log(str(exc))
         elif self.path == "/streams/select":
             params = self._read_form()
@@ -956,7 +1059,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                         external_url=params.get("external_url", [None])[0],
                         framerate=params.get("framerate", [None])[0],
                     )
-                except ValueError as exc:
+                except (AuthorizationError, ValueError) as exc:
                     self.state.log(str(exc))
         elif self.path == "/streams/alerts":
             params = self._read_form()
@@ -982,9 +1085,14 @@ class GuiHandler(BaseHTTPRequestHandler):
                     self.state.log("Cleared event audit", stream_id)
         elif self.path == "/api/workers/register":
             payload = self._read_json()
+            if not isinstance(payload, dict):
+                self._send_json({"ok": False, "error": "worker registration must be an object"}, status=400)
+                return
             worker_id = payload.get("workerId", "")
-            if not worker_id:
-                self.send_error(400)
+            if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
+                self._send_json({"ok": False, "error": "workerId must be a bounded non-empty string"}, status=400)
+                return
+            if self._authorize_worker(worker_id) is None:
                 return
             self._send_json(register_worker(self.state, worker_id))
             return
@@ -994,8 +1102,10 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "worker report must be an object"}, status=400)
                 return
             worker_id = payload.get("workerId", "")
-            if not worker_id:
-                self._send_json({"ok": False, "error": "workerId is required"}, status=400)
+            if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
+                self._send_json({"ok": False, "error": "workerId must be a bounded non-empty string"}, status=400)
+                return
+            if self._authorize_worker(worker_id) is None:
                 return
             try:
                 response = apply_worker_report(
@@ -1126,18 +1236,47 @@ class GuiHandler(BaseHTTPRequestHandler):
             return
         self._redirect_home()
 
+    def _request_body_allowed(self) -> bool:
+        if self.headers.get("Transfer-Encoding"):
+            self._send_json({"ok": False, "error": "chunked request bodies are not supported"}, status=400)
+            return False
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json({"ok": False, "error": "invalid Content-Length"}, status=400)
+            return False
+        if length < 0:
+            self._send_json({"ok": False, "error": "invalid Content-Length"}, status=400)
+            return False
+        if length > MAX_REQUEST_BODY_BYTES:
+            self._send_json({"ok": False, "error": "request body exceeds 1 MiB limit"}, status=413)
+            return False
+        return True
+
     def _read_form(self):
         length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length).decode("utf-8") if length else ""
+        try:
+            body = self.rfile.read(length).decode("utf-8") if length else ""
+        except UnicodeDecodeError:
+            return {}
         return parse_qs(body)
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length).decode("utf-8") if length else "{}"
         try:
+            body = self.rfile.read(length).decode("utf-8") if length else "{}"
             return json.loads(body or "{}")
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError, UnicodeDecodeError):
             return {}
+
+
+def request_state_view(state: GuiState, selected_stream_id: str) -> GuiState:
+    """Create a request-local shallow view without mutating shared selection."""
+
+    view = copy.copy(state)
+    view.selected_stream_id = selected_stream_id if selected_stream_id in state.streams else ""
+    view._sync_from_active()
+    return view
 
 
 def render_page(state: GuiState) -> str:
@@ -1555,9 +1694,19 @@ def worker_status_payload(state: GuiState) -> list[dict]:
         return [{"id": worker_id, "lastSeenAt": round(seen, 3)} for worker_id, seen in sorted(state.worker_seen.items())]
 
 
-def request_base_url(handler: BaseHTTPRequestHandler) -> str:
+def request_base_url(handler: BaseHTTPRequestHandler, state: GuiState | None = None) -> str:
+    if state and state.worker_base_url:
+        return state.worker_base_url
     host = handler.headers.get("Host") or f"{handler.server.server_address[0]}:{handler.server.server_address[1]}"
-    return f"http://{host}"
+    if any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]" for character in host):
+        raise WorkerReportValidationError("invalid Host header")
+    scheme = "http"
+    if state and state.security.enabled:
+        forwarded_proto = (handler.headers.get("X-Forwarded-Proto") or "").lower()
+        if forwarded_proto not in {"http", "https"}:
+            raise WorkerReportValidationError("trusted proxy must provide X-Forwarded-Proto")
+        scheme = forwarded_proto
+    return f"{scheme}://{host}"
 
 
 def script_json(payload) -> str:
@@ -1768,6 +1917,10 @@ def apply_worker_report(
 ) -> dict:
     if not isinstance(stream_ids, list) or any(not isinstance(stream_id, str) or not stream_id for stream_id in stream_ids):
         raise WorkerReportValidationError("streamIds must be an array of non-empty strings")
+    if len(stream_ids) > MAX_REPORT_STREAMS:
+        raise WorkerReportValidationError(f"streamIds exceeds {MAX_REPORT_STREAMS} items")
+    if any(len(stream_id) > MAX_IDENTIFIER_LENGTH for stream_id in stream_ids):
+        raise WorkerReportValidationError("streamIds contains an identifier that is too long")
     claimed_stream_ids = set(stream_ids)
     report_contract = report_contract or {}
 

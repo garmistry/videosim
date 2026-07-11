@@ -95,6 +95,34 @@ class WorkerApiTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, 422)
         raised.exception.close()
 
+    def test_non_string_worker_id_returns_400(self):
+        request = Request(
+            f"{self.base_url}/api/workers/report",
+            data=b'{"workerId": 123, "streamIds": [], "state": {}}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(request, timeout=2)
+
+        self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
+
+    def test_invalid_utf8_worker_json_returns_400(self):
+        request = Request(
+            f"{self.base_url}/api/workers/report",
+            data=b"\xff\xfe",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(request, timeout=2)
+
+        self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
+
     def test_persistence_failure_returns_retryable_503(self):
         assignment = self.assignment()
 

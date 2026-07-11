@@ -118,6 +118,8 @@ This command runs no media probes and is not evidence of 1,000-stream monitoring
   monitoring thousands of streams.
 - [Distributed implementation progress](docs/distributed-implementation-progress.md):
   active gate checklist and evidence status for implementing that roadmap.
+- [Security and identity](docs/security.md): production Compose/VM mTLS worker
+  identity, OIDC operator access, input limits, and egress controls.
 - [Compatibility report](docs/compatibility-report.md): tested receivers.
 - [Stability report](docs/stability-report.md): soak harness and pending
   long-run evidence.

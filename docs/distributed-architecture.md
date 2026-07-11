@@ -43,6 +43,21 @@ VideoSim should split into a master control plane and many worker nodes:
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
+## Implemented Compose/VM Security Boundary
+
+- `docker-compose.production.yml` keeps the app port internal and exposes
+  separate operator TLS and worker-mTLS listeners through Nginx.
+- oauth2-proxy performs operator OIDC login; the app enforces viewer/admin group
+  authorization from trusted headers.
+- Nginx verifies worker certificates and derives worker identity from the
+  certificate CN; the app requires an exact `workerId` match.
+- A proxy-only shared secret prevents direct spoofing of trusted identity
+  headers when the app network is kept internal.
+- Nginx and app body/report limits, per-plane rate limits, endpoint address
+  policy, structured authorization events, worker TLS client options, and
+  bounded transient retries form the current security gate.
+- See [Security and Identity](security.md) for setup and remaining boundaries.
+
 ## Current Limits
 
 - Worker registry, assignment generation, and tokens are process-local and expire inactive workers after 60 seconds. They are transition fences, not durable HA leases.

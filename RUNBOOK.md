@@ -210,6 +210,27 @@ and it can crash the listener.
 Generated DASH feeds are served by the same GUI HTTP server at
 `http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd`.
 
+### Production Compose/VM security boundary
+
+The default Compose file remains a trusted-lab path. For the selected production
+Docker Compose/VM target, use the mTLS/OIDC overlay documented in
+[`docs/security.md`](docs/security.md):
+
+```sh
+cp .env.production.example .env.production
+scripts/generate-dev-mtls-certs.sh  # local smoke only; replace in production
+# Fill every placeholder in .env.production.
+docker compose --env-file .env.production \
+  -f docker-compose.production.yml config --quiet
+docker compose --env-file .env.production \
+  -f docker-compose.production.yml up --build -d
+```
+
+The production overlay does not publish app TCP 8080. Nginx exposes the OIDC
+operator path on 8443 and the worker-mTLS path on 9443. Worker certificate CN
+must equal `--worker-id`; the app independently checks the proxy secret and
+identity headers. Use a managed CA/secret store and VM firewall in production.
+
 Run the separate monitor container beside the GUI:
 
 ```sh

@@ -24,6 +24,20 @@ or the gap is non-critical for a completed milestone:
 These are not skipped for their owning milestones. They are blocked by missing
 implementation and must pass before those milestones advance.
 
+## Production Security
+
+- Trusted-proxy identity, worker-ID matching, viewer/admin authorization, input
+  limits, destination policy, TLS client context, proxy configuration, and a
+  live local mTLS accept/identity-mismatch smoke are covered.
+- A real organization OIDC tenant/login/group-claim flow has not been exercised;
+  tests inject the headers oauth2-proxy is configured to emit.
+- Automated CA issuance, certificate rotation/revocation, durable identity and
+  audit records, multi-tenant resource grants, and firewall policy deployment
+  remain future durable/HA gates.
+- Application DNS/address checks are defense in depth. DNS rebinding and HTTP
+  redirects require VM egress enforcement and future redirect-aware fetch
+  policy tests before external production.
+
 ## Distributed Architecture
 
 - Foundation coverage now includes versioned process-instance/generation/token

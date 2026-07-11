@@ -13,10 +13,22 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field, replace
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
+from .control_plane import (
+    WORKER_API_VERSION,
+    AssignmentContract,
+    WorkerReportConflict,
+    WorkerReportPersistenceError,
+    WorkerReportValidationError,
+    assignment_fingerprint,
+    assignment_token,
+    validate_monitor_items,
+    validate_report_contract,
+)
 from .feed_store import FeedRegistrationStore
 from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
 from .monitor_catalog import monitor_catalog_payload
@@ -254,6 +266,13 @@ class GuiState:
     feed_store: FeedRegistrationStore | None = None
     worker_seen: dict[str, float] = field(default_factory=dict)
     monitor_state_lock: threading.RLock = field(default_factory=threading.RLock)
+    control_plane_lock: threading.RLock = field(default_factory=threading.RLock)
+    control_plane_instance_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    assignment_generation: int = 1
+    assignment_fingerprint: str = ""
+    assignment_dirty: bool = True
+    allow_legacy_worker_reports: bool = False
+    deleting_stream_ids: set[str] = field(default_factory=set)
     _next_stream_number: int = 1
 
     def __post_init__(self):
@@ -267,12 +286,13 @@ class GuiState:
 
     @property
     def active_stream(self) -> FeedRecord | None:
-        if not self.streams or not self.selected_stream_id:
-            return None
-        if self.selected_stream_id not in self.streams:
-            self.selected_stream_id = ""
-            return None
-        return self.streams[self.selected_stream_id]
+        with self.control_plane_lock:
+            if not self.streams or not self.selected_stream_id:
+                return None
+            if self.selected_stream_id not in self.streams:
+                self.selected_stream_id = ""
+                return None
+            return self.streams[self.selected_stream_id]
 
     @property
     def endpoint(self) -> str:
@@ -311,44 +331,48 @@ class GuiState:
         if mode not in PROFILE_OPTIONS:
             raise ValueError(f"Unsupported mode: {mode}")
         source = normalize_source(source)
-        stream_id = f"stream-{self._next_stream_number}"
-        self._next_stream_number += 1
-        feed_port = feed_port or self.next_available_port()
-        stream = FeedRecord(
-            id=stream_id,
-            name=name.strip() or f"Feed {len(self.streams) + 1}",
-            protocol=protocol,
-            http_port=self.http_port,
-            feed_port=feed_port,
-            width=width or self.width,
-            height=height or self.height,
-            framerate=framerate or self.framerate,
-            dash_dir=str(Path(self.dash_dir) / stream_id),
-            mode=mode,
-            source=source,
-            external_url=external_url,
-            alert_enabled_ids=[] if source == "external" else None,
-        )
-        self._persist_stream(stream)
-        self.streams[stream_id] = stream
+        with self.control_plane_lock:
+            stream_id = f"stream-{self._next_stream_number}"
+            self._next_stream_number += 1
+            feed_port = feed_port or self.next_available_port()
+            stream = FeedRecord(
+                id=stream_id,
+                name=name.strip() or f"Feed {len(self.streams) + 1}",
+                protocol=protocol,
+                http_port=self.http_port,
+                feed_port=feed_port,
+                width=width or self.width,
+                height=height or self.height,
+                framerate=framerate or self.framerate,
+                dash_dir=str(Path(self.dash_dir) / stream_id),
+                mode=mode,
+                source=source,
+                external_url=external_url,
+                alert_enabled_ids=[] if source == "external" else None,
+            )
+            self._persist_stream(stream)
+            self.streams[stream_id] = stream
+            mark_assignment_dirty(self)
         if select:
             self.select_stream(stream_id)
         return stream
 
     def next_available_port(self) -> int:
-        used = {stream.feed_port for stream in self.streams.values()}
-        port = self.feed_port
-        while port in used:
-            port += 1
-        return port
+        with self.control_plane_lock:
+            used = {stream.feed_port for stream in self.streams.values()}
+            port = self.feed_port
+            while port in used:
+                port += 1
+            return port
 
     def select_stream(self, stream_id: str) -> bool:
-        if stream_id not in self.streams:
-            self.fail(f"Unsupported stream: {stream_id}")
-            return False
-        self.selected_stream_id = stream_id
-        self._sync_from_active()
-        return True
+        with self.control_plane_lock:
+            if stream_id not in self.streams:
+                self.fail(f"Unsupported stream: {stream_id}")
+                return False
+            self.selected_stream_id = stream_id
+            self._sync_from_active()
+            return True
 
     def clear_selection(self):
         self.selected_stream_id = ""
@@ -383,16 +407,21 @@ class GuiState:
         restart = stream.source == "generated" and stream.status == "running"
         if restart:
             self.stop(stream_id)
-        if name is not None and name.strip():
-            stream.name = name.strip()
-        stream.protocol = next_protocol
-        stream.mode = next_mode
-        if stream.source != next_source:
-            stream.alert_enabled_ids = [] if next_source == "external" else None
-        stream.source = next_source
-        stream.external_url = next_external_url
-        stream.framerate = next_framerate
-        self._persist_stream(stream)
+        with self.control_plane_lock:
+            if self.streams.get(stream_id) is not stream:
+                self.fail(f"Stream changed during update: {stream_id}")
+                return False
+            if name is not None and name.strip():
+                stream.name = name.strip()
+            stream.protocol = next_protocol
+            stream.mode = next_mode
+            if stream.source != next_source:
+                stream.alert_enabled_ids = [] if next_source == "external" else None
+            stream.source = next_source
+            stream.external_url = next_external_url
+            stream.framerate = next_framerate
+            self._persist_stream(stream)
+            mark_assignment_dirty(self)
         self.select_stream(stream_id)
         if restart and stream.source == "generated":
             return self.start(stream_id)
@@ -403,10 +432,12 @@ class GuiState:
             self.fail(f"Unsupported stream: {stream_id}")
             return False
         stream = self.streams[stream_id]
-        stream.alert_enabled_ids = normalize_enabled_alerts(enabled_ids)
-        stream.alert_delay_seconds = normalize_alert_delay(delay_seconds)
         try:
-            self._persist_stream(stream)
+            with self.control_plane_lock:
+                stream.alert_enabled_ids = normalize_enabled_alerts(enabled_ids)
+                stream.alert_delay_seconds = normalize_alert_delay(delay_seconds)
+                self._persist_stream(stream)
+                mark_assignment_dirty(self)
         except ValueError as exc:
             self.fail(str(exc), stream_id)
             return False
@@ -414,16 +445,27 @@ class GuiState:
         return True
 
     def delete_stream(self, stream_id: str) -> bool:
-        if stream_id not in self.streams:
-            self.fail(f"Unsupported stream: {stream_id}")
-            return False
-        self.stop(stream_id)
+        with self.control_plane_lock:
+            if stream_id not in self.streams:
+                self.fail(f"Unsupported stream: {stream_id}")
+                return False
+            if stream_id in self.deleting_stream_ids:
+                return False
+            self.deleting_stream_ids.add(stream_id)
         try:
-            self._delete_persisted_stream(stream_id)
+            self.stop(stream_id)
+            with self.control_plane_lock:
+                if stream_id not in self.streams:
+                    return False
+                self._delete_persisted_stream(stream_id)
+                del self.streams[stream_id]
+                mark_assignment_dirty(self)
         except ValueError as exc:
             self.fail(str(exc), stream_id)
             return False
-        del self.streams[stream_id]
+        finally:
+            with self.control_plane_lock:
+                self.deleting_stream_ids.discard(stream_id)
         if self.selected_stream_id == stream_id:
             self.selected_stream_id = ""
         if self.streams and not self.selected_stream_id:
@@ -508,18 +550,33 @@ class GuiState:
         )
         if verbose_enabled():
             self.log(f"Feed launch command: {shlex.join(cmd)}", stream.id)
-        try:
-            stream.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        except OSError as exc:
-            stream.process = None
-            self.fail(f"Failed to start {stream.mode} feed: {exc}", stream.id)
-            return False
-        stream.started_at = time.monotonic()
-        stream.last_run_seconds = 0
-        stream.last_outbound_bytes = 0
+        with self.control_plane_lock:
+            if self.streams.get(stream.id) is not stream or stream.id in self.deleting_stream_ids:
+                self.fail(f"Stream changed before start: {stream.id}")
+                return False
+            if stream.status == "running":
+                self.log("Feed already running", stream.id)
+                return False
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                stream.process = None
+                self.fail(f"Failed to start {stream.mode} feed: {exc}", stream.id)
+                return False
+            stream.process = process
+            stream.started_at = time.monotonic()
+            stream.last_run_seconds = 0
+            stream.last_outbound_bytes = 0
+            mark_assignment_dirty(self)
         self._sync_from_active()
-        self.log(f"Started {stream.protocol} {stream.mode} feed at {stream.endpoint} pid={stream.process.pid}", stream.id)
-        threading.Thread(target=self._capture_logs, args=(stream.id, stream.process), daemon=True).start()
+        self.log(f"Started {stream.protocol} {stream.mode} feed at {stream.endpoint} pid={process.pid}", stream.id)
+        threading.Thread(target=self._capture_logs, args=(stream.id, process), daemon=True).start()
         return True
 
     def apply_mode(self, mode: str, protocol: str | None = None, stream_id: str | None = None):
@@ -537,15 +594,13 @@ class GuiState:
             self.fail(f"Unsupported mode: {mode}", stream.id)
             return False
         if stream.source == "external":
-            stream.mode = mode
-            stream.protocol = protocol
             try:
-                stream.external_url = validate_external_url(stream.protocol, stream.external_url)
-            except ValueError as exc:
-                self.fail(str(exc), stream.id)
-                return False
-            try:
-                self._persist_stream(stream)
+                with self.control_plane_lock:
+                    stream.mode = mode
+                    stream.protocol = protocol
+                    stream.external_url = validate_external_url(stream.protocol, stream.external_url)
+                    self._persist_stream(stream)
+                    mark_assignment_dirty(self)
             except ValueError as exc:
                 self.fail(str(exc), stream.id)
                 return False
@@ -558,8 +613,10 @@ class GuiState:
         if stream.status == "running":
             self.log(f"Restarting feed for {protocol} {mode} mode", stream.id)
             self.stop(stream.id)
-        stream.mode = mode
-        stream.protocol = protocol
+        with self.control_plane_lock:
+            stream.mode = mode
+            stream.protocol = protocol
+            mark_assignment_dirty(self)
         self._sync_from_active()
         return self.start(stream.id)
 
@@ -645,8 +702,10 @@ class GuiState:
             self.log("External feed has no local process to stop", stream.id)
             return
         if not stream.process or stream.process.poll() is not None:
-            stream.finish_run()
-            stream.process = None
+            with self.control_plane_lock:
+                stream.finish_run()
+                stream.process = None
+                mark_assignment_dirty(self)
             self._sync_from_active()
             self.log("Feed already stopped", stream.id)
             return
@@ -659,8 +718,10 @@ class GuiState:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
             self.log("Killed stuck feed", stream.id)
-        stream.finish_run()
-        stream.process = None
+        with self.control_plane_lock:
+            stream.finish_run()
+            stream.process = None
+            mark_assignment_dirty(self)
         self._sync_from_active()
         self.log("Feed stopped", stream.id)
 
@@ -732,7 +793,9 @@ class GuiState:
         if code not in (None, 0):
             stream = self.streams.get(stream_id)
             if stream:
-                stream.finish_run()
+                with self.control_plane_lock:
+                    stream.finish_run()
+                    mark_assignment_dirty(self)
             detail = f": {last_line}" if last_line else ""
             self.fail(f"Feed process exited with code {code}{detail}", stream_id)
 
@@ -927,11 +990,31 @@ class GuiHandler(BaseHTTPRequestHandler):
             return
         elif self.path == "/api/workers/report":
             payload = self._read_json()
+            if not isinstance(payload, dict):
+                self._send_json({"ok": False, "error": "worker report must be an object"}, status=400)
+                return
             worker_id = payload.get("workerId", "")
             if not worker_id:
-                self.send_error(400)
+                self._send_json({"ok": False, "error": "workerId is required"}, status=400)
                 return
-            self._send_json(apply_worker_report(self.state, worker_id, payload.get("streamIds", []), payload.get("state", {})))
+            try:
+                response = apply_worker_report(
+                    self.state,
+                    worker_id,
+                    payload.get("streamIds", []),
+                    payload.get("state", {}),
+                    payload,
+                )
+            except WorkerReportConflict as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryAssignment": True}, status=409)
+                return
+            except WorkerReportValidationError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=422)
+                return
+            except WorkerReportPersistenceError as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryReport": True}, status=503)
+                return
+            self._send_json(response)
             return
         elif self.path == "/streams/delete":
             params = self._read_form()
@@ -964,9 +1047,9 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _send_json(self, payload):
+    def _send_json(self, payload, status: int = 200):
         encoded = json.dumps(payload).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(encoded)))
@@ -1337,16 +1420,99 @@ def stream_payload(stream: FeedRecord) -> dict:
     }
 
 
+def mark_assignment_dirty(state: GuiState):
+    """Advance the process-local assignment fence after a relevant mutation."""
+
+    with state.control_plane_lock:
+        state.assignment_generation += 1
+        state.assignment_dirty = True
+
+
+def monitoring_stream_contract(stream: FeedRecord) -> dict:
+    return {
+        "id": stream.id,
+        "status": stream.status,
+        "source": stream.source,
+        "protocol": stream.protocol,
+        "mode": stream.mode,
+        "externalUrl": stream.external_url,
+        "feedPort": stream.feed_port,
+        "width": stream.width,
+        "height": stream.height,
+        "framerate": str(stream.framerate),
+        "alertEnabledIds": stream.alert_enabled_ids,
+        "alertDelaySeconds": stream.alert_delay_seconds,
+    }
+
+
+def _expire_workers_locked(state: GuiState, now: float) -> list[str]:
+    active = {worker_id: seen for worker_id, seen in state.worker_seen.items() if now - seen <= WORKER_TTL_SECONDS}
+    if set(active) != set(state.worker_seen):
+        state.worker_seen = active
+        state.assignment_generation += 1
+        state.assignment_dirty = True
+    return sorted(active)
+
+
+def _refresh_assignment_snapshot_locked(state: GuiState, now: float | None = None) -> tuple[list[str], list[FeedRecord], list[dict]]:
+    now = time.time() if now is None else now
+    worker_ids = _expire_workers_locked(state, now)
+    running_streams = sorted(
+        (stream for stream in state.streams.values() if stream.status == "running"),
+        key=lambda item: item.id,
+    )
+    stream_contracts = [monitoring_stream_contract(stream) for stream in running_streams]
+    fingerprint = assignment_fingerprint(worker_ids, stream_contracts)
+    if state.assignment_dirty:
+        state.assignment_fingerprint = fingerprint
+        state.assignment_dirty = False
+    elif fingerprint != state.assignment_fingerprint:
+        state.assignment_generation += 1
+        state.assignment_fingerprint = fingerprint
+    return worker_ids, running_streams, stream_contracts
+
+
+def current_assignment_contract(state: GuiState, worker_id: str, now: float | None = None) -> tuple[AssignmentContract, list[FeedRecord]]:
+    worker_id = worker_id.strip()
+    if not worker_id:
+        raise WorkerReportValidationError("worker_id is required")
+    with state.control_plane_lock:
+        worker_ids, running_streams, stream_contracts = _refresh_assignment_snapshot_locked(state, now)
+        if worker_id not in worker_ids:
+            raise WorkerReportConflict("worker is not registered or its assignment has expired")
+        worker_index = worker_ids.index(worker_id)
+        assigned_streams = [
+            stream for index, stream in enumerate(running_streams) if index % len(worker_ids) == worker_index
+        ]
+        contracts_by_id = {item["id"]: item for item in stream_contracts}
+        assigned_contracts = [contracts_by_id[stream.id] for stream in assigned_streams]
+        contract = AssignmentContract(
+            api_version=WORKER_API_VERSION,
+            control_plane_instance_id=state.control_plane_instance_id,
+            assignment_generation=state.assignment_generation,
+            assignment_token=assignment_token(
+                state.control_plane_instance_id,
+                state.assignment_generation,
+                worker_id,
+                assigned_contracts,
+            ),
+            worker_id=worker_id,
+            stream_ids=tuple(stream.id for stream in assigned_streams),
+        )
+        return contract, assigned_streams
+
+
 def worker_assignments_payload(state: GuiState, worker_id: str, base_url: str) -> dict:
     worker = register_worker(state, worker_id)
-    active_workers = active_worker_ids(state)
-    worker_index = active_workers.index(worker["id"]) if worker["id"] in active_workers else 0
-    streams = [
-        control_plane_stream_payload(stream, base_url, worker["id"])
-        for index, stream in enumerate(sorted(state.streams.values(), key=lambda item: item.id))
-        if stream.status == "running" and (not active_workers or index % len(active_workers) == worker_index)
-    ]
-    return {"workerId": worker["id"], "workers": worker_status_payload(state), "streams": streams}
+    with state.control_plane_lock:
+        contract, assigned_streams = current_assignment_contract(state, worker["id"])
+        streams = [control_plane_stream_payload(stream, base_url, worker["id"]) for stream in assigned_streams]
+        return {
+            **contract.payload(),
+            "workerId": worker["id"],
+            "workers": worker_status_payload(state),
+            "streams": streams,
+        }
 
 
 def control_plane_stream_payload(stream: FeedRecord, base_url: str, worker_id: str) -> dict:
@@ -1363,20 +1529,29 @@ def register_worker(state: GuiState, worker_id: str) -> dict:
     worker_id = worker_id.strip()
     if not worker_id:
         raise ValueError("worker_id is required")
-    with state.monitor_state_lock:
-        state.worker_seen[worker_id] = time.time()
-        return {"id": worker_id, "lastSeenAt": round(state.worker_seen[worker_id], 3)}
+    with state.control_plane_lock:
+        now = time.time()
+        active = _expire_workers_locked(state, now)
+        if worker_id not in active:
+            state.assignment_generation += 1
+            state.assignment_dirty = True
+        state.worker_seen[worker_id] = now
+        return {
+            "id": worker_id,
+            "lastSeenAt": round(now, 3),
+            "apiVersion": WORKER_API_VERSION,
+            "controlPlaneInstanceId": state.control_plane_instance_id,
+        }
 
 
 def active_worker_ids(state: GuiState, now: float | None = None) -> list[str]:
     now = time.time() if now is None else now
-    with state.monitor_state_lock:
-        state.worker_seen = {worker_id: seen for worker_id, seen in state.worker_seen.items() if now - seen <= WORKER_TTL_SECONDS}
-        return sorted(state.worker_seen)
+    with state.control_plane_lock:
+        return _expire_workers_locked(state, now)
 
 
 def worker_status_payload(state: GuiState) -> list[dict]:
-    with state.monitor_state_lock:
+    with state.control_plane_lock:
         return [{"id": worker_id, "lastSeenAt": round(seen, 3)} for worker_id, seen in sorted(state.worker_seen.items())]
 
 
@@ -1532,11 +1707,31 @@ def diagnostics_text(state: GuiState) -> str:
 def monitor_payload(state: GuiState) -> dict:
     path = monitor_state_path(state)
     if not path.is_file():
-        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": [], "connected": False}
+        return {
+            "updatedAt": "",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+            "monitors": monitor_catalog_payload(),
+            "workers": [],
+            "probeMetrics": {},
+            "workerProbeMetrics": {},
+            "connected": False,
+        }
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": [], "connected": False}
+        return {
+            "updatedAt": "",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+            "monitors": monitor_catalog_payload(),
+            "workers": [],
+            "probeMetrics": {},
+            "workerProbeMetrics": {},
+            "connected": False,
+        }
     return {
         "updatedAt": payload.get("updatedAt", ""),
         "alarms": payload.get("alarms", [])[-100:],
@@ -1544,6 +1739,8 @@ def monitor_payload(state: GuiState) -> dict:
         "pending": payload.get("pending", [])[-100:],
         "monitors": payload.get("monitors", []) or monitor_catalog_payload(),
         "workers": payload.get("workers", []),
+        "probeMetrics": payload.get("probeMetrics", {}),
+        "workerProbeMetrics": payload.get("workerProbeMetrics", {}),
         "connected": True,
     }
 
@@ -1562,24 +1759,70 @@ def clear_monitor_events(state: GuiState, stream_id: str) -> bool:
         return write_monitor_payload(path, payload)
 
 
-def apply_worker_report(state: GuiState, worker_id: str, stream_ids: list[str], worker_state: dict) -> dict:
-    register_worker(state, worker_id)
-    stream_ids = {str(stream_id) for stream_id in stream_ids}
-    with state.monitor_state_lock:
-        path = monitor_state_path(state)
-        payload = load_monitor_payload(path)
-        if stream_ids:
-            payload["alarms"] = [alarm for alarm in payload.get("alarms", []) if alarm.get("streamId") not in stream_ids]
-            payload["events"] = [event for event in payload.get("events", []) if event.get("streamId") not in stream_ids]
-            payload["pending"] = [item for item in payload.get("pending", []) if item.get("streamId") not in stream_ids]
-        payload["alarms"].extend(with_worker(item, worker_id) for item in worker_state.get("alarms", []))
-        payload["events"].extend(with_worker(item, worker_id) for item in worker_state.get("events", []))
-        payload["pending"].extend(with_worker(item, worker_id) for item in worker_state.get("pending", []))
-        payload["updatedAt"] = worker_state.get("updatedAt", payload.get("updatedAt", ""))
-        payload["monitors"] = monitor_catalog_payload()
-        payload["workers"] = worker_status_payload(state)
-        write_monitor_payload(path, payload)
-    return {"ok": True, "workerId": worker_id, "streamIds": sorted(stream_ids)}
+def apply_worker_report(
+    state: GuiState,
+    worker_id: str,
+    stream_ids: list[str],
+    worker_state: dict,
+    report_contract: dict | None = None,
+) -> dict:
+    if not isinstance(stream_ids, list) or any(not isinstance(stream_id, str) or not stream_id for stream_id in stream_ids):
+        raise WorkerReportValidationError("streamIds must be an array of non-empty strings")
+    claimed_stream_ids = set(stream_ids)
+    report_contract = report_contract or {}
+
+    with state.control_plane_lock:
+        current_contract, _ = current_assignment_contract(state, worker_id)
+        legacy_contract = validate_report_contract(
+            current_contract,
+            report_contract,
+            allow_legacy=state.allow_legacy_worker_reports,
+        )
+        authoritative_stream_ids = set(current_contract.stream_ids)
+        accepted_stream_ids = claimed_stream_ids & authoritative_stream_ids
+        rejected_stream_ids = claimed_stream_ids - authoritative_stream_ids
+        scoped_state, dropped_items = validate_monitor_items(worker_state, accepted_stream_ids)
+
+        with state.monitor_state_lock:
+            path = monitor_state_path(state)
+            payload = load_monitor_payload(path)
+            if accepted_stream_ids:
+                payload["alarms"] = [
+                    alarm for alarm in payload.get("alarms", []) if alarm.get("streamId") not in accepted_stream_ids
+                ]
+                payload["events"] = [
+                    event for event in payload.get("events", []) if event.get("streamId") not in accepted_stream_ids
+                ]
+                payload["pending"] = [
+                    item for item in payload.get("pending", []) if item.get("streamId") not in accepted_stream_ids
+                ]
+            payload["alarms"].extend(with_worker(item, worker_id) for item in scoped_state["alarms"])
+            payload["events"].extend(with_worker(item, worker_id) for item in scoped_state["events"])
+            payload["pending"].extend(with_worker(item, worker_id) for item in scoped_state["pending"])
+            payload["updatedAt"] = scoped_state.get("updatedAt", payload.get("updatedAt", ""))
+            payload["monitors"] = monitor_catalog_payload()
+            payload["workers"] = worker_status_payload(state)
+            active_worker_ids_set = set(state.worker_seen)
+            payload["workerProbeMetrics"] = {
+                metric_worker_id: metrics
+                for metric_worker_id, metrics in payload.get("workerProbeMetrics", {}).items()
+                if metric_worker_id in active_worker_ids_set
+            }
+            if "probeMetrics" in scoped_state:
+                payload["workerProbeMetrics"][worker_id] = scoped_state["probeMetrics"]
+            if not write_monitor_payload(path, payload):
+                raise WorkerReportPersistenceError("monitor state persistence failed")
+        state.worker_seen[worker_id] = time.time()
+
+    return {
+        "ok": True,
+        "workerId": worker_id,
+        "streamIds": sorted(accepted_stream_ids),
+        "rejectedStreamIds": sorted(rejected_stream_ids),
+        "droppedItems": dropped_items,
+        "legacyContract": legacy_contract,
+        **current_contract.payload(),
+    }
 
 
 def with_worker(item: dict, worker_id: str) -> dict:
@@ -1590,15 +1833,32 @@ def with_worker(item: dict, worker_id: str) -> dict:
 
 def load_monitor_payload(path: Path) -> dict:
     if not path.is_file():
-        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": []}
+        return {
+            "updatedAt": "",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+            "monitors": monitor_catalog_payload(),
+            "workers": [],
+            "workerProbeMetrics": {},
+        }
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload(), "workers": []}
+        return {
+            "updatedAt": "",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+            "monitors": monitor_catalog_payload(),
+            "workers": [],
+            "workerProbeMetrics": {},
+        }
     payload.setdefault("alarms", [])
     payload.setdefault("events", [])
     payload.setdefault("pending", [])
     payload.setdefault("workers", [])
+    payload.setdefault("workerProbeMetrics", {})
     return payload
 
 

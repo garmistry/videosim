@@ -176,12 +176,14 @@ class VideoFeedCliTest(unittest.TestCase):
                     "3",
                     "--srt-host",
                     "app",
+                    "--heartbeat-interval-seconds",
+                    "10",
                     "--once",
                 ]
             )
 
         self.assertEqual(code, 0)
-        worker.assert_called_once_with("http://master:8080", "worker-a", 1.0, 2.0, 3, "app", True)
+        worker.assert_called_once_with("http://master:8080", "worker-a", 1.0, 2.0, 3, "app", True, 10.0)
 
     def test_verbose_feed_logs_pipeline_command_and_pid(self):
         class FakeProcess:

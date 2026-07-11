@@ -86,6 +86,14 @@ The master/worker control-plane slice is additive to the local monitor service.
 | Master rewrites generated DASH monitor endpoints for workers | P1 | implemented | `python3 -m unittest tests.test_gui tests.test_monitor` |
 | Master merges worker alarm/event reports without clearing other workers' streams | P1 | implemented | `python3 -m unittest tests.test_gui` |
 | Worker CLI loop polls assignments, reuses monitor checks, and posts reports | P1 | implemented | `python3 -m unittest tests.test_worker tests.test_cli_video_feed` |
+| Versioned instance/generation/token fencing rejects stale, restart, ABA, and token-mismatch reports | P0 | implemented | `python3 -m unittest tests.test_gui tests.test_worker_api` |
+| Server-derived report scope rejects forged IDs and scopes alarms, events, pending state, and probe metrics | P0 | implemented | `python3 -m unittest tests.test_gui tests.test_worker` |
+| Independent heartbeat keeps a worker registered during a probe batch beyond the configured TTL | P0 | implemented | `python3 -m unittest tests.test_worker` |
+| Worker prunes retained state and refetches after bounded HTTP 409 conflicts | P0 | implemented | `python3 -m unittest tests.test_worker` |
+| Worker API returns typed 409/422/503 failures and never acknowledges failed persistence | P0 | implemented | `python3 -m unittest tests.test_worker_api tests.test_gui` |
+| Probe metrics classify bounded latest-batch success/issue/error/timeout/skipped outcomes | P1 | implemented | `python3 -m unittest tests.test_monitor tests.test_gui` |
+| Concurrent stream allocation and assignment snapshots preserve unique IDs, ports, and ownership | P0 | implemented | `python3 -m unittest tests.test_gui` |
+| In-process control-plane benchmark enforces assignment/report invariants and disclaims media capacity | P1 | implemented | `python3 -m unittest tests.test_distributed_benchmark`; `python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterations 3` |
 | Compose exposes a sample worker node service | P1 | implemented | `docker compose config --quiet` |
 
 ## Milestone Gates

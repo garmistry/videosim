@@ -254,8 +254,35 @@ For a local worker outside Compose:
 python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 --worker-id local-worker
 ```
 
+Workers use the `videosim.worker/v1` assignment/report contract and send an
+independent heartbeat every 20 seconds by default. Override it only with a
+positive interval safely below the current 60-second worker TTL:
+
+```sh
+python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 \
+  --worker-id local-worker --heartbeat-interval-seconds 15
+```
+
+Strict versioned reports are the default. During a controlled same-host upgrade,
+the GUI can temporarily accept old unversioned reporters with
+`--allow-legacy-worker-reports`; this mode still scopes reports to current
+ownership but cannot fence stale generations and must not be used as a
+production setting.
+
 Generated DASH assignments include a master-served manifest URL. Generated SRT
 assignments use the worker's `--srt-host` value to reach listener feeds.
+
+Run the deterministic control-plane-only foundation benchmark:
+
+```sh
+python3 -m videosim control-plane-benchmark \
+  --streams 1000 --workers 10 --iterations 3 --warmup-iterations 1 --seed 17 --json
+```
+
+The report must say `scope=in_process_control_plane_only`,
+`mediaProbesExecuted=false`, and `capacityCertified=false`. It proves assignment
+coverage, unique ownership, contract metadata, and report acceptance in one
+process. It does not run SRT/DASH media checks or satisfy a scale-admission gate.
 
 The monitor also samples MPEG-2 TS bytes and raises TR 101 290 priority 1/2 TS
 alarms plus parser-backed priority 3 PSI/SI, unreferenced-PID, and T-STD timing

@@ -124,6 +124,90 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(reports[0].endpoint, "srt://app:9000?mode=caller")
         self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present", "essence_audio_present"})
 
+    def test_monitor_records_deterministic_probe_and_batch_metrics(self):
+        ticks = iter([0, 1, 1.1, 2, 2.2, 3, 3.3, 4, 4.4, 5])
+
+        state = run_monitor_once(
+            {"streams": [stream()]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=lambda config: ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            ),
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+            monotonic=lambda: next(ticks),
+        )
+
+        metrics = state["probeMetrics"]
+        self.assertEqual(metrics["batchDurationMs"], 5000.0)
+        self.assertEqual(metrics["streamCount"], 1)
+        self.assertEqual(metrics["checkCount"], 4)
+        self.assertEqual(metrics["outcomes"], {"success": 4})
+        self.assertEqual(
+            [(item["check"], item["durationMs"]) for item in metrics["streams"]],
+            [("validation", 100.0), ("tr101", 200.0), ("frame_rate", 300.0), ("loudness", 400.0)],
+        )
+
+    def test_monitor_probe_metrics_classify_issue_timeout_and_skipped(self):
+        ticks = iter([0, 1, 1.1, 2, 2.2, 3])
+
+        state = run_monitor_once(
+            {"streams": [stream()]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=lambda config: ValidationReport(endpoint=config.endpoint, reachable=False),
+            tr101_checker=lambda stream, config: (_ for _ in ()).throw(TimeoutError("sample timed out")),
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: [],
+            monotonic=lambda: next(ticks),
+        )
+
+        metrics = {item["check"]: item for item in state["probeMetrics"]["streams"]}
+        self.assertEqual(metrics["validation"]["outcome"], "issue")
+        self.assertEqual(metrics["tr101"]["outcome"], "timeout")
+        self.assertEqual(metrics["frame_rate"]["outcome"], "skipped")
+        self.assertEqual(metrics["loudness"]["outcome"], "skipped")
+        self.assertEqual(state["probeMetrics"]["outcomes"], {"issue": 1, "timeout": 1, "skipped": 2})
+
+    def test_monitor_probe_metrics_classify_checker_error(self):
+        ticks = iter([0, 1, 1.1, 2, 2.1, 3, 3.2, 4])
+
+        state = run_monitor_once(
+            {"streams": [stream("video_only")]},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=lambda config: ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=False,
+                captions_present=True,
+            ),
+            tr101_checker=lambda stream, config: [],
+            loudness_checker=lambda stream, config: [],
+            frame_rate_checker=lambda stream, config: (_ for _ in ()).throw(RuntimeError("ffprobe crashed")),
+            monotonic=lambda: next(ticks),
+        )
+
+        frame_metric = next(item for item in state["probeMetrics"]["streams"] if item["check"] == "frame_rate")
+        self.assertEqual(frame_metric["outcome"], "error")
+        self.assertEqual(frame_metric["detail"], "ffprobe crashed")
+
     def test_stream_alert_profile_filters_disabled_monitors(self):
         def validator(config):
             return ValidationReport(endpoint=config.endpoint, reachable=True, video_present=False, audio_present=False, captions_present=True)

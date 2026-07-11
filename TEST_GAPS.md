@@ -24,6 +24,25 @@ or the gap is non-critical for a completed milestone:
 These are not skipped for their owning milestones. They are blocked by missing
 implementation and must pass before those milestones advance.
 
+## Distributed Architecture
+
+- Foundation coverage now includes versioned process-instance/generation/token
+  fencing, server-derived report ownership, retained-state pruning, independent
+  heartbeat during a probe batch, typed worker API conflicts/validation/storage
+  errors, scoped probe metrics, concurrent assignment/allocation behavior, and
+  an in-process assignment/report benchmark.
+- The process-local generation/token is not a durable lease and has no
+  multi-replica or control-plane failover proof. PostgreSQL/broker-backed
+  persistence, authenticated worker identity, idempotent results, and durable
+  fencing belong to the next gates in
+  `docs/distributed-implementation-progress.md`.
+- The control-plane benchmark runs no SRT/DASH probes. Representative media
+  load, failure storms, 24-hour soak, security, restore, and 1,000/5,000/10,000
+  admission evidence remain missing and must not be inferred from it.
+- The independent heartbeat currently lacks retry/backoff metrics and a durable
+  worker incarnation. Worker execution remains serial and is not yet
+  capacity-aware or backpressured.
+
 ## Monitoring
 
 - TR 101 290 priority 1/2 indicators and parser-backed priority 3 PSI/SI plus

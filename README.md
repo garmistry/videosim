@@ -96,6 +96,14 @@ docker compose run --build --rm monitor-fixtures
 
 The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
 
+Exercise the versioned in-process worker assignment/report invariants:
+
+```sh
+python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterations 3
+```
+
+This command runs no media probes and is not evidence of 1,000-stream monitoring capacity.
+
 ## Documentation
 
 - [Runbook](RUNBOOK.md): install, run, verify, operate, and troubleshoot.
@@ -108,6 +116,8 @@ The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
 - [Production-readiness scaling audit](docs/production-readiness-audit.md):
   evidence-backed risks, target architecture, capacity model, and roadmap for
   monitoring thousands of streams.
+- [Distributed implementation progress](docs/distributed-implementation-progress.md):
+  active gate checklist and evidence status for implementing that roadmap.
 - [Compatibility report](docs/compatibility-report.md): tested receivers.
 - [Stability report](docs/stability-report.md): soak harness and pending
   long-run evidence.

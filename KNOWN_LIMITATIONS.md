@@ -41,12 +41,21 @@
 - External DASH validation supports reachable MPDs with common `SegmentURL` or
   `SegmentTemplate` media references. Unusual DASH packaging may need a new
   resolver in the validation layer.
-- Master/worker monitoring is a first distributed slice. The GUI process is the
-  only master, workers poll it over plain HTTP, and worker identity is a caller
-  supplied string. It has not been load-tested or certified for 1,000, 5,000,
-  or 10,000 monitored streams; modeled demand must not be treated as measured
-  capacity. See `docs/production-readiness-audit.md` for production blockers,
-  target architecture, migration gates, and required evidence.
+- Master/worker monitoring remains a transitional distributed slice. The GUI
+  process is the only master, workers poll it over plain HTTP, and worker
+  identity is caller supplied. Versioned process-instance/generation/token
+  fencing, server-derived report scope, retained-state pruning, and independent
+  heartbeat prevent known stale-report and long-batch TTL failures in this
+  single-process design, but they are not durable authenticated leases.
+- Strict versioned worker reports are the default. The explicit
+  `--allow-legacy-worker-reports` compatibility mode cannot fence stale
+  generations and is unsuitable for production.
+- The in-process control-plane benchmark opens no media and has not certified
+  1,000, 5,000, or 10,000 monitored streams; modeled or control-plane-only
+  demand must not be treated as measured media capacity. See
+  `docs/production-readiness-audit.md` and
+  `docs/distributed-implementation-progress.md` for remaining blockers and
+  gates.
 
 ## Monitoring
 
@@ -54,12 +63,13 @@
   or event broker.
 - Feed definitions and alert profiles are persisted by the GUI, but monitor
   alarm/event history still lives in the shared JSON monitor state file.
-- Worker registration is in-memory with a 60-second TTL; worker assignments are
-  simple round-robin across active workers and are not capacity-aware.
+- Worker registration and assignment fencing are in-memory with a 60-second
+  TTL. Independent heartbeats keep long probe batches registered, but worker
+  assignments remain simple round-robin and are not capacity-aware.
 - Worker report aggregation still writes the shared JSON monitor state file,
   not a database-backed alarm/event history.
-- There is no worker authentication, TLS, lease fencing, or high-availability
-  master failover yet.
+- There is no worker authentication, TLS, durable lease fencing, or
+  high-availability master failover yet; current fencing is process-local.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

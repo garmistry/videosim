@@ -5,6 +5,11 @@ import shlex
 import sys
 from dataclasses import replace
 
+from .distributed_benchmark import (
+    BenchmarkInvariantError,
+    human_summary as control_plane_benchmark_summary,
+    run_control_plane_benchmark,
+)
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .feed_store import SqliteFeedStore, default_feed_db_path
 from .gui import GuiState, run_gui
@@ -67,7 +72,19 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument("--repeat-interval-seconds", type=float, default=5)
     worker.add_argument("--history-limit", type=int, default=1000)
     worker.add_argument("--srt-host", default="127.0.0.1")
+    worker.add_argument("--heartbeat-interval-seconds", type=float, default=20)
     worker.add_argument("--once", action="store_true", help="poll once and exit")
+
+    control_plane_benchmark = subparsers.add_parser(
+        "control-plane-benchmark",
+        help="benchmark in-process assignment/report integrity without media probes",
+    )
+    control_plane_benchmark.add_argument("--streams", type=int, default=1000)
+    control_plane_benchmark.add_argument("--workers", type=int, default=10)
+    control_plane_benchmark.add_argument("--iterations", type=int, default=5)
+    control_plane_benchmark.add_argument("--warmup-iterations", type=int, default=1)
+    control_plane_benchmark.add_argument("--seed", type=int, default=1)
+    control_plane_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -76,6 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
     gui.add_argument("--width", type=int, default=1280)
     gui.add_argument("--height", type=int, default=720)
     gui.add_argument("--framerate", default="59.94")
+    gui.add_argument(
+        "--allow-legacy-worker-reports",
+        action="store_true",
+        help="temporarily accept unversioned worker reports with ownership scoping but no stale-generation fence",
+    )
 
     soak = subparsers.add_parser("soak", help="run a timed feed soak with periodic validation")
     soak.add_argument("--profile", required=True, help="profile describing expected stream state")
@@ -124,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
                     height=args.height,
                     framerate=args.framerate,
                     feed_store=SqliteFeedStore(default_feed_db_path()),
+                    allow_legacy_worker_reports=args.allow_legacy_worker_reports,
                 ),
             )
             return 0
@@ -215,6 +238,17 @@ def main(argv: list[str] | None = None) -> int:
                 args.once,
             )
 
+        if args.command == "control-plane-benchmark":
+            report = run_control_plane_benchmark(
+                args.streams,
+                args.workers,
+                args.iterations,
+                args.warmup_iterations,
+                args.seed,
+            )
+            print(report.to_json() if args.json else control_plane_benchmark_summary(report))
+            return 0 if report.passed else 1
+
         if args.command == "worker":
             if args.poll_interval_seconds <= 0:
                 raise ValueError("poll_interval_seconds must be greater than 0")
@@ -222,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("repeat_interval_seconds must be greater than 0")
             if args.history_limit < 1:
                 raise ValueError("history_limit must be greater than 0")
+            if args.heartbeat_interval_seconds <= 0:
+                raise ValueError("heartbeat_interval_seconds must be greater than 0")
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
             return run_worker(
@@ -232,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.history_limit,
                 args.srt_host,
                 args.once,
+                args.heartbeat_interval_seconds,
             )
 
         config = load_profile(args.profile) if args.profile else VideoFeedConfig()
@@ -261,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             print(config.endpoint)
             return 0
         return run_video_feed(config)
-    except (FeedError, ProfileError, ValueError) as exc:
+    except (BenchmarkInvariantError, FeedError, ProfileError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
 
 

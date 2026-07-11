@@ -1,9 +1,14 @@
 import json
+import signal
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from videosim.control_plane import WorkerReportConflict, WorkerReportPersistenceError, WorkerReportValidationError
 from videosim.feed_store import SqliteFeedStore
 from videosim.gui import (
     GuiState,
@@ -22,6 +27,10 @@ from videosim.gui import (
     state_payload,
     worker_assignments_payload,
 )
+
+
+def empty_worker_state():
+    return {"updatedAt": "now", "alarms": [], "events": [], "pending": []}
 
 
 class GuiTest(unittest.TestCase):
@@ -211,6 +220,110 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(a_payload["streams"][0]["assignedWorkerId"], "worker-a")
         self.assertEqual(b_payload["streams"][0]["assignedWorkerId"], "worker-b")
 
+    def test_monitoring_configuration_change_advances_assignment_fence(self):
+        state = GuiState()
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        before = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        state.update_alert_profile("stream-1", ["feed_reachable"], 15)
+        after = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        self.assertGreater(after["assignmentGeneration"], before["assignmentGeneration"])
+        self.assertNotEqual(after["assignmentToken"], before["assignmentToken"])
+
+    def test_concurrent_start_and_delete_cannot_leave_detached_process(self):
+        state = GuiState()
+        stream = state.create_stream(name="Generated")
+        process = Mock(pid=4321, stdout=[])
+        process.poll.return_value = None
+        launch_entered = threading.Event()
+        release_launch = threading.Event()
+
+        def launch(*args, **kwargs):
+            launch_entered.set()
+            self.assertTrue(release_launch.wait(timeout=2))
+            return process
+
+        with patch("videosim.gui.subprocess.Popen", side_effect=launch), patch("videosim.gui.os.killpg") as killpg:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                start = executor.submit(state.start, stream.id)
+                self.assertTrue(launch_entered.wait(timeout=2))
+                delete = executor.submit(state.delete_stream, stream.id)
+                time.sleep(0.02)
+                self.assertFalse(delete.done())
+                release_launch.set()
+                self.assertTrue(start.result(timeout=2))
+                self.assertTrue(delete.result(timeout=2))
+
+        self.assertNotIn(stream.id, state.streams)
+        self.assertIsNone(stream.process)
+        killpg.assert_called_once_with(4321, signal.SIGINT)
+
+    def test_concurrent_stream_creates_reserve_unique_ids_and_ports(self):
+        state = GuiState(feed_port=12000)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            streams = list(
+                executor.map(
+                    lambda index: state.create_stream(name=f"Feed {index}", select=False),
+                    range(40),
+                )
+            )
+
+        self.assertEqual(len({stream.id for stream in streams}), 40)
+        self.assertEqual(len({stream.feed_port for stream in streams}), 40)
+        self.assertEqual(len(state.streams), 40)
+
+    def test_assignment_reads_remain_consistent_during_concurrent_creates(self):
+        state = GuiState(feed_port=13000)
+        worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        def create(index):
+            return state.create_stream(
+                name=f"Feed {index}",
+                source="external",
+                external_url=f"srt://camera-{index}.local:9000?mode=caller",
+                select=False,
+            )
+
+        def read_assignments(_):
+            return worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(create, index) for index in range(30)]
+            futures.extend(executor.submit(read_assignments, index) for index in range(30))
+            for future in futures:
+                future.result()
+
+        final = worker_assignments_payload(state, "worker-a", "http://master:8080")
+        self.assertEqual({stream["id"] for stream in final["streams"]}, set(state.streams))
+
+    def test_concurrent_worker_assignment_reads_share_one_generation_and_unique_owners(self):
+        state = GuiState()
+        for index in range(40):
+            state.create_stream(
+                name=f"Camera {index}",
+                source="external",
+                external_url=f"srt://camera-{index}.local:9000?mode=caller",
+                select=False,
+            )
+        worker_ids = [f"worker-{index}" for index in range(4)]
+        for worker_id in worker_ids:
+            worker_assignments_payload(state, worker_id, "http://master:8080")
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            payloads = list(
+                executor.map(
+                    lambda worker_id: worker_assignments_payload(state, worker_id, "http://master:8080"),
+                    worker_ids,
+                )
+            )
+
+        self.assertEqual(len({payload["assignmentGeneration"] for payload in payloads}), 1)
+        owners = [stream["id"] for payload in payloads for stream in payload["streams"]]
+        self.assertEqual(len(owners), 40)
+        self.assertEqual(len(set(owners)), 40)
+
     def test_worker_assignment_rewrites_generated_dash_monitor_endpoint_to_master_url(self):
         state = GuiState(http_port=8080)
         stream = state.create_stream(name="Dash", protocol="dash")
@@ -246,6 +359,9 @@ class GuiTest(unittest.TestCase):
                 encoding="utf-8",
             )
             state = GuiState(monitor_state_path=str(path))
+            state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+            state.create_stream(name="Camera B", source="external", external_url="srt://camera-b.local:9000?mode=caller")
+            assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
 
             response = apply_worker_report(
                 state,
@@ -257,6 +373,7 @@ class GuiTest(unittest.TestCase):
                     "events": [{"id": "event-new", "streamId": "stream-1"}],
                     "pending": [{"id": "pending-new", "streamId": "stream-1"}],
                 },
+                assignment,
             )
             payload = json.loads(path.read_text(encoding="utf-8"))
 
@@ -267,6 +384,229 @@ class GuiTest(unittest.TestCase):
         self.assertEqual(payload["events"][1]["workerId"], "worker-a")
         self.assertEqual([item["id"] for item in payload["pending"]], ["pending-2", "pending-new"])
         self.assertEqual(payload["workers"][0]["id"], "worker-a")
+        self.assertFalse(response["legacyContract"])
+        self.assertEqual(response["rejectedStreamIds"], [])
+
+    def test_worker_report_rejects_stale_generation_without_mutating_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            original = {"updatedAt": "old", "alarms": [], "events": [], "pending": []}
+            path.write_text(json.dumps(original), encoding="utf-8")
+            state = GuiState(monitor_state_path=str(path), control_plane_instance_id="master-a")
+            state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+            stale = worker_assignments_payload(state, "worker-a", "http://master:8080")
+            worker_assignments_payload(state, "worker-b", "http://master:8080")
+
+            with self.assertRaises(WorkerReportConflict):
+                apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), stale)
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+
+    def test_worker_report_rejects_assignment_token_mismatch(self):
+        state = GuiState(control_plane_instance_id="master-a")
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+        assignment["assignmentToken"] = "forged"
+
+        with self.assertRaises(WorkerReportConflict):
+            apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), assignment)
+
+    def test_worker_report_rejects_non_integer_assignment_generation(self):
+        for invalid in (True, "3", 3.0):
+            with self.subTest(invalid=invalid):
+                state = GuiState(control_plane_instance_id="master-a")
+                state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+                assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+                assignment["assignmentGeneration"] = invalid
+
+                with self.assertRaises(WorkerReportValidationError):
+                    apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), assignment)
+
+    def test_worker_report_rejects_control_plane_instance_mismatch(self):
+        state = GuiState(control_plane_instance_id="master-a")
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+        assignment["controlPlaneInstanceId"] = "master-before-restart"
+
+        with self.assertRaises(WorkerReportConflict):
+            apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), assignment)
+
+    def test_expired_worker_must_refetch_before_reporting_after_rejoin(self):
+        state = GuiState(control_plane_instance_id="master-a")
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        old_assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+        with state.control_plane_lock:
+            state.worker_seen["worker-a"] = 0
+        self.assertEqual(state.worker_seen.get("worker-a"), 0)
+        with patch("videosim.gui.time.time", return_value=1000):
+            current_assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+            self.assertGreater(current_assignment["assignmentGeneration"], old_assignment["assignmentGeneration"])
+            with self.assertRaises(WorkerReportConflict):
+                apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), old_assignment)
+
+    def test_assignment_generation_prevents_aba_topology_report(self):
+        state = GuiState(control_plane_instance_id="master-a")
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        old_assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+        worker_assignments_payload(state, "worker-b", "http://master:8080")
+        with state.control_plane_lock:
+            state.worker_seen.pop("worker-b")
+            state.assignment_generation += 1
+            state.assignment_dirty = True
+        current_assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        self.assertEqual(
+            [item["id"] for item in old_assignment["streams"]],
+            [item["id"] for item in current_assignment["streams"]],
+        )
+        self.assertGreater(current_assignment["assignmentGeneration"], old_assignment["assignmentGeneration"])
+        with self.assertRaises(WorkerReportConflict):
+            apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), old_assignment)
+
+    def test_worker_report_scopes_claims_and_every_state_collection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "updatedAt": "old",
+                        "alarms": [{"id": "stream-2:old", "streamId": "stream-2"}],
+                        "events": [{"id": "event-2-old", "streamId": "stream-2"}],
+                        "pending": [{"id": "pending-2-old", "streamId": "stream-2"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = GuiState(monitor_state_path=str(path), control_plane_instance_id="master-a")
+            state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+            state.create_stream(name="Camera B", source="external", external_url="srt://camera-b.local:9000?mode=caller")
+            worker_assignments_payload(state, "worker-a", "http://master:8080")
+            worker_assignments_payload(state, "worker-b", "http://master:8080")
+            assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+            worker_state = {
+                "updatedAt": "new",
+                "alarms": [
+                    {"id": "stream-1:new", "streamId": "stream-1"},
+                    {"id": "stream-2:forged", "streamId": "stream-2"},
+                ],
+                "events": [
+                    {"id": "event-1-new", "streamId": "stream-1"},
+                    {"id": "event-2-forged", "streamId": "stream-2"},
+                ],
+                "pending": [
+                    {"id": "pending-1-new", "streamId": "stream-1"},
+                    {"id": "pending-2-forged", "streamId": "stream-2"},
+                ],
+                "probeMetrics": {
+                    "observedAt": "new",
+                    "batchDurationMs": 50,
+                    "streamCount": 2,
+                    "checkCount": 2,
+                    "outcomes": {"success": 2},
+                    "streams": [
+                        {"streamId": "stream-1", "check": "validation", "outcome": "success"},
+                        {"streamId": "stream-2", "check": "validation", "outcome": "success"},
+                    ],
+                },
+            }
+
+            response = apply_worker_report(
+                state,
+                "worker-a",
+                ["stream-1", "stream-2"],
+                worker_state,
+                assignment,
+            )
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(response["streamIds"], ["stream-1"])
+        self.assertEqual(response["rejectedStreamIds"], ["stream-2"])
+        self.assertEqual(response["droppedItems"]["alarms"], ["stream-2:forged"])
+        self.assertEqual(response["droppedItems"]["events"], ["event-2-forged"])
+        self.assertEqual(response["droppedItems"]["pending"], ["pending-2-forged"])
+        self.assertEqual(response["droppedItems"]["probeMetrics"], ["stream-2:validation"])
+        worker_metrics = payload["workerProbeMetrics"]["worker-a"]
+        self.assertEqual(worker_metrics["streamCount"], 1)
+        self.assertEqual(worker_metrics["checkCount"], 1)
+        self.assertEqual(worker_metrics["outcomes"], {"success": 1})
+        self.assertEqual([item["streamId"] for item in worker_metrics["streams"]], ["stream-1"])
+        self.assertEqual({item["id"] for item in payload["alarms"]}, {"stream-1:new", "stream-2:old"})
+        self.assertEqual({item["id"] for item in payload["events"]}, {"event-1-new", "event-2-old"})
+        self.assertEqual({item["id"] for item in payload["pending"]}, {"pending-1-new", "pending-2-old"})
+
+    def test_worker_report_retires_probe_metrics_for_inactive_workers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitor.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "updatedAt": "old",
+                        "alarms": [],
+                        "events": [],
+                        "pending": [],
+                        "workerProbeMetrics": {"expired-worker": {"checkCount": 99}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = GuiState(monitor_state_path=str(path))
+            state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+            assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+            apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), assignment)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["workerProbeMetrics"], {})
+
+    def test_worker_report_does_not_acknowledge_monitor_persistence_failure(self):
+        state = GuiState()
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        with patch("videosim.gui.write_monitor_payload", return_value=False), self.assertRaises(WorkerReportPersistenceError):
+            apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state(), assignment)
+
+    def test_worker_report_rejects_malformed_monitor_items(self):
+        state = GuiState()
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        assignment = worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        with self.assertRaises(WorkerReportValidationError):
+            apply_worker_report(
+                state,
+                "worker-a",
+                ["stream-1"],
+                {"updatedAt": "new", "alarms": [{"id": "missing-stream"}], "events": [], "pending": []},
+                assignment,
+            )
+
+    def test_legacy_worker_report_is_visible_and_still_scoped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = GuiState(
+                monitor_state_path=str(Path(directory) / "monitor.json"),
+                allow_legacy_worker_reports=True,
+            )
+            state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+            worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+            response = apply_worker_report(
+                state,
+                "worker-a",
+                ["stream-1", "stream-forged"],
+                empty_worker_state(),
+            )
+
+        self.assertTrue(response["legacyContract"])
+        self.assertEqual(response["streamIds"], ["stream-1"])
+        self.assertEqual(response["rejectedStreamIds"], ["stream-forged"])
+
+    def test_unversioned_worker_report_can_be_disabled(self):
+        state = GuiState(allow_legacy_worker_reports=False)
+        state.create_stream(name="Camera A", source="external", external_url="srt://camera-a.local:9000?mode=caller")
+        worker_assignments_payload(state, "worker-a", "http://master:8080")
+
+        with self.assertRaises(WorkerReportConflict):
+            apply_worker_report(state, "worker-a", ["stream-1"], empty_worker_state())
 
     def test_stream_metrics_payload_updates_for_each_running_feed(self):
         state = GuiState(feed_port=9912, width=320, height=180, framerate=10)

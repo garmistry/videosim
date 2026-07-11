@@ -49,6 +49,38 @@ def empty_monitor_state() -> dict:
     return {"updatedAt": "", "alarms": [], "events": [], "pending": [], "monitors": monitor_catalog_payload()}
 
 
+def monitor_state_for_stream_ids(state: dict, stream_ids: set[str]) -> dict:
+    """Return monitor state scoped to the worker's current assignment."""
+
+    scoped = dict(state)
+    for collection in ("alarms", "events", "pending"):
+        scoped[collection] = [
+            dict(item)
+            for item in state.get(collection, [])
+            if isinstance(item, dict) and item.get("streamId") in stream_ids
+        ]
+    metrics = state.get("probeMetrics")
+    if isinstance(metrics, dict):
+        metrics = dict(metrics)
+        per_stream = metrics.get("streams")
+        if isinstance(per_stream, list):
+            filtered = [
+                dict(item)
+                for item in per_stream
+                if isinstance(item, dict) and item.get("streamId") in stream_ids
+            ]
+            outcomes: dict[str, int] = {}
+            for item in filtered:
+                outcome = str(item.get("outcome", "unknown"))
+                outcomes[outcome] = outcomes.get(outcome, 0) + 1
+            metrics["streams"] = filtered
+            metrics["streamCount"] = len({item["streamId"] for item in filtered})
+            metrics["checkCount"] = len(filtered)
+            metrics["outcomes"] = outcomes
+        scoped["probeMetrics"] = metrics
+    return scoped
+
+
 def load_monitor_state(path: str | Path) -> dict:
     file_path = Path(path)
     if not file_path.is_file():
@@ -341,36 +373,99 @@ def run_monitor_once(
     tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = tr101_issues_for_stream,
     loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = loudness_issues_for_stream,
     frame_rate_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = frame_rate_issues_for_stream,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> dict:
     issues = []
+    probe_metrics = []
+    batch_started = monotonic()
+
+    def record(stream: dict, check: str, outcome: str, started: float | None = None, detail: str = ""):
+        duration_ms = 0.0 if started is None else max(0.0, (monotonic() - started) * 1000)
+        item = {
+            "streamId": stream["id"],
+            "protocol": stream.get("protocol", "unknown"),
+            "source": stream.get("source", "generated"),
+            "check": check,
+            "outcome": outcome,
+            "durationMs": round(duration_ms, 3),
+        }
+        if detail:
+            item["detail"] = detail[:200]
+        probe_metrics.append(item)
+
     for stream in gui_state.get("streams", []):
         if stream.get("status") != "running":
             continue
         config = None
+        validation_started = monotonic()
         try:
             config = config_for_stream(stream, srt_host)
             report = validator(config)
+            validation_issues = issues_for_report(stream, report)
+            record(stream, "validation", "issue" if validation_issues else "success", validation_started)
         except Exception as exc:  # ponytail: monitor stays alive; classify probe crashes as feed reachability alarms.
             report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
-        issues.extend(issues_for_report(stream, report))
+            validation_issues = issues_for_report(stream, report)
+            outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+            record(stream, "validation", outcome, validation_started, str(exc))
+        issues.extend(validation_issues)
         if config is None:
+            record(stream, "tr101", "skipped", detail="validation configuration unavailable")
+            record(stream, "frame_rate", "skipped", detail="validation configuration unavailable")
+            record(stream, "loudness", "skipped", detail="validation configuration unavailable")
             continue
+
+        tr101_started = monotonic()
         try:
-            issues.extend(tr101_checker(stream, config))
-        except Exception:
-            pass
-        if stream.get("source") != "external" and report.video_present:
+            tr101_issues = tr101_checker(stream, config)
+            issues.extend(tr101_issues)
+            record(stream, "tr101", "issue" if tr101_issues else "success", tr101_started)
+        except Exception as exc:
+            outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+            record(stream, "tr101", outcome, tr101_started, str(exc))
+
+        if stream.get("source") == "external":
+            record(stream, "frame_rate", "skipped", detail="external feed has no configured frame-rate expectation")
+        elif not report.video_present:
+            record(stream, "frame_rate", "skipped", detail="video is not present")
+        else:
+            frame_started = monotonic()
             try:
-                issues.extend(frame_rate_checker(stream, config))
-            except Exception:
-                pass
-        if stream.get("source") != "external" and report.audio_present:
+                frame_issues = frame_rate_checker(stream, config)
+                issues.extend(frame_issues)
+                record(stream, "frame_rate", "issue" if frame_issues else "success", frame_started)
+            except Exception as exc:
+                outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+                record(stream, "frame_rate", outcome, frame_started, str(exc))
+
+        if stream.get("source") == "external":
+            record(stream, "loudness", "skipped", detail="external feed has no configured loudness expectation")
+        elif not report.audio_present:
+            record(stream, "loudness", "skipped", detail="audio is not present")
+        else:
+            loudness_started = monotonic()
             try:
-                issues.extend(loudness_checker(stream, config))
-            except Exception:
-                pass
+                loudness_issues = loudness_checker(stream, config)
+                issues.extend(loudness_issues)
+                record(stream, "loudness", "issue" if loudness_issues else "success", loudness_started)
+            except Exception as exc:
+                outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+                record(stream, "loudness", outcome, loudness_started, str(exc))
+
     issues = apply_alert_profiles(state, gui_state.get("streams", []), issues, now)
-    return apply_issues(state, issues, now, repeat_seconds, history_limit)
+    result = apply_issues(state, issues, now, repeat_seconds, history_limit)
+    outcomes: dict[str, int] = {}
+    for item in probe_metrics:
+        outcomes[item["outcome"]] = outcomes.get(item["outcome"], 0) + 1
+    result["probeMetrics"] = {
+        "observedAt": iso(now),
+        "batchDurationMs": round(max(0.0, (monotonic() - batch_started) * 1000), 3),
+        "streamCount": len({item["streamId"] for item in probe_metrics}),
+        "checkCount": len(probe_metrics),
+        "outcomes": outcomes,
+        "streams": probe_metrics,
+    }
+    return result
 
 
 def run_monitor(

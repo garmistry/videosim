@@ -15,6 +15,9 @@ The production deployment uses two identity planes:
   expected origin injected by Nginx; oauth2-proxy cookies are Secure and
   SameSite=Lax with per-request login CSRF cookies.
 
+Verified worker and OIDC operator subjects longer than 512 characters are
+rejected before they can enter durable audit storage.
+
 The app's plain HTTP port is internal-only in `docker-compose.production.yml`.
 Identity headers are trusted only when `VIDEOSIM_SECURITY_MODE=trusted-proxy`
 and the request also carries a constant-time validated, 32+ character
@@ -33,8 +36,10 @@ outside the proxy-to-app hop.
    commit private keys.
 5. Copy `.env.production.example` to a protected environment file and replace
    every placeholder. Generate the proxy secret with at least 32 random bytes,
-   plus distinct URL-safe PostgreSQL and NATS credentials. Keep the environment
-   file out of source control.
+   plus distinct URL-safe PostgreSQL owner, app, publisher, pruner, and NATS
+   credentials. The three runtime-role passwords must differ from each other
+   and from the owner/migration password. Keep the environment file out of
+   source control.
 6. Restrict VM/container networking so only Nginx reaches app TCP 8080, only
    approved worker networks reach Nginx TCP 9443, and PostgreSQL 5432/NATS 4222
    remain private to approved control-plane services. The single-host Compose
@@ -91,9 +96,24 @@ all non-worker POST actions require an admin identity plus a same-origin CSRF
 check. Viewer feed-detail and root requests use request-local selection views
 and do not mutate shared GUI state.
 
-Structured authorization events are written to stdout with the
-`[videosim-audit]` prefix. Durable tamper-resistant audit storage remains part of
-the durable-control-plane gate.
+Structured authorization events are always written to stdout with the
+`[videosim-audit]` prefix. In PostgreSQL mode, selective durable audit records
+also cover denied proxy/worker/operator authentication or authorization and
+successful persistent feed/profile mutations. Successful persistent writes commit
+with their immutable audit/outbox event or fail closed with HTTP 503; denial
+persistence is best-effort so an audit-store outage leaves the request denied and
+emits a stdout audit-gap event. Allowed reads/workers and local runtime actions
+remain stdout-only to avoid poll-volume audit traffic.
+
+Migration 004 makes `audit_events` append-only and protects outbox identity and
+content while retaining publisher delivery-state updates. Migration 005 preserves
+feed generations across deletion to prevent stale configuration ABA updates.
+Compose runs the GUI, publisher, and history pruner as separate non-owner roles.
+The owner-only role
+initializer removes unexpected role memberships, grants, and ownership before
+migrations; the post-migration grant service reapplies only each service's
+required rights. This is tamper resistance against routine runtime credentials,
+not a WORM archive or protection against a PostgreSQL owner/superuser.
 
 ## Input and egress controls
 
@@ -132,7 +152,9 @@ keys must still be rotated by the VM secret/certificate manager.
 This slice authenticates the deployed proxy boundary but does not yet provide:
 
 - Durable tenant records or resource-level multi-tenant authorization.
-- Database-backed immutable audit history.
+- An external/WORM audit archive, audit retention policy, and durable audit
+  coverage for allowed reads/workers/local runtime actions. Denial persistence is
+  intentionally best-effort when the database/outbox is unavailable.
 - Managed worker certificate revocation/rotation evidence and multi-node lease
   failover (durable incarnations/leases exist in PostgreSQL worker v2).
 - Automated certificate issuance/rotation.

@@ -80,6 +80,10 @@ WORKER_TTL_SECONDS = 60
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
 
+class OperatorMutationPersistenceError(RuntimeError):
+    """A persistent operator mutation could not commit with its audit row."""
+
+
 def controls_for_mode(mode: str) -> dict[str, bool]:
     return dict(MODE_CONTROLS.get(mode, MODE_CONTROLS["normal"]))
 
@@ -199,6 +203,8 @@ class FeedRecord:
     last_outbound_bytes: int = 0
     alert_enabled_ids: list[str] | None = None
     alert_delay_seconds: int = 0
+    # PostgreSQL-only optimistic fence. It is not part of persisted config.
+    config_version: int = 0
 
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
@@ -206,6 +212,8 @@ class FeedRecord:
         self.external_url = validate_external_url(self.protocol, self.external_url) if self.source == "external" else ""
         self.alert_enabled_ids = normalize_enabled_alerts(self.alert_enabled_ids)
         self.alert_delay_seconds = normalize_alert_delay(self.alert_delay_seconds)
+        if not isinstance(self.config_version, int) or self.config_version < 0:
+            raise ValueError("config_version must be a non-negative integer")
 
     @property
     def endpoint(self) -> str:
@@ -360,6 +368,7 @@ class GuiState:
         height: int | None = None,
         framerate: str | int | float | None = None,
         select: bool = True,
+        audit: dict | None = None,
     ) -> FeedRecord:
         if protocol not in PROTOCOL_OPTIONS:
             raise ValueError(f"Unsupported protocol: {protocol}")
@@ -367,8 +376,8 @@ class GuiState:
             raise ValueError(f"Unsupported mode: {mode}")
         source = normalize_source(source)
         with self.control_plane_lock:
-            stream_id = f"stream-{self._next_stream_number}"
-            self._next_stream_number += 1
+            stream_number = self._next_stream_number
+            stream_id = f"stream-{stream_number}"
             feed_port = feed_port or self.next_available_port()
             stream = FeedRecord(
                 id=stream_id,
@@ -387,8 +396,9 @@ class GuiState:
             )
             if stream.source == "external":
                 self.security.validate_external_endpoint(stream.external_url)
-            self._persist_stream(stream)
+            self._persist_stream(stream, audit=audit)
             self.streams[stream_id] = stream
+            self._next_stream_number = stream_number + 1
             mark_assignment_dirty(self)
         if select:
             self.select_stream(stream_id)
@@ -415,6 +425,16 @@ class GuiState:
         self.selected_stream_id = ""
         self._sync_from_active()
 
+    def _ensure_current_stream_locked(self, stream: FeedRecord, operation: str) -> bool:
+        """Reject a stale mutation after a concurrent delete has started."""
+        if (
+            self.streams.get(stream.id) is not stream
+            or stream.id in self.deleting_stream_ids
+        ):
+            self.fail(f"Stream changed during {operation}: {stream.id}", stream.id)
+            return False
+        return True
+
     def update_stream(
         self,
         stream_id: str,
@@ -424,11 +444,13 @@ class GuiState:
         source: str | None = None,
         external_url: str | None = None,
         framerate: str | int | float | None = None,
+        audit: dict | None = None,
     ) -> bool:
-        if stream_id not in self.streams:
+        with self.control_plane_lock:
+            stream = self.streams.get(stream_id)
+        if stream is None:
             self.fail(f"Unsupported stream: {stream_id}")
             return False
-        stream = self.streams[stream_id]
         next_protocol = protocol if protocol is not None else stream.protocol
         next_mode = mode if mode is not None else stream.mode
         next_source = normalize_source(source if source is not None else stream.source)
@@ -444,38 +466,72 @@ class GuiState:
         if next_source == "external":
             self.security.validate_external_endpoint(next_external_url)
         restart = stream.source == "generated" and stream.status == "running"
-        if restart:
-            self.stop(stream_id)
         with self.control_plane_lock:
-            if self.streams.get(stream_id) is not stream:
-                self.fail(f"Stream changed during update: {stream_id}")
+            if not self._ensure_current_stream_locked(stream, "update"):
                 return False
+            candidate = copy.copy(stream)
             if name is not None and name.strip():
-                stream.name = name.strip()
-            stream.protocol = next_protocol
-            stream.mode = next_mode
-            if stream.source != next_source:
-                stream.alert_enabled_ids = [] if next_source == "external" else None
-            stream.source = next_source
-            stream.external_url = next_external_url
-            stream.framerate = next_framerate
-            self._persist_stream(stream)
+                candidate.name = name.strip()
+            candidate.protocol = next_protocol
+            candidate.mode = next_mode
+            if candidate.source != next_source:
+                candidate.alert_enabled_ids = [] if next_source == "external" else None
+            candidate.source = next_source
+            candidate.external_url = next_external_url
+            candidate.framerate = next_framerate
+            self._persist_stream(candidate, audit=audit)
+            for field_name in (
+                "name",
+                "protocol",
+                "mode",
+                "source",
+                "external_url",
+                "framerate",
+                "alert_enabled_ids",
+                "config_version",
+            ):
+                setattr(stream, field_name, getattr(candidate, field_name))
             mark_assignment_dirty(self)
         self.select_stream(stream_id)
+        if restart:
+            self.log("Stopping feed after committed configuration update", stream.id)
+            if not self._terminate_stream_process(stream):
+                self.fail(
+                    "Configuration committed, but the previous process could not be stopped",
+                    stream.id,
+                )
+                return False
+            with self.control_plane_lock:
+                mark_assignment_dirty(self)
+            self._sync_from_active()
+            self.log("Previous feed process stopped", stream.id)
         if restart and stream.source == "generated":
             return self.start(stream_id)
         return True
 
-    def update_alert_profile(self, stream_id: str, enabled_ids: list[str] | None, delay_seconds) -> bool:
-        if stream_id not in self.streams:
+    def update_alert_profile(
+        self,
+        stream_id: str,
+        enabled_ids: list[str] | None,
+        delay_seconds,
+        audit: dict | None = None,
+    ) -> bool:
+        with self.control_plane_lock:
+            stream = self.streams.get(stream_id)
+        if stream is None:
             self.fail(f"Unsupported stream: {stream_id}")
             return False
-        stream = self.streams[stream_id]
         try:
             with self.control_plane_lock:
-                stream.alert_enabled_ids = normalize_enabled_alerts(enabled_ids)
-                stream.alert_delay_seconds = normalize_alert_delay(delay_seconds)
-                self._persist_stream(stream)
+                if not self._ensure_current_stream_locked(stream, "alert profile update"):
+                    return False
+                candidate = copy.copy(stream)
+                candidate.alert_enabled_ids = normalize_enabled_alerts(enabled_ids)
+                candidate.alert_delay_seconds = normalize_alert_delay(delay_seconds)
+                self._persist_stream(candidate, audit=audit)
+                stream.alert_enabled_ids = candidate.alert_enabled_ids
+                stream.alert_delay_seconds = candidate.alert_delay_seconds
+                stream.config_version = candidate.config_version
                 mark_assignment_dirty(self)
         except ValueError as exc:
             self.fail(str(exc), stream_id)
@@ -483,7 +539,9 @@ class GuiState:
         self.select_stream(stream_id)
         return True
 
-    def delete_stream(self, stream_id: str) -> bool:
+    def delete_stream(
+        self, stream_id: str, audit: dict | None = None
+    ) -> bool:
         with self.control_plane_lock:
             if stream_id not in self.streams:
                 self.fail(f"Unsupported stream: {stream_id}")
@@ -491,12 +549,19 @@ class GuiState:
             if stream_id in self.deleting_stream_ids:
                 return False
             self.deleting_stream_ids.add(stream_id)
+        stream = None
         try:
-            self.stop(stream_id)
             with self.control_plane_lock:
-                if stream_id not in self.streams:
+                stream = self.streams.get(stream_id)
+                if stream is None:
                     return False
-                self._delete_persisted_stream(stream_id)
+                # Commit the persistent delete and immutable audit first. A
+                # failed audit transaction must not stop or remove the feed.
+                self._delete_persisted_stream(
+                    stream_id, audit=audit, expected_version=stream.config_version
+                )
+                # The committed durable delete is now the control-plane truth;
+                # publish it in memory before best-effort local cleanup.
                 del self.streams[stream_id]
                 mark_assignment_dirty(self)
         except ValueError as exc:
@@ -511,6 +576,19 @@ class GuiState:
             self.select_stream(next(iter(self.streams)))
         elif not self.streams:
             self._sync_from_active()
+        if (
+            stream is not None
+            and stream.source == "generated"
+            and not self._terminate_stream_process(stream)
+        ):
+            self.fail(
+                f"Feed {stream_id} was deleted, but local process cleanup is retrying"
+            )
+            threading.Thread(
+                target=self._retry_detached_process_cleanup,
+                args=(stream,),
+                daemon=True,
+            ).start()
         return True
 
     def stop_all(self):
@@ -537,8 +615,8 @@ class GuiState:
         self.validation_output = stream.validation_output
 
     def start(self, stream_id: str | None = None):
-        if stream_id:
-            self.select_stream(stream_id)
+        if stream_id and not self.select_stream(stream_id):
+            return False
         stream = self.active_stream
         if not stream:
             self.fail("Create a feed before starting")
@@ -618,9 +696,15 @@ class GuiState:
         threading.Thread(target=self._capture_logs, args=(stream.id, process), daemon=True).start()
         return True
 
-    def apply_mode(self, mode: str, protocol: str | None = None, stream_id: str | None = None):
-        if stream_id:
-            self.select_stream(stream_id)
+    def apply_mode(
+        self,
+        mode: str,
+        protocol: str | None = None,
+        stream_id: str | None = None,
+        audit: dict | None = None,
+    ):
+        if stream_id and not self.select_stream(stream_id):
+            return False
         stream = self.active_stream
         if not stream:
             self.fail("Create a feed before starting")
@@ -632,14 +716,29 @@ class GuiState:
         if mode not in PROFILE_OPTIONS:
             self.fail(f"Unsupported mode: {mode}", stream.id)
             return False
+        changed = mode != stream.mode or protocol != stream.protocol
         if stream.source == "external":
+            if not changed:
+                self.log("External feed expectation is unchanged", stream.id)
+                return True
             try:
                 with self.control_plane_lock:
-                    stream.mode = mode
-                    stream.protocol = protocol
-                    stream.external_url = validate_external_url(stream.protocol, stream.external_url)
-                    self.security.validate_external_endpoint(stream.external_url)
-                    self._persist_stream(stream)
+                    if not self._ensure_current_stream_locked(
+                        stream, "mode update"
+                    ):
+                        return False
+                    candidate = copy.copy(stream)
+                    candidate.mode = mode
+                    candidate.protocol = protocol
+                    candidate.external_url = validate_external_url(
+                        candidate.protocol, candidate.external_url
+                    )
+                    self.security.validate_external_endpoint(candidate.external_url)
+                    self._persist_stream(candidate, audit=audit)
+                    stream.mode = candidate.mode
+                    stream.protocol = candidate.protocol
+                    stream.external_url = candidate.external_url
+                    stream.config_version = candidate.config_version
                     mark_assignment_dirty(self)
             except (AuthorizationError, ValueError) as exc:
                 self.fail(str(exc), stream.id)
@@ -647,22 +746,38 @@ class GuiState:
             self._sync_from_active()
             self.log(f"Updated external feed expectation to {protocol} {mode}", stream.id)
             return True
-        if stream.status == "running" and mode == stream.mode and protocol == stream.protocol:
-            self.log("Feed already running", stream.id)
-            return True
-        if stream.status == "running":
-            self.log(f"Restarting feed for {protocol} {mode} mode", stream.id)
-            self.stop(stream.id)
+        was_running = stream.status == "running"
+        if not changed:
+            if was_running:
+                self.log("Feed already running", stream.id)
+                return True
+            return self.start(stream.id)
+        # Commit generated-feed expectation plus audit before local stop/start.
         with self.control_plane_lock:
-            stream.mode = mode
-            stream.protocol = protocol
+            if not self._ensure_current_stream_locked(stream, "mode update"):
+                return False
+            candidate = copy.copy(stream)
+            candidate.mode = mode
+            candidate.protocol = protocol
+            self._persist_stream(candidate, audit=audit)
+            stream.mode = candidate.mode
+            stream.protocol = candidate.protocol
+            stream.config_version = candidate.config_version
             mark_assignment_dirty(self)
         self._sync_from_active()
+        if was_running:
+            self.log(f"Restarting feed for {protocol} {mode} mode", stream.id)
+            if not self.stop(stream.id):
+                self.fail(
+                    "Expectation committed, but the previous process could not be stopped",
+                    stream.id,
+                )
+                return False
         return self.start(stream.id)
 
     def validate(self, stream_id: str | None = None):
-        if stream_id:
-            self.select_stream(stream_id)
+        if stream_id and not self.select_stream(stream_id):
+            return False
         stream = self.active_stream
         if not stream:
             self.fail("Create a feed before validating")
@@ -731,16 +846,65 @@ class GuiState:
         self._sync_from_active()
         return result.returncode == 0
 
-    def stop(self, stream_id: str | None = None):
-        if stream_id:
-            self.select_stream(stream_id)
+    def _terminate_stream_process(self, stream: FeedRecord) -> bool:
+        process = stream.process
+        if not process or process.poll() is not None:
+            stream.finish_run()
+            stream.process = None
+            return True
+        try:
+            os.killpg(process.pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            self.fail(f"Feed process cleanup failed: {exc}", stream.id)
+            return False
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                self.fail(f"Feed process cleanup failed: {exc}", stream.id)
+                return False
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.fail(
+                    f"Feed process {process.pid} did not exit after SIGKILL",
+                    stream.id,
+                )
+                return False
+            self.log("Killed stuck feed", stream.id)
+        stream.finish_run()
+        stream.process = None
+        return True
+
+    def _retry_detached_process_cleanup(self, stream: FeedRecord):
+        for attempt in range(1, 4):
+            time.sleep(float(attempt))
+            if self._terminate_stream_process(stream):
+                self.log(
+                    f"Detached process cleanup succeeded on retry {attempt} for {stream.id}"
+                )
+                return
+        process_id = stream.process.pid if stream.process else "unknown"
+        self.fail(
+            f"Detached process cleanup exhausted for {stream.id} pid={process_id}"
+        )
+
+    def stop(self, stream_id: str | None = None) -> bool:
+        if stream_id and not self.select_stream(stream_id):
+            return False
         stream = self.active_stream
         if not stream:
             self.log("No feeds configured")
-            return
+            return True
         if stream.source == "external":
             self.log("External feed has no local process to stop", stream.id)
-            return
+            return True
         if not stream.process or stream.process.poll() is not None:
             with self.control_plane_lock:
                 stream.finish_run()
@@ -748,22 +912,16 @@ class GuiState:
                 mark_assignment_dirty(self)
             self._sync_from_active()
             self.log("Feed already stopped", stream.id)
-            return
-        process = stream.process
+            return True
         self.log("Stopping feed", stream.id)
-        os.killpg(process.pid, signal.SIGINT)
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-            self.log("Killed stuck feed", stream.id)
+        if not self._terminate_stream_process(stream):
+            self._sync_from_active()
+            return False
         with self.control_plane_lock:
-            stream.finish_run()
-            stream.process = None
             mark_assignment_dirty(self)
         self._sync_from_active()
         self.log("Feed stopped", stream.id)
+        return True
 
     def fail(self, message: str, stream_id: str | None = None):
         stream = self.streams.get(stream_id or self.selected_stream_id)
@@ -805,20 +963,61 @@ class GuiState:
                 continue
             self.streams[stream.id] = stream
 
-    def _persist_stream(self, stream: FeedRecord):
+    def _persist_stream(self, stream: FeedRecord, audit: dict | None = None):
         if not self.feed_store:
             return
         try:
-            self.feed_store.upsert(stream_registration(stream))
+            if audit is not None and isinstance(
+                self.feed_store, PostgresControlPlaneStore
+            ):
+                stream.config_version = self.feed_store.upsert_with_audit(
+                    stream_registration(stream),
+                    audit,
+                    expected_version=stream.config_version,
+                )
+            else:
+                if isinstance(self.feed_store, PostgresControlPlaneStore):
+                    stream.config_version = self.feed_store.upsert_versioned(
+                        stream_registration(stream), stream.config_version
+                    )
+                else:
+                    self.feed_store.upsert(stream_registration(stream))
         except Exception as exc:
+            if audit is not None and isinstance(
+                self.feed_store, PostgresControlPlaneStore
+            ):
+                raise OperatorMutationPersistenceError(
+                    f"Feed mutation/audit transaction failed: {exc}"
+                ) from exc
             raise ValueError(f"Feed registration failed: {exc}") from exc
 
-    def _delete_persisted_stream(self, stream_id: str):
+    def _delete_persisted_stream(
+        self,
+        stream_id: str,
+        audit: dict | None = None,
+        expected_version: int | None = None,
+    ):
         if not self.feed_store:
             return
         try:
-            self.feed_store.delete(stream_id)
+            if audit is not None and isinstance(
+                self.feed_store, PostgresControlPlaneStore
+            ):
+                self.feed_store.delete_with_audit(
+                    stream_id, audit, expected_version=expected_version
+                )
+            else:
+                if isinstance(self.feed_store, PostgresControlPlaneStore):
+                    self.feed_store.delete_versioned(stream_id, expected_version)
+                else:
+                    self.feed_store.delete(stream_id)
         except Exception as exc:
+            if audit is not None and isinstance(
+                self.feed_store, PostgresControlPlaneStore
+            ):
+                raise OperatorMutationPersistenceError(
+                    f"Feed delete/audit transaction failed: {exc}"
+                ) from exc
             raise ValueError(f"Feed registration delete failed: {exc}") from exc
 
     def _capture_logs(self, stream_id: str | subprocess.Popen, process=None):
@@ -903,12 +1102,98 @@ def parse_uuid_field(value, field_name: str) -> uuid.UUID:
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
+    def _operation_path(self) -> str:
+        return (urlparse(self.path).path or "/")[:512]
+
+    def _durable_denial_audit(
+        self,
+        action: str,
+        reason: str,
+        *,
+        resource_type: str = "http_request",
+        resource_id: str = "",
+        principal: Principal | None = None,
+    ):
+        store = durable_control_store(self.state)
+        if store is None:
+            return
+        try:
+            store.append_audit_event(
+                uuid.uuid4(),
+                principal_kind=principal.kind if principal else "unknown",
+                principal_subject=principal.subject[:512] if principal else "anonymous",
+                action=action,
+                resource_type=resource_type,
+                resource_id=(resource_id or self._operation_path())[:512],
+                outcome="denied",
+                occurred_at=datetime.now(timezone.utc),
+                payload={
+                    "operation": self._operation_path(),
+                    "method": self.command,
+                    "reason": str(reason)[:2000],
+                    "remote": self.client_address[0],
+                },
+            )
+        except Exception as exc:
+            # The request remains denied. Emit an explicit audit-gap event rather
+            # than hiding a PostgreSQL/outbox failure.
+            audit_event(
+                "durable_audit",
+                "failed",
+                principal,
+                operation=self._operation_path(),
+                reason=str(exc),
+                remote=self.client_address[0],
+            )
+
+    def _mutation_audit(self, principal: Principal, action: str) -> dict:
+        return {
+            "event_id": uuid.uuid4(),
+            "principal_kind": principal.kind,
+            "principal_subject": principal.subject,
+            "action": action,
+            "outcome": "succeeded",
+            "occurred_at": datetime.now(timezone.utc),
+            "payload": {
+                "operation": self._operation_path(),
+                "method": self.command,
+                "remote": self.client_address[0],
+            },
+        }
+
+    def _send_mutation_persistence_error(
+        self, exc: Exception, principal: Principal | None = None
+    ):
+        audit_event(
+            "operator_write",
+            "failed",
+            principal,
+            operation=self._operation_path(),
+            reason=str(exc),
+            remote=self.client_address[0],
+        )
+        self._send_json(
+            {
+                "ok": False,
+                "error": "persistent mutation and durable audit did not commit",
+            },
+            status=503,
+        )
+
     def _authorize_worker(self, worker_id: str) -> Principal | None:
         try:
             principal = self.state.security.authenticate_worker(self.headers, worker_id)
         except (AuthenticationError, AuthorizationError) as exc:
             status = 401 if isinstance(exc, AuthenticationError) else 403
-            audit_event("worker_auth", "denied", workerId=worker_id, reason=str(exc), remote=self.client_address[0])
+            denied_principal = getattr(exc, "principal", None)
+            audit_event("worker_auth", "denied", denied_principal, workerId=worker_id, reason=str(exc), remote=self.client_address[0])
+            self._durable_denial_audit(
+                "worker_auth",
+                str(exc),
+                resource_type="worker",
+                resource_id=worker_id,
+                principal=denied_principal,
+            )
             self._send_json({"ok": False, "error": str(exc)}, status=status)
             return None
         if self.state.security.enabled:
@@ -920,7 +1205,11 @@ class GuiHandler(BaseHTTPRequestHandler):
             principal = self.state.security.authenticate_operator(self.headers, write=write)
         except (AuthenticationError, AuthorizationError) as exc:
             status = 401 if isinstance(exc, AuthenticationError) else 403
-            audit_event("operator_auth", "denied", operation=self.path, reason=str(exc), remote=self.client_address[0])
+            denied_principal = getattr(exc, "principal", None)
+            audit_event("operator_auth", "denied", denied_principal, operation=self._operation_path(), reason=str(exc), remote=self.client_address[0])
+            self._durable_denial_audit(
+                "operator_auth", str(exc), principal=denied_principal
+            )
             self._send_json({"ok": False, "error": str(exc)}, status=status)
             return None
         if self.state.security.enabled:
@@ -928,7 +1217,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                 "operator_write" if write else "operator_read",
                 "allowed",
                 principal,
-                operation=self.path,
+                operation=self._operation_path(),
                 remote=self.client_address[0],
             )
         return principal
@@ -937,7 +1226,8 @@ class GuiHandler(BaseHTTPRequestHandler):
         try:
             self.state.security.authenticate_proxy_request(self.headers)
         except AuthenticationError as exc:
-            audit_event("proxy_auth", "denied", operation=self.path, reason=str(exc), remote=self.client_address[0])
+            audit_event("proxy_auth", "denied", operation=self._operation_path(), reason=str(exc), remote=self.client_address[0])
+            self._durable_denial_audit("proxy_auth", str(exc))
             self._send_json({"ok": False, "error": str(exc)}, status=401)
             return False
         return True
@@ -1037,15 +1327,18 @@ class GuiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._request_body_allowed():
             return
+        path = urlparse(self.path).path
         redirect_stream_id = self.state.selected_stream_id
-        if self.path not in {
+        operator_principal = None
+        if path not in {
             "/api/workers/register",
             "/api/workers/leases/ack",
             "/api/workers/report",
         }:
-            if self._authorize_operator(write=True) is None:
+            operator_principal = self._authorize_operator(write=True)
+            if operator_principal is None:
                 return
-        if self.path == "/start":
+        if path == "/start":
             params = self._read_form()
             try:
                 stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
@@ -1058,16 +1351,27 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self.state.log(str(exc))
                 self._redirect_stream(redirect_stream_id)
                 return
-            self.state.apply_mode(mode, protocol, stream_id)
-        elif self.path == "/stop":
+            try:
+                self.state.apply_mode(
+                    mode,
+                    protocol,
+                    stream_id,
+                    audit=self._mutation_audit(
+                        operator_principal, "feed.expectation.update"
+                    ),
+                )
+            except OperatorMutationPersistenceError as exc:
+                self._send_mutation_persistence_error(exc, operator_principal)
+                return
+        elif path == "/stop":
             params = self._read_form()
             redirect_stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             self.state.stop(redirect_stream_id or None)
-        elif self.path == "/validate":
+        elif path == "/validate":
             params = self._read_form()
             redirect_stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             self.state.validate(redirect_stream_id or None)
-        elif self.path == "/streams/create":
+        elif path == "/streams/create":
             params = self._read_form()
             try:
                 stream = self.state.create_stream(
@@ -1077,17 +1381,23 @@ class GuiHandler(BaseHTTPRequestHandler):
                     source=params.get("source", ["generated"])[0],
                     external_url=params.get("external_url", [""])[0],
                     framerate=params.get("framerate", [self.state.framerate])[0],
+                    audit=self._mutation_audit(
+                        operator_principal, "feed.create"
+                    ),
                 )
                 redirect_stream_id = stream.id
+            except OperatorMutationPersistenceError as exc:
+                self._send_mutation_persistence_error(exc, operator_principal)
+                return
             except (AuthorizationError, ValueError) as exc:
                 self.state.log(str(exc))
-        elif self.path == "/streams/select":
+        elif path == "/streams/select":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
                 self.state.select_stream(stream_id)
                 redirect_stream_id = stream_id
-        elif self.path == "/streams/update":
+        elif path == "/streams/update":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
@@ -1101,10 +1411,16 @@ class GuiHandler(BaseHTTPRequestHandler):
                         source=params.get("source", [None])[0],
                         external_url=params.get("external_url", [None])[0],
                         framerate=params.get("framerate", [None])[0],
+                        audit=self._mutation_audit(
+                            operator_principal, "feed.update"
+                        ),
                     )
+                except OperatorMutationPersistenceError as exc:
+                    self._send_mutation_persistence_error(exc, operator_principal)
+                    return
                 except (AuthorizationError, ValueError) as exc:
                     self.state.log(str(exc))
-        elif self.path == "/streams/alerts":
+        elif path == "/streams/alerts":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
@@ -1116,10 +1432,16 @@ class GuiHandler(BaseHTTPRequestHandler):
                         stream_id,
                         enabled_ids,
                         params.get("alert_delay_seconds", [0])[0],
+                        audit=self._mutation_audit(
+                            operator_principal, "feed.alert_profile.update"
+                        ),
                     )
+                except OperatorMutationPersistenceError as exc:
+                    self._send_mutation_persistence_error(exc, operator_principal)
+                    return
                 except ValueError as exc:
                     self.state.log(str(exc))
-        elif self.path == "/streams/events/clear":
+        elif path == "/streams/events/clear":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
@@ -1131,7 +1453,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                     )
                 elif clear_monitor_events(self.state, stream_id):
                     self.state.log("Cleared event audit", stream_id)
-        elif self.path == "/api/workers/register":
+        elif path == "/api/workers/register":
             payload = self._read_json()
             if not isinstance(payload, dict):
                 self._send_json({"ok": False, "error": "worker registration must be an object"}, status=400)
@@ -1188,7 +1510,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(response)
             return
-        elif self.path == "/api/workers/leases/ack":
+        elif path == "/api/workers/leases/ack":
             payload = self._read_json()
             if not isinstance(payload, dict):
                 self._send_json({"ok": False, "error": "lease acknowledgement must be an object"}, status=400)
@@ -1212,7 +1534,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(response)
             return
-        elif self.path == "/api/workers/report":
+        elif path == "/api/workers/report":
             payload = self._read_json()
             if not isinstance(payload, dict):
                 self._send_json({"ok": False, "error": "worker report must be an object"}, status=400)
@@ -1250,11 +1572,20 @@ class GuiHandler(BaseHTTPRequestHandler):
             status = 409 if response.get("retryAssignment") else 200
             self._send_json(response, status=status)
             return
-        elif self.path == "/streams/delete":
+        elif path == "/streams/delete":
             params = self._read_form()
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
-                self.state.delete_stream(stream_id)
+                try:
+                    self.state.delete_stream(
+                        stream_id,
+                        audit=self._mutation_audit(
+                            operator_principal, "feed.delete"
+                        ),
+                    )
+                except OperatorMutationPersistenceError as exc:
+                    self._send_mutation_persistence_error(exc, operator_principal)
+                    return
                 redirect_stream_id = self.state.selected_stream_id
         else:
             self.send_error(404)

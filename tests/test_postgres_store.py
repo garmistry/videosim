@@ -1,4 +1,8 @@
+import hashlib
+import json
 import os
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -20,6 +24,15 @@ from videosim.postgres_store import (
 
 
 DATABASE_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_URL", "")
+DATABASE_APP_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_APP_URL", "")
+DATABASE_PUBLISHER_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_PUBLISHER_URL", "")
+DATABASE_PRUNER_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_PRUNER_URL", "")
+RUNTIME_ROLE_TEST_READY = bool(
+    DATABASE_APP_URL
+    and DATABASE_PUBLISHER_URL
+    and DATABASE_PRUNER_URL
+    and shutil.which("psql")
+)
 
 
 def feed(feed_id):
@@ -77,6 +90,17 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
             ttl_seconds=ttl_seconds,
         )
 
+    def mutation_audit(self, action):
+        return {
+            "event_id": uuid.uuid4(),
+            "principal_kind": "operator",
+            "principal_subject": "admin@example.test",
+            "action": action,
+            "outcome": "succeeded",
+            "occurred_at": datetime.now(timezone.utc),
+            "payload": {"operation": f"/{action}", "remote": "127.0.0.1"},
+        }
+
     def test_migrations_are_checksum_stable_and_idempotent(self):
         first = PostgresMigrator(DATABASE_URL).apply()
         second = PostgresMigrator(DATABASE_URL).apply()
@@ -126,6 +150,8 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         down_sql = "\n".join(
             Path(DEFAULT_MIGRATIONS_DIR, name).read_text(encoding="utf-8")
             for name in (
+                "005_feed_generation_fence.down.sql",
+                "004_immutable_audit_outbox.down.sql",
                 "003_direct_monitor_projection.down.sql",
                 "002_worker_projection_fence.down.sql",
                 "001_durable_control_plane.down.sql",
@@ -145,6 +171,11 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
                 self.assertIsNone(
                     connection.execute(
                         "SELECT to_regclass('public.current_alarm_pending')"
+                    ).fetchone()["to_regclass"]
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT to_regclass('public.feed_generations')"
                     ).fetchone()["to_regclass"]
                 )
         with self.store._pool.connection() as connection:
@@ -1233,6 +1264,567 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         with self.store._pool.connection() as connection:
             count = connection.execute("SELECT count(*) AS count FROM check_results WHERE result_id = %s", (result.result_id,)).fetchone()
         self.assertEqual(count["count"], 0)
+
+    def test_feed_mutations_commit_atomically_with_audit_and_outbox(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        create_audit = self.mutation_audit("feed.create")
+        update_audit = self.mutation_audit("feed.update")
+        delete_audit = self.mutation_audit("feed.delete")
+
+        first_version = self.store.upsert_with_audit(feed(feed_id), create_audit)
+        second_version = self.store.upsert_with_audit(
+            feed(feed_id) | {"name": "Audited update"}, update_audit
+        )
+        self.store.delete_with_audit(feed_id, delete_audit)
+
+        with self.store._pool.connection() as connection:
+            stored_feed = connection.execute(
+                "SELECT id FROM feeds WHERE tenant_id = 'default' AND id = %s",
+                (feed_id,),
+            ).fetchone()
+            audit_rows = connection.execute(
+                """
+                SELECT action, outcome FROM audit_events
+                WHERE event_id = ANY(%s::uuid[])
+                ORDER BY occurred_at, action
+                """,
+                ([create_audit["event_id"], update_audit["event_id"], delete_audit["event_id"]],),
+            ).fetchall()
+            outbox_count = connection.execute(
+                """
+                SELECT count(*) AS count FROM outbox
+                WHERE event_id = ANY(%s::uuid[])
+                  AND subject = 'videosim.audit.v1'
+                """,
+                ([create_audit["event_id"], update_audit["event_id"], delete_audit["event_id"]],),
+            ).fetchone()["count"]
+        self.assertEqual((first_version, second_version), (1, 2))
+        self.assertIsNone(stored_feed)
+        self.assertEqual(
+            {row["action"] for row in audit_rows},
+            {"feed.create", "feed.update", "feed.delete"},
+        )
+        self.assertTrue(all(row["outcome"] == "succeeded" for row in audit_rows))
+        self.assertEqual(outbox_count, 3)
+
+    def test_audit_outbox_failure_rolls_back_feed_create_and_delete(self):
+        create_id = f"feed-{uuid.uuid4()}"
+        create_audit = self.mutation_audit("feed.create")
+        with patch.object(
+            self.store,
+            "_insert_outbox",
+            side_effect=PostgresStoreError("outbox unavailable"),
+        ), self.assertRaisesRegex(PostgresStoreError, "outbox unavailable"):
+            self.store.upsert_with_audit(feed(create_id), create_audit)
+        with self.store._pool.connection() as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT id FROM feeds WHERE tenant_id = 'default' AND id = %s",
+                    (create_id,),
+                ).fetchone()
+            )
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT event_id FROM audit_events WHERE event_id = %s",
+                    (create_audit["event_id"],),
+                ).fetchone()
+            )
+
+        delete_id = f"feed-{uuid.uuid4()}"
+        self.store.upsert(feed(delete_id))
+        delete_audit = self.mutation_audit("feed.delete")
+        with patch.object(
+            self.store,
+            "_insert_outbox",
+            side_effect=PostgresStoreError("outbox unavailable"),
+        ), self.assertRaisesRegex(PostgresStoreError, "outbox unavailable"):
+            self.store.delete_with_audit(delete_id, delete_audit)
+        with self.store._pool.connection() as connection:
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT id FROM feeds WHERE tenant_id = 'default' AND id = %s",
+                    (delete_id,),
+                ).fetchone()
+            )
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT event_id FROM audit_events WHERE event_id = %s",
+                    (delete_audit["event_id"],),
+                ).fetchone()
+            )
+        self.store.delete(delete_id)
+
+    def test_audit_and_outbox_content_are_database_enforced_immutable(self):
+        event_id = uuid.uuid4()
+        occurred_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        details = {"method": "POST", "operation": "/streams/create"}
+        self.store.append_audit_event(
+            event_id,
+            principal_kind="operator",
+            principal_subject="admin@example.test",
+            action="feed.create",
+            resource_type="feed",
+            resource_id="stream-contract",
+            outcome="succeeded",
+            occurred_at=occurred_at,
+            payload=details,
+        )
+        expected_envelope = {
+            "eventId": str(event_id),
+            "tenantId": "default",
+            "principalKind": "operator",
+            "principalSubject": "admin@example.test",
+            "action": "feed.create",
+            "resourceType": "feed",
+            "resourceId": "stream-contract",
+            "outcome": "succeeded",
+            "occurredAt": occurred_at.isoformat(),
+            "details": details,
+        }
+        with self.store._pool.connection() as connection:
+            audit_row = connection.execute(
+                "SELECT payload, payload_sha256 FROM audit_events WHERE event_id = %s",
+                (event_id,),
+            ).fetchone()
+            outbox_row = connection.execute(
+                "SELECT subject, payload, payload_sha256 FROM outbox WHERE event_id = %s",
+                (event_id,),
+            ).fetchone()
+        self.assertEqual(audit_row["payload"], details)
+        self.assertEqual(outbox_row["subject"], "videosim.audit.v1")
+        self.assertEqual(outbox_row["payload"], expected_envelope)
+        expected_hash = hashlib.sha256(
+            json.dumps(expected_envelope, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(audit_row["payload_sha256"], expected_hash)
+        self.assertEqual(outbox_row["payload_sha256"], expected_hash)
+
+        statements = (
+            ("UPDATE audit_events SET outcome = 'changed' WHERE event_id = %s", "append-only"),
+            ("DELETE FROM audit_events WHERE event_id = %s", "append-only"),
+            ("UPDATE outbox SET subject = 'changed' WHERE event_id = %s", "immutable"),
+            ("UPDATE outbox SET payload = '{}'::jsonb WHERE event_id = %s", "immutable"),
+            ("DELETE FROM outbox WHERE event_id = %s", "cannot be deleted"),
+        )
+        for statement, message in statements:
+            with self.subTest(statement=statement), self.store._pool.connection() as connection:
+                with self.assertRaisesRegex(Exception, message):
+                    with connection.transaction():
+                        connection.execute(statement, (event_id,))
+
+        claimed = self.store.claim_outbox(
+            "immutability-test", event_ids=[event_id]
+        )
+        self.assertEqual(len(claimed), 1)
+        self.store.mark_outbox_published(
+            claimed[0].id, "immutability-test", broker_sequence=123
+        )
+        with self.store._pool.connection() as connection:
+            delivery = connection.execute(
+                "SELECT state, broker_sequence FROM outbox WHERE event_id = %s",
+                (event_id,),
+            ).fetchone()
+        self.assertEqual((delivery["state"], delivery["broker_sequence"]), ("published", 123))
+
+    @unittest.skipUnless(
+        DATABASE_APP_URL, "VIDEOSIM_TEST_POSTGRES_APP_URL is not configured"
+    )
+    def test_provisioned_runtime_role_can_operate_without_audit_mutation_rights(self):
+        tenant_id = f"runtime-role-{uuid.uuid4()}"
+        feed_id = f"runtime-role-feed-{uuid.uuid4()}"
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    "INSERT INTO tenants (id, name) VALUES (%s, %s)",
+                    (tenant_id, "Runtime role test"),
+                )
+        app_store = PostgresControlPlaneStore(
+            DATABASE_APP_URL, tenant_id=tenant_id, min_pool_size=1, max_pool_size=2
+        )
+        try:
+            audit = self.mutation_audit("feed.create")
+            self.assertEqual(app_store.upsert_with_audit(feed(feed_id), audit), 1)
+            worker_id = f"runtime-role-worker-{uuid.uuid4()}"
+            incarnation = uuid.uuid4()
+            app_store.register_worker(worker_id, incarnation, worker_id)
+            offered = app_store.reconcile_lease(
+                feed_id, worker_id, incarnation, ttl_seconds=60
+            )
+            active = app_store.acknowledge_lease(
+                feed_id,
+                worker_id,
+                incarnation,
+                epoch=offered.epoch,
+                config_version=offered.config_version,
+                ttl_seconds=60,
+            )
+            result = CheckResult(
+                uuid.uuid4(),
+                feed_id,
+                "feed_reachable",
+                active.epoch,
+                active.config_version,
+                1,
+                "healthy",
+                datetime.now(timezone.utc),
+                {"message": "reachable"},
+            )
+            disposition = app_store.ingest_report(
+                FencedReport(uuid.uuid4(), tenant_id, worker_id, incarnation, (result,))
+            )
+            self.assertEqual(disposition.accepted_result_ids, (str(result.result_id),))
+            projection = app_store.monitor_projection_payload()
+            self.assertEqual(projection["workers"][0]["id"], worker_id)
+            self.assertTrue(projection["connected"])
+            with app_store._pool.connection() as connection:
+                privileges = connection.execute(
+                    """
+                    SELECT
+                        has_table_privilege(current_user, 'audit_events', 'INSERT') AS audit_insert,
+                        has_table_privilege(current_user, 'audit_events', 'UPDATE') AS audit_update,
+                        has_table_privilege(current_user, 'audit_events', 'DELETE') AS audit_delete,
+                        has_table_privilege(current_user, 'outbox', 'INSERT') AS outbox_insert,
+                        has_table_privilege(current_user, 'outbox', 'UPDATE') AS outbox_update,
+                        has_table_privilege(current_user, 'outbox', 'DELETE') AS outbox_delete,
+                        has_table_privilege(current_user, 'feed_generations', 'SELECT') AS generation_select,
+                        has_table_privilege(current_user, 'feed_generations', 'INSERT') AS generation_insert,
+                        has_table_privilege(current_user, 'feed_generations', 'UPDATE') AS generation_update,
+                        has_table_privilege(current_user, 'feed_generations', 'DELETE') AS generation_delete,
+                        has_table_privilege(current_user, 'schema_migrations', 'SELECT') AS migrations_select
+                    """
+                ).fetchone()
+            self.assertEqual(
+                dict(privileges),
+                {
+                    "audit_insert": True,
+                    "audit_update": False,
+                    "audit_delete": False,
+                    "outbox_insert": True,
+                    "outbox_update": False,
+                    "outbox_delete": False,
+                    "generation_select": True,
+                    "generation_insert": True,
+                    "generation_update": True,
+                    "generation_delete": False,
+                    "migrations_select": False,
+                },
+            )
+            with app_store._pool.connection() as connection:
+                with self.assertRaisesRegex(Exception, "permission denied"):
+                    connection.execute(
+                        "DELETE FROM audit_events WHERE event_id = %s",
+                        (audit["event_id"],),
+                    )
+                connection.rollback()
+            with app_store._pool.connection() as connection:
+                with self.assertRaisesRegex(Exception, "permission denied"):
+                    connection.execute(
+                        "UPDATE outbox SET state = 'published' WHERE event_id = %s",
+                        (audit["event_id"],),
+                    )
+                connection.rollback()
+            with app_store._pool.connection() as connection:
+                with self.assertRaisesRegex(Exception, "permission denied"):
+                    connection.execute(
+                        "DELETE FROM outbox WHERE event_id = %s",
+                        (audit["event_id"],),
+                    )
+                connection.rollback()
+        finally:
+            app_store.close()
+
+    @unittest.skipUnless(
+        RUNTIME_ROLE_TEST_READY,
+        "runtime role test URLs or psql are not configured",
+    )
+    def test_runtime_role_provisioner_rejects_owner_password_reuse(self):
+        from psycopg.conninfo import conninfo_to_dict
+
+        owner = conninfo_to_dict(DATABASE_URL)
+        publisher = conninfo_to_dict(DATABASE_PUBLISHER_URL)
+        pruner = conninfo_to_dict(DATABASE_PRUNER_URL)
+        required = {
+            "PGHOST": owner.get("host", ""),
+            "PGPORT": owner.get("port", ""),
+            "PGDATABASE": owner.get("dbname", ""),
+            "PGUSER": owner.get("user", ""),
+            "PGPASSWORD": owner.get("password", ""),
+            "POSTGRES_APP_PASSWORD": owner.get("password", ""),
+            "POSTGRES_PUBLISHER_PASSWORD": publisher.get("password", ""),
+            "POSTGRES_PRUNER_PASSWORD": pruner.get("password", ""),
+        }
+        if not all(required.values()):
+            self.skipTest("runtime role test URLs must include host/port/database/user/password")
+        if len(
+            {
+                required["POSTGRES_APP_PASSWORD"],
+                required["POSTGRES_PUBLISHER_PASSWORD"],
+                required["POSTGRES_PRUNER_PASSWORD"],
+            }
+        ) != 3:
+            self.skipTest("test runtime passwords are not distinct")
+        script = Path(__file__).resolve().parent.parent / "scripts" / "postgres-runtime-role.sh"
+        result = subprocess.run(
+            [str(script), "prepare"],
+            env=os.environ | required,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must differ from the PostgreSQL owner password", result.stderr)
+
+    @unittest.skipUnless(
+        RUNTIME_ROLE_TEST_READY,
+        "runtime role test URLs or psql are not configured",
+    )
+    def test_auxiliary_runtime_roles_can_only_run_their_service_paths(self):
+        tenant_id = f"auxiliary-role-{uuid.uuid4()}"
+        event_id = uuid.uuid4()
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    "INSERT INTO tenants (id, name) VALUES (%s, %s)",
+                    (tenant_id, "Auxiliary role test"),
+                )
+        app_store = PostgresControlPlaneStore(
+            DATABASE_APP_URL, tenant_id=tenant_id, min_pool_size=1, max_pool_size=2
+        )
+        publisher_store = PostgresControlPlaneStore(
+            DATABASE_PUBLISHER_URL,
+            tenant_id=tenant_id,
+            min_pool_size=1,
+            max_pool_size=2,
+        )
+        pruner_store = PostgresControlPlaneStore(
+            DATABASE_PRUNER_URL,
+            tenant_id=tenant_id,
+            min_pool_size=1,
+            max_pool_size=2,
+        )
+        try:
+            app_store.append_audit_event(
+                event_id,
+                principal_kind="operator",
+                principal_subject="admin@example.test",
+                action="feed.create",
+                resource_type="feed",
+                resource_id="auxiliary-role-feed",
+                outcome="succeeded",
+                occurred_at=datetime.now(timezone.utc),
+                payload={"operation": "/streams/create"},
+            )
+            claimed = publisher_store.claim_outbox(
+                "auxiliary-role-test", event_ids=[event_id]
+            )
+            self.assertEqual(len(claimed), 1)
+            publisher_store.mark_outbox_published(
+                claimed[0].id, "auxiliary-role-test", broker_sequence=1
+            )
+            self.assertEqual(pruner_store.prune_expired_alarm_events(batch_size=1), 0)
+        finally:
+            pruner_store.close()
+            publisher_store.close()
+            app_store.close()
+
+    @unittest.skipUnless(
+        RUNTIME_ROLE_TEST_READY,
+        "runtime role test URLs or psql are not configured",
+    )
+    def test_runtime_role_provisioner_converges_privilege_drift(self):
+        from psycopg import connect
+        from psycopg.conninfo import conninfo_to_dict
+        from psycopg.rows import dict_row
+
+        owner = conninfo_to_dict(DATABASE_URL)
+        app = conninfo_to_dict(DATABASE_APP_URL)
+        publisher = conninfo_to_dict(DATABASE_PUBLISHER_URL)
+        pruner = conninfo_to_dict(DATABASE_PRUNER_URL)
+        required = {
+            "PGHOST": owner.get("host", ""),
+            "PGPORT": owner.get("port", ""),
+            "PGDATABASE": owner.get("dbname", ""),
+            "PGUSER": owner.get("user", ""),
+            "PGPASSWORD": owner.get("password", ""),
+            "POSTGRES_APP_PASSWORD": app.get("password", ""),
+            "POSTGRES_PUBLISHER_PASSWORD": publisher.get("password", ""),
+            "POSTGRES_PRUNER_PASSWORD": pruner.get("password", ""),
+        }
+        if not all(required.values()):
+            self.skipTest("runtime role test URLs must include host/port/database/user/password")
+        parent_role = "videosim_runtime_role_test_parent"
+        member_role = "videosim_runtime_role_test_member"
+        script = Path(__file__).resolve().parent.parent / "scripts" / "postgres-runtime-role.sh"
+        try:
+            with self.store._pool.connection() as connection:
+                with connection.transaction():
+                    connection.execute(
+                        f"""
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{parent_role}') THEN
+                                REVOKE {parent_role} FROM videosim_app;
+                                DROP ROLE {parent_role};
+                            END IF;
+                            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{member_role}') THEN
+                                REVOKE videosim_app FROM {member_role};
+                                DROP ROLE {member_role};
+                            END IF;
+                        END;
+                        $$
+                        """
+                    )
+                    connection.execute(f"CREATE ROLE {parent_role} NOLOGIN")
+                    connection.execute(f"CREATE ROLE {member_role} NOLOGIN")
+                    connection.execute(f"GRANT {parent_role} TO videosim_app")
+                    connection.execute(f"GRANT videosim_app TO {member_role}")
+                    connection.execute("GRANT ALL ON TABLE audit_events TO videosim_app")
+                    connection.execute("ALTER TABLE audit_events OWNER TO videosim_app")
+
+            environment = os.environ | required
+            for mode in ("prepare", "grant"):
+                result = subprocess.run(
+                    [str(script), mode],
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    f"{mode} failed:\nstdout={result.stdout}\nstderr={result.stderr}",
+                )
+
+            with self.store._pool.connection() as connection:
+                state = connection.execute(
+                    """
+                    SELECT
+                        pg_get_userbyid(c.relowner) = current_user AS owner_reassigned,
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM pg_auth_members AS membership
+                            JOIN pg_roles AS parent ON parent.oid = membership.roleid
+                            JOIN pg_roles AS child ON child.oid = membership.member
+                            WHERE parent.rolname = %s AND child.rolname = 'videosim_app'
+                        ) AS parent_membership_revoked,
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM pg_auth_members AS membership
+                            JOIN pg_roles AS parent ON parent.oid = membership.roleid
+                            JOIN pg_roles AS child ON child.oid = membership.member
+                            WHERE parent.rolname = 'videosim_app' AND child.rolname = %s
+                        ) AS member_membership_revoked
+                    FROM pg_class AS c
+                    WHERE c.oid = 'audit_events'::regclass
+                    """,
+                    (parent_role, member_role),
+                ).fetchone()
+            self.assertTrue(state["owner_reassigned"])
+            self.assertTrue(state["parent_membership_revoked"])
+            self.assertTrue(state["member_membership_revoked"])
+
+            def privileges(url, statement):
+                with connect(url, row_factory=dict_row) as connection:
+                    return connection.execute(statement).fetchone()
+
+            app_rights = privileges(
+                DATABASE_APP_URL,
+                """
+                SELECT has_table_privilege(current_user, 'audit_events', 'UPDATE') AS audit_update,
+                       has_table_privilege(current_user, 'audit_events', 'DELETE') AS audit_delete,
+                       has_table_privilege(current_user, 'outbox', 'UPDATE') AS outbox_update,
+                       has_table_privilege(current_user, 'outbox', 'DELETE') AS outbox_delete
+                """,
+            )
+            publisher_rights = privileges(
+                DATABASE_PUBLISHER_URL,
+                """
+                SELECT has_table_privilege(current_user, 'outbox', 'SELECT') AS outbox_select,
+                       has_table_privilege(current_user, 'outbox', 'UPDATE') AS outbox_update,
+                       has_table_privilege(current_user, 'outbox', 'INSERT') AS outbox_insert,
+                       has_function_privilege(
+                           current_user,
+                           'videosim_prune_expired_alarm_events(text, integer, integer)',
+                           'EXECUTE'
+                       ) AS prune_execute,
+                       has_function_privilege(
+                           current_user,
+                           'videosim_grant_runtime_roles()',
+                           'EXECUTE'
+                       ) AS role_grant_execute,
+                       has_table_privilege(current_user, 'feeds', 'SELECT') AS feeds_select
+                """,
+            )
+            pruner_rights = privileges(
+                DATABASE_PRUNER_URL,
+                """
+                SELECT has_table_privilege(current_user, 'alarm_events', 'SELECT') AS events_select,
+                       has_table_privilege(current_user, 'alarm_events', 'DELETE') AS events_delete,
+                       has_table_privilege(current_user, 'alarm_events', 'INSERT') AS events_insert,
+                       has_function_privilege(
+                           current_user,
+                           'videosim_prune_expired_alarm_events(text, integer, integer)',
+                           'EXECUTE'
+                       ) AS prune_execute,
+                       has_table_privilege(current_user, 'feeds', 'SELECT') AS feeds_select
+                """,
+            )
+            self.assertEqual(
+                app_rights,
+                {
+                    "audit_update": False,
+                    "audit_delete": False,
+                    "outbox_update": False,
+                    "outbox_delete": False,
+                },
+            )
+            self.assertEqual(
+                publisher_rights,
+                {
+                    "outbox_select": True,
+                    "outbox_update": True,
+                    "outbox_insert": False,
+                    "prune_execute": False,
+                    "role_grant_execute": False,
+                    "feeds_select": False,
+                },
+            )
+            self.assertEqual(
+                pruner_rights,
+                {
+                    "events_select": False,
+                    "events_delete": False,
+                    "events_insert": False,
+                    "prune_execute": True,
+                    "feeds_select": False,
+                },
+            )
+        finally:
+            with self.store._pool.connection() as connection:
+                with connection.transaction():
+                    connection.execute(
+                        "DO $$ BEGIN "
+                        "EXECUTE format('ALTER TABLE audit_events OWNER TO %I', current_user); "
+                        "END $$"
+                    )
+                    connection.execute(
+                        f"""
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{parent_role}') THEN
+                                REVOKE {parent_role} FROM videosim_app;
+                                DROP ROLE {parent_role};
+                            END IF;
+                            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{member_role}') THEN
+                                REVOKE videosim_app FROM {member_role};
+                                DROP ROLE {member_role};
+                            END IF;
+                        END;
+                        $$
+                        """
+                    )
+                    connection.execute("SELECT videosim_grant_runtime_roles()")
 
     def test_audit_event_and_outbox_are_committed_idempotently(self):
         event_id = uuid.uuid4()

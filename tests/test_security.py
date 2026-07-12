@@ -103,6 +103,27 @@ class SecurityConfigTest(unittest.TestCase):
             config.authenticate_operator(viewer, write=True)
         self.assertEqual(config.authenticate_operator(admin, write=True).subject, "admin@example.com")
 
+    def test_authenticated_subjects_are_bounded_for_durable_audit_storage(self):
+        config = security_config()
+        oversized = "x" * 513
+        with self.assertRaises(AuthenticationError):
+            config.authenticate_worker(
+                {
+                    "X-VideoSim-Proxy-Secret": SECRET,
+                    "X-VideoSim-Worker-ID": oversized,
+                },
+                "worker-1",
+            )
+        with self.assertRaises(AuthenticationError):
+            config.authenticate_operator(
+                {
+                    "X-VideoSim-Proxy-Secret": SECRET,
+                    "X-VideoSim-User": oversized,
+                    "X-VideoSim-Groups": "videosim-admin",
+                },
+                write=False,
+            )
+
     def test_secure_endpoint_policy_rejects_private_addresses_by_default(self):
         config = security_config()
         private = [(2, 1, 6, "", ("127.0.0.1", 9000))]

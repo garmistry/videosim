@@ -16,11 +16,17 @@ class AuthenticationError(PermissionError):
 
 
 class AuthorizationError(PermissionError):
-    pass
+    def __init__(self, message: str, principal: "Principal | None" = None):
+        super().__init__(message)
+        self.principal = principal
 
 
 class EndpointPolicyError(ValueError):
     pass
+
+
+# Matches the durable audit principal_subject bound in PostgreSQL.
+MAX_PRINCIPAL_SUBJECT_LENGTH = 512
 
 
 @dataclass(frozen=True)
@@ -123,9 +129,14 @@ class SecurityConfig:
         worker_id = (headers.get(self.worker_id_header) or "").strip()
         if not worker_id:
             raise AuthenticationError("verified worker identity is required")
+        if len(worker_id) > MAX_PRINCIPAL_SUBJECT_LENGTH:
+            raise AuthenticationError("verified worker identity exceeds maximum length")
+        principal = Principal(subject=worker_id, kind="worker")
         if not hmac.compare_digest(worker_id, requested_worker_id.strip()):
-            raise AuthorizationError("verified worker identity does not match workerId")
-        return Principal(subject=worker_id, kind="worker")
+            raise AuthorizationError(
+                "verified worker identity does not match workerId", principal
+            )
+        return principal
 
     def authenticate_operator(self, headers: Mapping[str, str], *, write: bool) -> Principal:
         if not self.enabled:
@@ -134,20 +145,25 @@ class SecurityConfig:
         user = (headers.get(self.operator_user_header) or "").strip()
         if not user:
             raise AuthenticationError("OIDC operator identity is required")
+        if len(user) > MAX_PRINCIPAL_SUBJECT_LENGTH:
+            raise AuthenticationError("OIDC operator identity exceeds maximum length")
         groups = frozenset(
             group.strip()
             for group in (headers.get(self.operator_groups_header) or "").split(",")
             if group.strip()
         )
+        principal = Principal(subject=user, kind="operator", groups=groups)
         required = self.admin_group if write else self.viewer_group
         if required not in groups and self.admin_group not in groups:
-            raise AuthorizationError(f"operator requires {required} group")
+            raise AuthorizationError(f"operator requires {required} group", principal)
         if write:
             origin = (headers.get("Origin") or "").rstrip("/")
             expected_origin = (headers.get(self.expected_origin_header) or "").rstrip("/")
             if not origin or not expected_origin or not hmac.compare_digest(origin, expected_origin):
-                raise AuthorizationError("operator mutation failed same-origin CSRF validation")
-        return Principal(subject=user, kind="operator", groups=groups)
+                raise AuthorizationError(
+                    "operator mutation failed same-origin CSRF validation", principal
+                )
+        return principal
 
     def _authenticate_proxy(self, headers: Mapping[str, str]):
         supplied = headers.get(self.proxy_secret_header) or ""

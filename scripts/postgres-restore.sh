@@ -59,9 +59,23 @@ if [ "$source_live_identity" = "$target_live_identity" ]; then
   exit 1
 fi
 
+# A restored target must converge all non-owner roles, not merely restore their
+# grants. Require the same distinct runtime secrets before any destructive work.
+: "${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required to converge runtime roles}"
+: "${POSTGRES_PUBLISHER_PASSWORD:?POSTGRES_PUBLISHER_PASSWORD is required to converge runtime roles}"
+: "${POSTGRES_PRUNER_PASSWORD:?POSTGRES_PRUNER_PASSWORD is required to converge runtime roles}"
+POSTGRES_RUNTIME_DATABASE_URL="$target_url" \
+  scripts/postgres-runtime-role.sh validate
+
 pg_restore --list "$backup" >/dev/null
 pg_restore --dbname="$target_url" --clean --if-exists --no-owner --no-privileges "$backup"
 python3 -m videosim migrate --database-url "$target_url"
+# pg_restore intentionally omits source ACLs. Converge stale memberships,
+# grants, and ownership, then apply migrations 004/005's narrow runtime-role policy.
+POSTGRES_RUNTIME_DATABASE_URL="$target_url" \
+  scripts/postgres-runtime-role.sh prepare
+POSTGRES_RUNTIME_DATABASE_URL="$target_url" \
+  scripts/postgres-runtime-role.sh grant
 psql "$target_url" --set=ON_ERROR_STOP=1 <<'SQL'
 BEGIN;
 UPDATE control_plane_state

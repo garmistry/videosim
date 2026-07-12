@@ -10,6 +10,10 @@ import sys
 SEMANTIC_QUERIES = {
     "schema_migrations": "SELECT version, name, checksum FROM schema_migrations ORDER BY version",
     "feeds": "SELECT tenant_id, id, config, config_version FROM feeds ORDER BY tenant_id, id",
+    "feed_generations": """
+        SELECT tenant_id, id, config_version
+        FROM feed_generations ORDER BY tenant_id, id
+    """,
     "workers": """
         SELECT tenant_id, worker_id, incarnation_id, certificate_subject,
                capabilities, capacity, software_version, state

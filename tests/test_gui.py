@@ -1,5 +1,6 @@
 import json
 import signal
+import subprocess
 import tempfile
 import threading
 import time
@@ -231,6 +232,74 @@ class GuiTest(unittest.TestCase):
         self.assertGreater(after["assignmentGeneration"], before["assignmentGeneration"])
         self.assertNotEqual(after["assignmentToken"], before["assignmentToken"])
 
+    def test_delete_racing_persistent_mutations_cannot_resurrect_stream(self):
+        def exercise(label, mutate):
+            with self.subTest(mutation=label), tempfile.TemporaryDirectory() as directory:
+                store = SqliteFeedStore(Path(directory) / "feeds.sqlite3")
+                state = GuiState(feed_store=store)
+                stream = state.create_stream(
+                    name="Race target",
+                    source="external",
+                    external_url="srt://camera.example.test:9000?mode=caller",
+                )
+                reached_guard = threading.Event()
+                resume_mutation = threading.Event()
+                original_guard = state._ensure_current_stream_locked
+
+                def release_for_delete(candidate, operation):
+                    if candidate is stream and not reached_guard.is_set():
+                        reached_guard.set()
+                        state.control_plane_lock.release()
+                        try:
+                            if not resume_mutation.wait(timeout=2):
+                                raise RuntimeError("timed out waiting for concurrent delete")
+                        finally:
+                            state.control_plane_lock.acquire()
+                    return original_guard(candidate, operation)
+
+                result = []
+                with patch.object(
+                    state,
+                    "_ensure_current_stream_locked",
+                    side_effect=release_for_delete,
+                ):
+                    thread = threading.Thread(
+                        target=lambda: result.append(mutate(state, stream.id)), daemon=True
+                    )
+                    thread.start()
+                    self.assertTrue(reached_guard.wait(timeout=2))
+                    self.assertTrue(state.delete_stream(stream.id))
+                    resume_mutation.set()
+                    thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(result, [False])
+                self.assertNotIn(stream.id, state.streams)
+                self.assertEqual(store.load(), [])
+
+        exercise(
+            "mode",
+            lambda state, stream_id: state.apply_mode(
+                "video_only", stream_id=stream_id
+            ),
+        )
+        exercise(
+            "alert profile",
+            lambda state, stream_id: state.update_alert_profile(
+                stream_id, ["feed_reachable"], 5
+            ),
+        )
+        exercise(
+            "feed update",
+            lambda state, stream_id: state.update_stream(
+                stream_id,
+                name="Stale update",
+                source="external",
+                protocol="srt",
+                mode="normal",
+                external_url="srt://camera.example.test:9000?mode=caller",
+            ),
+        )
+
     def test_concurrent_start_and_delete_cannot_leave_detached_process(self):
         state = GuiState()
         stream = state.create_stream(name="Generated")
@@ -258,6 +327,56 @@ class GuiTest(unittest.TestCase):
         self.assertNotIn(stream.id, state.streams)
         self.assertIsNone(stream.process)
         killpg.assert_called_once_with(4321, signal.SIGINT)
+
+    def test_unknown_stream_target_never_falls_back_to_selected_feed(self):
+        state = GuiState(feed_port=9912)
+        stream = self.create_feed(state)
+        process = Mock(pid=1234)
+        process.poll.return_value = None
+        stream.process = process
+        stream.started_at = time.monotonic()
+        state.select_stream(stream.id)
+
+        self.assertFalse(state.apply_mode("video_only", stream_id="missing-stream"))
+        self.assertFalse(state.start("missing-stream"))
+        self.assertFalse(state.stop("missing-stream"))
+        self.assertFalse(state.validate("missing-stream"))
+        self.assertEqual(stream.mode, "normal")
+        self.assertIs(stream.process, process)
+
+    def test_stop_handles_process_exit_race_and_cleanup_failures(self):
+        state = GuiState(feed_port=9912)
+        stream = self.create_feed(state)
+        process = Mock(pid=1234)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        stream.process = process
+        stream.started_at = time.monotonic()
+        with patch("videosim.gui.os.killpg", side_effect=ProcessLookupError):
+            self.assertTrue(state.stop(stream.id))
+        self.assertIsNone(stream.process)
+
+        process = Mock(pid=1235)
+        process.poll.return_value = None
+        stream.process = process
+        stream.started_at = time.monotonic()
+        with patch("videosim.gui.os.killpg", side_effect=PermissionError("denied")):
+            self.assertFalse(state.stop(stream.id))
+        self.assertIs(stream.process, process)
+        self.assertIn("cleanup failed", stream.last_error)
+
+        process = Mock(pid=1236)
+        process.poll.return_value = None
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired("feed", 10),
+            subprocess.TimeoutExpired("feed", 5),
+        ]
+        stream.process = process
+        stream.started_at = time.monotonic()
+        with patch("videosim.gui.os.killpg"):
+            self.assertFalse(state.stop(stream.id))
+        self.assertIs(stream.process, process)
+        self.assertIn("did not exit after SIGKILL", stream.last_error)
 
     def test_concurrent_stream_creates_reserve_unique_ids_and_ports(self):
         state = GuiState(feed_port=12000)

@@ -15,7 +15,8 @@ distributed monitoring workers.
 - Copy receiver endpoints and view feed logs, errors, preview frames, metrics,
   alarms, and event history.
 - Persist feed definitions and alert profiles in SQLite by default; the
-  production overlay uses the first PostgreSQL/JetStream durable foundation.
+  production overlay uses a PostgreSQL/JetStream durable foundation with
+  selective durable security auditing and non-owner service roles.
 - Run local monitoring or master/worker monitoring; PostgreSQL deployments use
   durable worker-v2 lease/report fencing plus direct PostgreSQL monitor
   alarm/event reads, while SQLite retains lab-compatible v1/file JSON.
@@ -99,8 +100,10 @@ docker compose run --build --rm monitor-fixtures
 
 The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
 PostgreSQL/JetStream integration tests are separately gated by
-`VIDEOSIM_TEST_POSTGRES_URL` and `VIDEOSIM_TEST_NATS_URL`; see the durable
-control-plane document. Passing either suite is not a scale-admission result.
+`VIDEOSIM_TEST_POSTGRES_URL` and `VIDEOSIM_TEST_NATS_URL`; optional runtime-role
+coverage also uses the three `VIDEOSIM_TEST_POSTGRES_*_URL` service URLs. See the
+durable control-plane document. Passing either suite is not a scale-admission
+result.
 
 Exercise the versioned in-process worker assignment/report invariants:
 

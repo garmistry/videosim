@@ -207,96 +207,285 @@ class PostgresControlPlaneStore:
         config.pop("config_version", None)
         with self._pool.connection() as connection:
             with connection.transaction():
-                row = connection.execute(
-                    """
-                    UPDATE feeds
-                    SET config = %s::jsonb,
-                        config_version = config_version + 1,
-                        updated_at = clock_timestamp()
-                    WHERE tenant_id = %s AND id = %s AND config_version = %s
-                      AND config IS DISTINCT FROM %s::jsonb
-                    RETURNING config_version
-                    """,
-                    (
-                        json.dumps(config, sort_keys=True),
-                        self.tenant_id,
-                        str(feed["id"]),
-                        expected_version,
-                        json.dumps(config, sort_keys=True),
-                    ),
-                ).fetchone()
-                if row is not None:
-                    connection.execute(
-                        """
-                        UPDATE leases
-                        SET state = 'revoked', expires_at = clock_timestamp()
-                        WHERE tenant_id = %s AND stream_id = %s
-                          AND state IN ('offered', 'active', 'draining')
-                        """,
-                        (self.tenant_id, str(feed["id"])),
-                    )
-                    version = int(row["config_version"])
-                    self._suppress_disabled_alarms_for_feed(
-                        connection, str(feed["id"]), config, version
-                    )
-                    return version
-                existing = connection.execute(
-                    "SELECT config, config_version FROM feeds WHERE tenant_id = %s AND id = %s",
-                    (self.tenant_id, str(feed["id"])),
-                ).fetchone()
-                if (
-                    existing is not None
-                    and int(existing["config_version"]) == expected_version
-                    and dict(existing["config"]) == config
-                ):
-                    return expected_version
-                raise ReportConflict("feed configuration version conflict")
+                _, version = self._upsert_feed_with_expected_version_in_transaction(
+                    connection, config, expected_version
+                )
+                return version
 
     def import_feed_if_changed(self, feed: Mapping) -> tuple[bool, int]:
         config = dict(feed)
         config.pop("config_version", None)
         with self._pool.connection() as connection:
             with connection.transaction():
-                row = connection.execute(
-                    """
-                    INSERT INTO feeds (tenant_id, id, config)
-                    VALUES (%s, %s, %s::jsonb)
-                    ON CONFLICT (tenant_id, id) DO UPDATE SET
-                        config = EXCLUDED.config,
-                        config_version = feeds.config_version + 1,
-                        updated_at = clock_timestamp()
-                    WHERE feeds.config IS DISTINCT FROM EXCLUDED.config
-                    RETURNING config_version
-                    """,
-                    (self.tenant_id, str(feed["id"]), json.dumps(config, sort_keys=True)),
-                ).fetchone()
-                if row is not None:
-                    connection.execute(
-                        """
-                        UPDATE leases
-                        SET state = 'revoked', expires_at = clock_timestamp()
-                        WHERE tenant_id = %s AND stream_id = %s
-                          AND state IN ('offered', 'active', 'draining')
-                        """,
-                        (self.tenant_id, str(feed["id"])),
+                return self._upsert_feed_in_transaction(connection, config)
+
+    def upsert_with_audit(
+        self,
+        feed: Mapping,
+        audit: Mapping,
+        *,
+        expected_version: int | None = None,
+    ) -> int:
+        """Commit one feed create/update and its success audit atomically.
+
+        A GUI-loaded feed supplies its durable configuration version. Version
+        zero means a new locally allocated feed ID and may only insert; a
+        positive version may only update that exact durable row. A retained
+        generation makes delete/recreate ABA attempts fail as well.
+        """
+        config = dict(feed)
+        config.pop("config_version", None)
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                if expected_version is None:
+                    _, version = self._upsert_feed_in_transaction(connection, config)
+                else:
+                    _, version = self._upsert_feed_with_expected_version_in_transaction(
+                        connection, config, expected_version
                     )
-                    version = int(row["config_version"])
-                    self._suppress_disabled_alarms_for_feed(
-                        connection, str(feed["id"]), config, version
-                    )
-                    return True, version
-                existing = connection.execute(
-                    "SELECT config_version FROM feeds WHERE tenant_id = %s AND id = %s",
-                    (self.tenant_id, str(feed["id"])),
-                ).fetchone()
-                return False, int(existing["config_version"])
+                self._append_mutation_audit(
+                    connection, audit, resource_type="feed", resource_id=str(feed["id"])
+                )
+                return version
+
+    def _lock_feed_generation(self, connection, feed_id: str) -> int | None:
+        row = connection.execute(
+            """
+            SELECT config_version FROM feed_generations
+            WHERE tenant_id = %s AND id = %s
+            FOR UPDATE
+            """,
+            (self.tenant_id, feed_id),
+        ).fetchone()
+        return int(row["config_version"]) if row is not None else None
+
+    def _lock_or_create_feed_generation(
+        self, connection, feed_id: str
+    ) -> tuple[int, bool]:
+        version = self._lock_feed_generation(connection, feed_id)
+        if version is not None:
+            return version, False
+        row = connection.execute(
+            """
+            INSERT INTO feed_generations (tenant_id, id, config_version)
+            VALUES (%s, %s, 1)
+            ON CONFLICT (tenant_id, id) DO NOTHING
+            RETURNING config_version
+            """,
+            (self.tenant_id, feed_id),
+        ).fetchone()
+        if row is not None:
+            return int(row["config_version"]), True
+        version = self._lock_feed_generation(connection, feed_id)
+        if version is None:  # pragma: no cover - defensive database invariant.
+            raise PostgresStoreError("feed generation lock was not created")
+        return version, False
+
+    def _set_feed_generation(
+        self, connection, feed_id: str, previous_version: int, next_version: int
+    ):
+        row = connection.execute(
+            """
+            UPDATE feed_generations
+            SET config_version = %s, updated_at = clock_timestamp()
+            WHERE tenant_id = %s AND id = %s AND config_version = %s
+            RETURNING config_version
+            """,
+            (next_version, self.tenant_id, feed_id, previous_version),
+        ).fetchone()
+        if row is None:
+            raise ReportConflict("feed configuration generation changed")
+
+    def _feed_for_update(self, connection, feed_id: str):
+        return connection.execute(
+            """
+            SELECT config, config_version FROM feeds
+            WHERE tenant_id = %s AND id = %s
+            FOR UPDATE
+            """,
+            (self.tenant_id, feed_id),
+        ).fetchone()
+
+    def _insert_feed(
+        self, connection, feed_id: str, config: Mapping, version: int
+    ):
+        connection.execute(
+            """
+            INSERT INTO feeds (tenant_id, id, config, config_version)
+            VALUES (%s, %s, %s::jsonb, %s)
+            """,
+            (self.tenant_id, feed_id, json.dumps(dict(config), sort_keys=True), version),
+        )
+
+    def _upsert_feed_with_expected_version_in_transaction(
+        self, connection, config: Mapping, expected_version: int
+    ) -> tuple[bool, int]:
+        if not isinstance(expected_version, int) or expected_version < 0:
+            raise ValueError("expected feed configuration version must be a non-negative integer")
+        feed_id = str(config["id"])
+        generation = self._lock_feed_generation(connection, feed_id)
+        existing = self._feed_for_update(connection, feed_id)
+        if expected_version == 0:
+            if existing is not None:
+                raise ReportConflict("feed already exists or configuration version changed")
+            if generation is None:
+                version, created_generation = self._lock_or_create_feed_generation(
+                    connection, feed_id
+                )
+                if not created_generation:  # A concurrent creator committed first.
+                    raise ReportConflict("feed already exists or configuration version changed")
+            else:
+                version = generation + 1
+                self._set_feed_generation(connection, feed_id, generation, version)
+            self._insert_feed(connection, feed_id, config, version)
+            self._apply_feed_configuration_change(connection, feed_id, config, version)
+            return True, version
+
+        if existing is None or generation is None:
+            raise ReportConflict("feed no longer exists")
+        existing_version = int(existing["config_version"])
+        if existing_version != expected_version or generation != expected_version:
+            raise ReportConflict("feed configuration version conflict")
+        if dict(existing["config"]) == dict(config):
+            return False, expected_version
+        version = expected_version + 1
+        connection.execute(
+            """
+            UPDATE feeds
+            SET config = %s::jsonb, config_version = %s, updated_at = clock_timestamp()
+            WHERE tenant_id = %s AND id = %s AND config_version = %s
+            """,
+            (
+                json.dumps(dict(config), sort_keys=True),
+                version,
+                self.tenant_id,
+                feed_id,
+                expected_version,
+            ),
+        )
+        self._set_feed_generation(connection, feed_id, expected_version, version)
+        self._apply_feed_configuration_change(connection, feed_id, config, version)
+        return True, version
+
+    def _apply_feed_configuration_change(
+        self, connection, feed_id: str, config: Mapping, version: int
+    ):
+        connection.execute(
+            """
+            UPDATE leases
+            SET state = 'revoked', expires_at = clock_timestamp()
+            WHERE tenant_id = %s AND stream_id = %s
+              AND state IN ('offered', 'active', 'draining')
+            """,
+            (self.tenant_id, feed_id),
+        )
+        self._suppress_disabled_alarms_for_feed(connection, feed_id, config, version)
+
+    def _upsert_feed_in_transaction(self, connection, config: Mapping) -> tuple[bool, int]:
+        feed_id = str(config["id"])
+        generation, generation_created = self._lock_or_create_feed_generation(
+            connection, feed_id
+        )
+        existing = self._feed_for_update(connection, feed_id)
+        if existing is None:
+            version = generation if generation_created else generation + 1
+            if not generation_created:
+                self._set_feed_generation(connection, feed_id, generation, version)
+            self._insert_feed(connection, feed_id, config, version)
+            self._apply_feed_configuration_change(connection, feed_id, config, version)
+            return True, version
+
+        existing_version = int(existing["config_version"])
+        if generation_created:
+            # This can only happen when repairing a manually altered legacy DB;
+            # normal migrations backfill every existing feed generation.
+            self._set_feed_generation(connection, feed_id, generation, existing_version)
+            generation = existing_version
+        if dict(existing["config"]) == dict(config):
+            return False, existing_version
+        version = max(generation, existing_version) + 1
+        connection.execute(
+            """
+            UPDATE feeds
+            SET config = %s::jsonb, config_version = %s, updated_at = clock_timestamp()
+            WHERE tenant_id = %s AND id = %s AND config_version = %s
+            """,
+            (
+                json.dumps(dict(config), sort_keys=True),
+                version,
+                self.tenant_id,
+                feed_id,
+                existing_version,
+            ),
+        )
+        self._set_feed_generation(connection, feed_id, generation, version)
+        self._apply_feed_configuration_change(connection, feed_id, config, version)
+        return True, version
 
     def delete(self, feed_id: str) -> None:
         with self._pool.connection() as connection:
             with connection.transaction():
-                connection.execute(
-                    "DELETE FROM feeds WHERE tenant_id = %s AND id = %s",
-                    (self.tenant_id, feed_id),
+                self._delete_feed_with_expected_version_in_transaction(
+                    connection, feed_id, None, missing_is_conflict=False
+                )
+
+    def delete_versioned(self, feed_id: str, expected_version: int) -> None:
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._delete_feed_with_expected_version_in_transaction(
+                    connection, feed_id, expected_version
+                )
+
+    def _delete_feed_with_expected_version_in_transaction(
+        self,
+        connection,
+        feed_id: str,
+        expected_version: int | None,
+        *,
+        missing_is_conflict: bool = True,
+    ) -> bool:
+        if expected_version is not None and (
+            not isinstance(expected_version, int) or expected_version < 1
+        ):
+            raise ValueError("expected feed configuration version must be positive")
+        generation = self._lock_feed_generation(connection, feed_id)
+        existing = self._feed_for_update(connection, feed_id)
+        if existing is None:
+            if missing_is_conflict:
+                raise ReportConflict("feed no longer exists or configuration version changed")
+            return False
+        existing_version = int(existing["config_version"])
+        if expected_version is not None and (
+            generation != expected_version or existing_version != expected_version
+        ):
+            raise ReportConflict("feed no longer exists or configuration version changed")
+        if generation is None:
+            if expected_version is not None:
+                raise ReportConflict("feed configuration generation is missing")
+            generation, _ = self._lock_or_create_feed_generation(connection, feed_id)
+        next_generation = max(generation, existing_version) + 1
+        self._set_feed_generation(connection, feed_id, generation, next_generation)
+        connection.execute(
+            "DELETE FROM feeds WHERE tenant_id = %s AND id = %s AND config_version = %s",
+            (self.tenant_id, feed_id, existing_version),
+        )
+        return True
+
+    def delete_with_audit(
+        self,
+        feed_id: str,
+        audit: Mapping,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Commit one feed deletion and its success audit atomically."""
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._delete_feed_with_expected_version_in_transaction(
+                    connection, feed_id, expected_version
+                )
+                self._append_mutation_audit(
+                    connection, audit, resource_type="feed", resource_id=feed_id
                 )
 
     def register_worker(
@@ -628,28 +817,18 @@ class PostgresControlPlaneStore:
             raise ValueError("alarm-event prune batch_size must be between 1 and 10000")
         with self._pool.connection() as connection:
             with connection.transaction():
-                rows = connection.execute(
+                row = connection.execute(
                     """
-                    WITH expired AS (
-                        SELECT event_id FROM alarm_events
-                        WHERE tenant_id = %s
-                          AND created_at < clock_timestamp()
-                              - (%s * interval '1 second')
-                        ORDER BY created_at, event_id
-                        LIMIT %s
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    DELETE FROM alarm_events
-                    WHERE event_id IN (SELECT event_id FROM expired)
-                    RETURNING event_id
+                    SELECT videosim_prune_expired_alarm_events(%s, %s, %s)
+                        AS deleted_count
                     """,
                     (
                         self.tenant_id,
                         self.alarm_event_retention_seconds,
                         batch_size,
                     ),
-                ).fetchall()
-        return len(rows)
+                ).fetchone()
+        return int(row["deleted_count"])
 
     def monitor_projection_payload(
         self,
@@ -1392,6 +1571,37 @@ class PostgresControlPlaneStore:
             raise ReportConflict("duplicate outbox event ID has a different subject or payload")
         return False
 
+    def _append_mutation_audit(
+        self,
+        connection,
+        audit: Mapping,
+        *,
+        resource_type: str,
+        resource_id: str,
+    ):
+        required = {
+            "event_id",
+            "principal_kind",
+            "principal_subject",
+            "action",
+            "outcome",
+            "occurred_at",
+        }
+        if not isinstance(audit, Mapping) or not required.issubset(audit):
+            raise ValueError("mutation audit context is incomplete")
+        self._append_audit_event(
+            connection,
+            audit["event_id"],
+            principal_kind=audit["principal_kind"],
+            principal_subject=audit["principal_subject"],
+            action=audit["action"],
+            resource_type=resource_type,
+            resource_id=resource_id,
+            outcome=audit["outcome"],
+            occurred_at=audit["occurred_at"],
+            payload=audit.get("payload"),
+        )
+
     def append_audit_event(
         self,
         event_id: uuid.UUID,
@@ -1405,8 +1615,52 @@ class PostgresControlPlaneStore:
         occurred_at: datetime,
         payload: Mapping | None = None,
     ):
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                self._append_audit_event(
+                    connection,
+                    event_id,
+                    principal_kind=principal_kind,
+                    principal_subject=principal_subject,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    outcome=outcome,
+                    occurred_at=occurred_at,
+                    payload=payload,
+                )
+
+    def _append_audit_event(
+        self,
+        connection,
+        event_id: uuid.UUID,
+        *,
+        principal_kind: str,
+        principal_subject: str,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        outcome: str,
+        occurred_at: datetime,
+        payload: Mapping | None = None,
+    ):
         if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
             raise ValueError("audit occurred_at must be timezone-aware")
+        bounded = {
+            "principal_kind": (principal_kind, 64),
+            "principal_subject": (principal_subject, 512),
+            "action": (action, 128),
+            "resource_type": (resource_type, 128),
+            "resource_id": (resource_id, 512),
+            "outcome": (outcome, 64),
+        }
+        for field, (value, limit) in bounded.items():
+            if not isinstance(value, str) or not value or len(value) > limit:
+                raise ValueError(f"audit {field} must be a non-empty string of at most {limit} characters")
+        details = dict(payload or {})
+        encoded_details = json.dumps(details, sort_keys=True, separators=(",", ":"))
+        if len(encoded_details.encode("utf-8")) > 16 * 1024:
+            raise ValueError("audit payload must not exceed 16 KiB")
         event_payload = {
             "eventId": str(event_id),
             "tenantId": self.tenant_id,
@@ -1417,45 +1671,43 @@ class PostgresControlPlaneStore:
             "resourceId": resource_id,
             "outcome": outcome,
             "occurredAt": occurred_at.astimezone(timezone.utc).isoformat(),
-            "details": dict(payload or {}),
+            "details": details,
         }
         payload_hash = hashlib.sha256(
             json.dumps(event_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
-        with self._pool.connection() as connection:
-            with connection.transaction():
-                inserted = connection.execute(
-                    """
-                    INSERT INTO audit_events (
-                        event_id, tenant_id, principal_kind, principal_subject,
-                        action, resource_type, resource_id, outcome, payload,
-                        payload_sha256, occurred_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
-                    ON CONFLICT (event_id) DO NOTHING
-                    RETURNING event_id
-                    """,
-                    (
-                        event_id,
-                        self.tenant_id,
-                        principal_kind,
-                        principal_subject,
-                        action,
-                        resource_type,
-                        resource_id,
-                        outcome,
-                        json.dumps(dict(payload or {}), sort_keys=True),
-                        payload_hash,
-                        occurred_at,
-                    ),
-                ).fetchone()
-                if inserted is None:
-                    existing = connection.execute(
-                        "SELECT payload_sha256 FROM audit_events WHERE event_id = %s",
-                        (event_id,),
-                    ).fetchone()
-                    if existing["payload_sha256"] != payload_hash:
-                        raise ReportConflict("duplicate audit event ID has a different payload")
-                self._insert_outbox(connection, event_id, "videosim.audit.v1", event_payload)
+        inserted = connection.execute(
+            """
+            INSERT INTO audit_events (
+                event_id, tenant_id, principal_kind, principal_subject,
+                action, resource_type, resource_id, outcome, payload,
+                payload_sha256, occurred_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (event_id) DO NOTHING
+            RETURNING event_id
+            """,
+            (
+                event_id,
+                self.tenant_id,
+                principal_kind,
+                principal_subject,
+                action,
+                resource_type,
+                resource_id,
+                outcome,
+                encoded_details,
+                payload_hash,
+                occurred_at,
+            ),
+        ).fetchone()
+        if inserted is None:
+            existing = connection.execute(
+                "SELECT payload_sha256 FROM audit_events WHERE event_id = %s",
+                (event_id,),
+            ).fetchone()
+            if existing["payload_sha256"] != payload_hash:
+                raise ReportConflict("duplicate audit event ID has a different payload")
+        self._insert_outbox(connection, event_id, "videosim.audit.v1", event_payload)
 
     def enqueue_outbox(self, event_id: uuid.UUID, subject: str, payload: Mapping):
         with self._pool.connection() as connection:

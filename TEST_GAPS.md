@@ -33,9 +33,12 @@ implementation and must pass before those milestones advance.
   live local mTLS accept/identity-mismatch smoke are covered.
 - A real organization OIDC tenant/login/group-claim flow has not been exercised;
   tests inject the headers oauth2-proxy is configured to emit.
-- Automated CA issuance, certificate rotation/revocation, durable identity and
-  audit records, multi-tenant resource grants, and firewall policy deployment
-  remain future durable/HA gates.
+- Automated CA issuance, certificate rotation/revocation, durable multi-tenant
+  identity/resource grants, firewall policy deployment, and an external/WORM
+  audit archive remain future durable/HA gates. PostgreSQL now selectively
+  persists auth/authz denials and successful persistent feed/profile mutations,
+  but allowed reads/workers/local runtime actions remain stdout-only and denial
+  persistence is best-effort during a database/outbox outage.
 - Application DNS/address checks are defense in depth. DNS rebinding and HTTP
   redirects require VM egress enforcement and future redirect-aware fetch
   policy tests before external production.
@@ -59,8 +62,10 @@ implementation and must pass before those milestones advance.
   and direct PostgreSQL `/state.json` reads; stale duplicate, reassigned,
   expired, and config-revoked reports cannot rerun that projection. SQLite
   retains process-local v1 and file-backed monitor state for lab use.
-  Durable security-audit wiring, consumer inbox/projection replay and replay
-  parity, ack-before-mark recovery beyond the broker dedup window, DB/broker
+  Selective durable HTTP audit wiring now has atomic persistent feed/profile
+  writes, denial records, database immutability, and non-owner service roles;
+  inbox-deduplicated consumer/projection replay and replay parity, ack-before-
+  mark recovery beyond the broker dedup window, DB/broker
   restore combinations, schema upgrade under load, PITR, measured RPO/RTO, and
   HA remain open F2/F4 P0 gates.
 - The control-plane benchmark runs no SRT/DASH probes. Representative media

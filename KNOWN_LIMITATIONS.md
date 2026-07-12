@@ -56,8 +56,11 @@
 - The production Compose/VM overlay enforces mTLS worker certificates and OIDC
   viewer/admin identities through Nginx plus oauth2-proxy, but a real
   organization OIDC tenant and automated certificate rotation/revocation are
-  not repository-proven. A durable audit primitive exists, but HTTP security
-  events still emit only to structured stdout until the F2 cutover is complete.
+  not repository-proven. PostgreSQL selectively persists authentication/
+  authorization denials and successful persistent feed/profile mutations, but
+  allowed reads/workers/local runtime actions remain stdout-only, denial writes
+  are best-effort during storage outages, and no external/WORM audit archive
+  exists.
 - Trusted-mode destination checks deny private addresses by default and support
   explicit private/suffix policy. They do not replace VM firewall/egress rules
   and do not yet provide redirect-aware DNS rebinding protection.

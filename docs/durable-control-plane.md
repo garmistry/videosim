@@ -1,11 +1,11 @@
 # Durable Control-Plane Foundation
 
-This document describes the F2 durable foundation and its first HTTP cutover
-slice. It adds a PostgreSQL authority model, checksum-verified migrations,
-fenced transactions, a transactional outbox, a durable NATS JetStream event
-stream, a `videosim.worker/v2` lease/report path, and a direct PostgreSQL
-monitor-alarm/operator-read projection. It does **not** claim that security
-audit writes or event consumers have completed their cutover.
+This document describes the F2 durable foundation and its HTTP cutover slices.
+It adds a PostgreSQL authority model, checksum-verified migrations, fenced
+transactions, a transactional outbox, a durable NATS JetStream event stream, a
+`videosim.worker/v2` lease/report path, direct PostgreSQL monitor-alarm/operator
+reads, and selective durable HTTP security auditing. It does **not** claim that
+event consumers have completed their cutover.
 
 ## Evidence status
 
@@ -21,6 +21,12 @@ Confirmed in this unit:
   offered/acknowledged leases with monotonic epochs, idempotent fenced
   reports/results, centralized alarm transitions, immutable audit/outbox IDs,
   consumer-inbox keys, and `SKIP LOCKED` outbox claims.
+- Migration `004_immutable_audit_outbox.sql` makes `audit_events` append-only
+  (including truncate) and prevents outbox identity/content mutation while
+  leaving only delivery-state fields available to the publisher. Migration
+  `005_feed_generation_fence.sql` retains a feed generation across physical
+  deletion. Together they grant explicit non-owner service roles and remove
+  ambient `PUBLIC` authority on control-plane tables/sequences.
 - Lease and heartbeat freshness decisions use PostgreSQL time. New or changed
   authority is `offered` until the matching worker incarnation explicitly
   acknowledges its epoch/config tuple; stale workers cannot offer, acknowledge,
@@ -36,8 +42,9 @@ Confirmed in this unit:
   stores the JetStream acknowledgement sequence. Failed claims use bounded
   exponential retry and become `dead` after ten attempts.
 - The production Compose overlay provisions PostgreSQL 17 and NATS 2.11 with
-  persistent volumes and required credentials. A one-shot migration service
-  gates app startup; a one-shot stream initializer gates the outbox publisher.
+  persistent volumes and required credentials. A pre-migration role initializer,
+  migration service, and post-migration role-grant service gate app, publisher,
+  and pruner startup; each runtime service uses a distinct non-owner role.
 - SQLite feed definitions have an idempotent cutover command.
 - Backup, restore, restored-lease expiry fencing, explicit broker-recovery
   mode, and snapshot-consistent semantic comparison tools exist under `scripts/`.
@@ -55,13 +62,20 @@ Remaining work and evidence limits:
   immutable alarm edges, and outbox records in the same fenced transaction;
   `/state.json` reads that PostgreSQL projection rather than a local JSON file
   in one repeatable-read database snapshot.
-- Security audit events still go to structured stdout; the durable audit
-  repository primitive is not yet connected to every HTTP authorization path.
+- Durable audit scope is intentionally selective: PostgreSQL records proxy,
+  worker, and operator authentication/authorization denials best-effort, and
+  records successful persistent feed/profile mutations atomically with their
+  outbox row. A failed durable mutation audit returns HTTP 503 and commits
+  neither mutation nor audit. Allowed reads/workers and local runtime
+  start/stop/validate actions remain stdout-audited; a denial-store failure
+  preserves the denial and emits an explicit stdout audit-gap event.
 - No JetStream consumer is deployed. The direct PostgreSQL projection is the
   current operator read model; an inbox-deduplicated consumer/replay parity
   path remains required before event-driven projection can be claimed.
 - PostgreSQL and NATS are single instances in Compose. There is no HA, PITR,
-  multi-zone, or production RPO/RTO evidence.
+  multi-zone, or production RPO/RTO evidence. The database controls are
+  tamper-resistant against the normal runtime roles, not a WORM/external audit
+  archive and not protection against a PostgreSQL owner/superuser.
 - NATS credentials protect the private Compose network, but cross-VM broker TLS
   is deferred to the F4 deployment unit. Do not publish ports 4222 or 5432.
 - No 1,000-, 5,000-, or 10,000-stream capacity claim follows from these
@@ -154,6 +168,47 @@ production rollback. Never edit an applied migration; add the next numbered
 migration. The migrator rejects unknown database versions and checksum/name
 changes.
 
+## Durable HTTP audit and runtime database roles
+
+In PostgreSQL mode, the HTTP boundary writes a durable audit event for denied
+proxy, worker, and operator authentication/authorization attempts. The record
+uses the parsed path only (not a query string), retains an authenticated operator
+or worker principal when one was established, bounds trusted subjects to the
+512-character durable-audit limit, and enters `outbox` in the same transaction.
+Audit persistence is deliberately best-effort for a denial: a
+storage/outbox outage cannot turn a denied request into an allowed one, and the
+stdout audit record explicitly reports the gap.
+
+For successful persistent operator actions, feed create/update/delete,
+external-feed expectation updates, and alert-profile updates use one transaction
+for the feed configuration, immutable audit row, and audit outbox event. The
+handler returns HTTP 503 before changing in-memory configuration or starting,
+stopping, or deleting a local process if that transaction fails. A generated-feed
+configuration change is committed before its local restart; durable deletion is
+committed before best-effort detached-process cleanup. PostgreSQL mutations use
+the loaded feed `config_version` as an expected-version fence, so a stale process
+cannot recreate a feed deleted by another process. This boundary does not make
+transient runtime start/stop/validate behavior durable.
+
+`postgres-role-init` runs `scripts/postgres-runtime-role.sh prepare` before
+migrations. It resets `videosim_app`, `videosim_publisher`, and
+`videosim_pruner` to non-owner/no-membership roles, reassigns any accidental
+ownership, removes direct grants, and rotates their distinct URL-safe passwords.
+`postgres-role-grants` calls the owner-only migration function after every
+migration attempt, including a restart with migrations 004/005 already applied.
+The roles are intentionally narrow:
+
+- `videosim_app` runs the GUI/control-plane and may insert its required outbox
+  events, but cannot update/delete `audit_events` or mutate/delete outbox
+  delivery state.
+- `videosim_publisher` may only claim/mark `outbox` delivery state.
+- `videosim_pruner` may only call the security-definer bounded alarm-history
+  pruning function; it has no direct alarm-event table access.
+
+These controls are not an external immutable archive. PostgreSQL owner/superuser
+credentials, destructive administrative actions, backup retention, and off-box
+log/audit export remain operational security responsibilities.
+
 ### SQLite feed cutover
 
 Stop writes to the old app, retain the SQLite file, apply PostgreSQL migrations,
@@ -220,7 +275,14 @@ scripts/postgres-restore.sh /secure/backups/videosim-....dump
 
 The script refuses a source/target identity match and requires the resolved
 `host:port/database` identity plus an exact destructive confirmation before
-`pg_restore --clean`. It then reapplies/verifies migrations and expires restored
+`pg_restore --clean`. Before that destructive step, a read-only preflight rejects
+a runtime/non-owner target credential and reused runtime/owner passwords. Export
+the target deployment's distinct
+`POSTGRES_APP_PASSWORD`, `POSTGRES_PUBLISHER_PASSWORD`, and
+`POSTGRES_PRUNER_PASSWORD`; if the target URL uses `.pgpass`, also export
+`POSTGRES_RUNTIME_OWNER_PASSWORD`. After migration, restore converges their
+ownership/membership/direct grants and reapplies the narrow role policy that
+`pg_restore --no-privileges` omits. It then expires restored
 offered/active/draining leases, so old workers cannot retain authority after
 promotion. `empty` broker mode requeues every non-dead immutable outbox event;
 `retained` preserves delivery state. Never guess: for DB-only loss use the
@@ -264,7 +326,10 @@ authority. Consumer replay and HA rollback drills remain open F2/F4 gates.
 The integration suite is opt-in because it requires real services:
 
 ```sh
-VIDEOSIM_TEST_POSTGRES_URL='postgresql://.../videosim' \
+VIDEOSIM_TEST_POSTGRES_URL='postgresql://owner:.../videosim' \
+VIDEOSIM_TEST_POSTGRES_APP_URL='postgresql://videosim_app:.../videosim' \
+VIDEOSIM_TEST_POSTGRES_PUBLISHER_URL='postgresql://videosim_publisher:.../videosim' \
+VIDEOSIM_TEST_POSTGRES_PRUNER_URL='postgresql://videosim_pruner:.../videosim' \
 VIDEOSIM_TEST_NATS_URL='nats://...:4222' \
 python3 -m unittest \
   tests.test_postgres_store tests.test_nats_publisher tests.test_worker_v2 -v
@@ -274,10 +339,13 @@ It proves migration idempotence/checksum/unknown-version rejection and
 transactional reversal; feed import/versioning; offered/acknowledged leases,
 heartbeat/incarnation/config/epoch/clock fencing; duplicate report/result
 semantics; no false alarm clear on inconclusive evidence; immutable
-audit/outbox IDs; simultaneous report and outbox-claim serialization;
-JetStream persistence/configuration/deduplication; publish acknowledgement; and
-real HTTP worker-v2 offer/ack/report/retry/config-fence/incarnation-restart
-behavior including one complete `run_worker --once` flow; direct PostgreSQL
-`/state.json` reads; catalog monitor pending/delay/repeat/clear/suppress
-transitions; omission/inconclusive preservation; and bounded event retention.
+audit/outbox IDs and database-enforced mutation rejection; atomic persistent
+HTTP feed/profile audits; durable operator/worker/proxy denial records with
+path sanitization; runtime-role convergence/least privilege; simultaneous report
+and outbox-claim serialization; JetStream persistence/configuration/deduplication;
+publish acknowledgement; and real HTTP worker-v2 offer/ack/report/retry/config-
+fence/incarnation-restart behavior including one complete `run_worker --once`
+flow; direct PostgreSQL `/state.json` reads; catalog monitor
+pending/delay/repeat/clear/suppress transitions; omission/inconclusive
+preservation; and bounded event retention.
 See `docs/work-log.md` for the exact most recent run and restore evidence.

@@ -219,7 +219,8 @@ Docker Compose/VM target, use the mTLS/OIDC overlay documented in
 ```sh
 cp .env.production.example .env.production
 scripts/generate-dev-mtls-certs.sh  # local smoke only; replace in production
-# Fill every placeholder in .env.production.
+# Fill every placeholder in .env.production, including four distinct
+# URL-safe PostgreSQL owner/app/publisher/pruner passwords.
 docker compose --env-file .env.production \
   -f docker-compose.production.yml config --quiet
 # Brand-new deployment only; use the quiesced sequence below for SQLite cutover.
@@ -234,13 +235,23 @@ checks the proxy secret and identity headers. Use a managed CA/secret store and
 VM firewall in production.
 
 The overlay also starts single-instance PostgreSQL and NATS JetStream services.
-`migrate` must complete before `app`, and `nats-init` must complete before the
-outbox publisher. Check their status explicitly:
+`postgres-role-init` converges the non-owner runtime roles before `migrate`;
+`postgres-role-grants` must then complete before `app`, `outbox-publisher`, or
+`monitor-history-pruner`. `nats-init` also gates the publisher. Check their
+status explicitly:
 
 ```sh
 docker compose --env-file .env.production -f docker-compose.production.yml ps
-docker compose --env-file .env.production -f docker-compose.production.yml logs migrate nats-init outbox-publisher
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  logs postgres-role-init migrate postgres-role-grants nats-init outbox-publisher monitor-history-pruner
 ```
+
+The owner/migration credential is never used by runtime services. The GUI uses
+`videosim_app`, the publisher uses `videosim_publisher`, and the pruner uses
+`videosim_pruner`; their passwords must be distinct. During an upgrade, quiesce
+app/publisher/pruner writes before rerunning this chain because role convergence
+intentionally revokes unsafe prior grants/ownership before reapplying the narrow
+policy.
 
 For an existing SQLite deployment, do **not** run the full `up` command first.
 Quiesce the old app, retain and checksum its SQLite file, then build/start only
@@ -251,7 +262,9 @@ traffic:
 prod='docker compose --env-file .env.production -f docker-compose.production.yml'
 $prod build app
 $prod up -d postgres nats
+$prod run --rm postgres-role-init
 $prod run --rm migrate
+$prod run --rm postgres-role-grants
 $prod run --rm nats-init
 $prod run --rm --no-deps -v "$PWD/data:/import:ro" app \
   python -m videosim import-sqlite-feeds --sqlite-path /import/feeds.sqlite3
@@ -295,8 +308,19 @@ scripts/verify-postgres-restore.py \
   --restored-url "$VIDEOSIM_RESTORE_DATABASE_URL"
 ```
 
-Stop app/scheduler/publisher writes before semantic comparison. A restore
-expires restored leases; `empty` broker mode requeues non-dead outbox events, while
+Stop app/scheduler/publisher writes before semantic comparison. Export the same
+`POSTGRES_APP_PASSWORD`, `POSTGRES_PUBLISHER_PASSWORD`, and
+`POSTGRES_PRUNER_PASSWORD` values used by the target deployment. If the target
+URL relies on `.pgpass` rather than inline owner credentials, also export
+`POSTGRES_RUNTIME_OWNER_PASSWORD`. Before `pg_restore --clean`, restore performs
+only read-only preflight checks: the target credential must be a non-runtime
+PostgreSQL owner (or superuser), and all runtime passwords must be distinct from
+that owner password and from one another. After migrations, restore converges
+runtime-role ownership/membership/grants and
+reapplies the narrow policy because `pg_restore --no-privileges` intentionally
+omits source ACLs; provision the same roles/passwords on a different target
+cluster before opening services. A restore expires restored leases; `empty`
+broker mode requeues non-dead outbox events, while
 `retained` preserves broker acknowledgement state. Record the DB/broker loss
 matrix, backup age, restore duration, semantic comparison, replay boundary, and
 any lost event window. All consumers must deduplicate durable event IDs. A

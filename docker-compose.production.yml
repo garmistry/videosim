@@ -14,6 +14,25 @@ services:
       retries: 20
     restart: unless-stopped
 
+  postgres-role-init:
+    image: postgres:17-alpine@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: "${POSTGRES_DB:-videosim}"
+      PGUSER: "${POSTGRES_USER:-videosim}"
+      PGPASSWORD: "${POSTGRES_PASSWORD:?set a strong PostgreSQL owner password}"
+      POSTGRES_APP_PASSWORD: "${POSTGRES_APP_PASSWORD:?set a distinct URL-safe PostgreSQL application password}"
+      POSTGRES_PUBLISHER_PASSWORD: "${POSTGRES_PUBLISHER_PASSWORD:?set a distinct URL-safe PostgreSQL publisher password}"
+      POSTGRES_PRUNER_PASSWORD: "${POSTGRES_PRUNER_PASSWORD:?set a distinct URL-safe PostgreSQL pruner password}"
+    volumes:
+      - ./scripts/postgres-runtime-role.sh:/scripts/postgres-runtime-role.sh:ro
+    command: ["/scripts/postgres-runtime-role.sh"]
+    restart: "no"
+
   nats:
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     command: ["-js", "-sd", "/data", "--user", "${NATS_USER:-videosim}", "--pass", "${NATS_PASSWORD:?set a strong NATS password}"]
@@ -24,11 +43,30 @@ services:
   migrate:
     build: .
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres-role-init:
+        condition: service_completed_successfully
     environment:
       VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
     command: python -m videosim migrate
+    restart: "no"
+
+  postgres-role-grants:
+    image: postgres:17-alpine@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: "${POSTGRES_DB:-videosim}"
+      PGUSER: "${POSTGRES_USER:-videosim}"
+      PGPASSWORD: "${POSTGRES_PASSWORD:?set a strong PostgreSQL owner password}"
+      POSTGRES_APP_PASSWORD: "${POSTGRES_APP_PASSWORD:?set a distinct URL-safe PostgreSQL application password}"
+      POSTGRES_PUBLISHER_PASSWORD: "${POSTGRES_PUBLISHER_PASSWORD:?set a distinct URL-safe PostgreSQL publisher password}"
+      POSTGRES_PRUNER_PASSWORD: "${POSTGRES_PRUNER_PASSWORD:?set a distinct URL-safe PostgreSQL pruner password}"
+    volumes:
+      - ./scripts/postgres-runtime-role.sh:/scripts/postgres-runtime-role.sh:ro
+    command: ["/scripts/postgres-runtime-role.sh", "grant"]
     restart: "no"
 
   nats-init:
@@ -44,7 +82,7 @@ services:
     environment:
       VIDEOSIM_VERBOSE: "1"
       VIDEOSIM_MONITOR_STATE: /var/lib/videosim/monitor/state.json
-      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+      VIDEOSIM_DATABASE_URL: "postgresql://videosim_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
       VIDEOSIM_DB_POOL_MIN: "${VIDEOSIM_DB_POOL_MIN:-1}"
       VIDEOSIM_DB_POOL_MAX: "${VIDEOSIM_DB_POOL_MAX:-10}"
       VIDEOSIM_ALARM_REPEAT_SECONDS: "${VIDEOSIM_ALARM_REPEAT_SECONDS:-5}"
@@ -57,7 +95,7 @@ services:
       VIDEOSIM_ALLOW_PRIVATE_FEEDS: "${VIDEOSIM_ALLOW_PRIVATE_FEEDS:-0}"
       VIDEOSIM_ALLOWED_FEED_HOST_SUFFIXES: "${VIDEOSIM_ALLOWED_FEED_HOST_SUFFIXES:-}"
     depends_on:
-      migrate:
+      postgres-role-grants:
         condition: service_completed_successfully
     expose:
       - "8080"
@@ -78,12 +116,12 @@ services:
   outbox-publisher:
     build: .
     depends_on:
-      migrate:
+      postgres-role-grants:
         condition: service_completed_successfully
       nats-init:
         condition: service_completed_successfully
     environment:
-      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+      VIDEOSIM_DATABASE_URL: "postgresql://videosim_publisher:${POSTGRES_PUBLISHER_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
     command: >
       python -m videosim outbox-publisher
       --nats-url "nats://${NATS_USER:-videosim}:${NATS_PASSWORD}@nats:4222"
@@ -93,10 +131,10 @@ services:
   monitor-history-pruner:
     build: .
     depends_on:
-      migrate:
+      postgres-role-grants:
         condition: service_completed_successfully
     environment:
-      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+      VIDEOSIM_DATABASE_URL: "postgresql://videosim_pruner:${POSTGRES_PRUNER_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
       VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS: "${VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS:-604800}"
     command: >
       python -m videosim monitor-history-prune

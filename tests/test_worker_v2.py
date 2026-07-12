@@ -5,17 +5,18 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
+from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from videosim.gui import GuiHandler, GuiState
+from videosim.gui import GuiHandler, GuiState, OperatorMutationPersistenceError
 from videosim.migrations import PostgresMigrator
-from videosim.postgres_store import PostgresControlPlaneStore
+from videosim.postgres_store import PostgresControlPlaneStore, PostgresStoreError
 from videosim.security import SecurityConfig
 from videosim.worker import run_worker
 
@@ -110,13 +111,9 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
-        with self.store._pool.connection() as connection:
-            with connection.transaction():
-                connection.execute(
-                    "DELETE FROM outbox WHERE payload ->> 'tenantId' = %s",
-                    (self.tenant_id,),
-                )
-                connection.execute("DELETE FROM tenants WHERE id = %s", (self.tenant_id,))
+        # Audit/outbox rows are database-enforced append-only. Each test uses a
+        # unique tenant in a disposable integration database, so teardown must
+        # not bypass that production invariant to erase evidence.
         self.store.close()
         self.monitor_directory.cleanup()
 
@@ -161,12 +158,48 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(status, expected_status, body)
         return body
 
+    def post_form(self, path, fields, *, headers=None, expected_status=303):
+        body = urlencode(fields)
+        request_headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": str(len(body.encode("utf-8"))),
+        }
+        request_headers.update(headers or {})
+        connection = HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        try:
+            connection.request("POST", path, body=body, headers=request_headers)
+            response = connection.getresponse()
+            payload = response.read().decode("utf-8")
+            self.assertEqual(response.status, expected_status, payload)
+            return json.loads(payload) if payload else {}
+        finally:
+            connection.close()
+
+    def operator_headers(self, *, origin=True):
+        headers = {
+            "X-VideoSim-Proxy-Secret": "p" * 32,
+            "X-VideoSim-User": "admin@example.test",
+            "X-VideoSim-Groups": "videosim-admin,videosim-viewer",
+            "X-VideoSim-Expected-Origin": "https://videosim.example.test",
+        }
+        if origin:
+            headers["Origin"] = "https://videosim.example.test"
+        return headers
+
     def worker_headers(self, worker_id):
         return {
             "X-VideoSim-Proxy-Secret": "p" * 32,
             "X-VideoSim-Worker-ID": worker_id,
             "X-Forwarded-Proto": "https",
         }
+
+    def enable_trusted_security(self):
+        self.state.security = SecurityConfig(
+            mode="trusted-proxy",
+            proxy_shared_secret="p" * 32,
+            viewer_group="videosim-viewer",
+            admin_group="videosim-admin",
+        )
 
     def enable_feed_reachable_alert(self, delay_seconds=0):
         self.assertTrue(
@@ -250,12 +283,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         }
 
     def test_v2_requires_verified_proxy_worker_identity(self):
-        self.state.security = SecurityConfig(
-            mode="trusted-proxy",
-            proxy_shared_secret="p" * 32,
-            viewer_group="videosim-viewer",
-            admin_group="videosim-admin",
-        )
+        self.enable_trusted_security()
         worker_id = "worker-v2-mtls"
         incarnation = uuid.uuid4()
         _, denied = self.get_json(
@@ -278,6 +306,628 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
 
         self.assertIn("does not match", denied["error"])
         self.assertEqual(assignment["apiVersion"], "videosim.worker/v2")
+        with self.store._pool.connection() as connection:
+            audits = connection.execute(
+                """
+                SELECT action, outcome, principal_kind, principal_subject
+                FROM audit_events
+                WHERE tenant_id = %s AND action = 'worker_auth'
+                """,
+                (self.tenant_id,),
+            ).fetchall()
+        self.assertEqual(
+            [
+                (
+                    row["action"],
+                    row["outcome"],
+                    row["principal_kind"],
+                    row["principal_subject"],
+                )
+                for row in audits
+            ],
+            [("worker_auth", "denied", "worker", "different-worker")],
+        )
+
+    def test_operator_feed_mutations_commit_atomic_success_audits(self):
+        self.enable_trusted_security()
+        headers = self.operator_headers()
+        with patch.object(
+            SecurityConfig, "validate_external_endpoint", return_value=None
+        ):
+            self.post_form(
+                "/start",
+                {
+                    "stream_id": self.stream_id,
+                    "protocol": "srt",
+                    "mode": "video_only",
+                },
+                headers=headers,
+            )
+        self.post_form(
+            "/streams/create",
+            {
+                "name": "Audited feed",
+                "source": "generated",
+                "protocol": "srt",
+                "mode": "normal",
+                "framerate": "30",
+            },
+            headers=headers,
+        )
+        created_id = "stream-2"
+        self.post_form(
+            "/streams/update",
+            {
+                "stream_id": created_id,
+                "name": "Audited feed updated",
+                "source": "generated",
+                "protocol": "srt",
+                "mode": "video_only",
+                "framerate": "30",
+            },
+            headers=headers,
+        )
+        self.post_form(
+            "/streams/alerts",
+            {
+                "stream_id": created_id,
+                "alert_action": "save",
+                "alert_monitor": "feed_reachable",
+                "alert_delay_seconds": "3",
+            },
+            headers=headers,
+        )
+        self.post_form(
+            "/streams/delete",
+            {"stream_id": created_id},
+            headers=headers,
+        )
+
+        with self.store._pool.connection() as connection:
+            feed_row = connection.execute(
+                "SELECT id FROM feeds WHERE tenant_id = %s AND id = %s",
+                (self.tenant_id, created_id),
+            ).fetchone()
+            audits = connection.execute(
+                """
+                SELECT action, principal_subject, outcome
+                FROM audit_events
+                WHERE tenant_id = %s AND resource_id = %s
+                ORDER BY occurred_at, action
+                """,
+                (self.tenant_id, created_id),
+            ).fetchall()
+            external_audit = connection.execute(
+                """
+                SELECT action, outcome FROM audit_events
+                WHERE tenant_id = %s AND resource_id = %s
+                  AND action = 'feed.expectation.update'
+                """,
+                (self.tenant_id, self.stream_id),
+            ).fetchone()
+            outbox_count = connection.execute(
+                """
+                SELECT count(*) AS count FROM outbox
+                WHERE subject = 'videosim.audit.v1'
+                  AND payload ->> 'tenantId' = %s
+                  AND payload ->> 'resourceId' = %s
+                """,
+                (self.tenant_id, created_id),
+            ).fetchone()["count"]
+        self.assertIsNone(feed_row)
+        self.assertNotIn(created_id, self.state.streams)
+        self.assertEqual(
+            (external_audit["action"], external_audit["outcome"]),
+            ("feed.expectation.update", "succeeded"),
+        )
+        self.assertEqual(
+            {row["action"] for row in audits},
+            {
+                "feed.create",
+                "feed.update",
+                "feed.alert_profile.update",
+                "feed.delete",
+            },
+        )
+        self.assertTrue(
+            all(
+                row["principal_subject"] == "admin@example.test"
+                and row["outcome"] == "succeeded"
+                for row in audits
+            )
+        )
+        self.assertEqual(outbox_count, 4)
+
+    def test_query_bearing_persistent_mutation_routes_without_auditing_query(self):
+        self.enable_trusted_security()
+        sentinel = "success-query-secret-must-not-persist"
+        self.post_form(
+            f"/streams/create?access_token={sentinel}",
+            {
+                "name": "Query route feed",
+                "source": "generated",
+                "protocol": "srt",
+                "mode": "normal",
+            },
+            headers=self.operator_headers(),
+        )
+        created = self.state.streams["stream-2"]
+        with self.store._pool.connection() as connection:
+            audit_row = connection.execute(
+                """
+                SELECT resource_id, payload FROM audit_events
+                WHERE tenant_id = %s AND resource_id = %s
+                  AND action = 'feed.create'
+                """,
+                (self.tenant_id, created.id),
+            ).fetchone()
+        self.assertEqual(audit_row["payload"]["operation"], "/streams/create")
+        self.assertNotIn(sentinel, json.dumps(audit_row["payload"]))
+
+    def test_generated_expectation_commits_before_local_restart(self):
+        self.enable_trusted_security()
+        generated = self.state.create_stream(name="Generated audited feed")
+        process = MagicMock(pid=43210)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        generated.process = process
+        generated.started_at = 1.0
+
+        with patch.object(
+            self.state, "_terminate_stream_process", return_value=True
+        ) as terminate, patch.object(
+            self.state, "start", return_value=True
+        ) as start:
+            self.post_form(
+                "/start",
+                {
+                    "stream_id": generated.id,
+                    "protocol": "srt",
+                    "mode": "video_only",
+                },
+                headers=self.operator_headers(),
+            )
+
+        with self.store._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT config FROM feeds
+                WHERE tenant_id = %s AND id = %s
+                """,
+                (self.tenant_id, generated.id),
+            ).fetchone()
+            audit_row = connection.execute(
+                """
+                SELECT action, outcome FROM audit_events
+                WHERE tenant_id = %s AND resource_id = %s
+                  AND action = 'feed.expectation.update'
+                """,
+                (self.tenant_id, generated.id),
+            ).fetchone()
+        self.assertEqual(row["config"]["mode"], "video_only")
+        self.assertEqual(generated.mode, "video_only")
+        self.assertEqual((audit_row["action"], audit_row["outcome"]), ("feed.expectation.update", "succeeded"))
+        terminate.assert_called_once_with(generated)
+        start.assert_called_once_with(generated.id)
+
+    def test_generated_expectation_audit_failure_prevents_local_restart(self):
+        self.enable_trusted_security()
+        generated = self.state.create_stream(name="Generated fail closed")
+        process = MagicMock(pid=43211)
+        process.poll.return_value = None
+        generated.process = process
+        generated.started_at = 1.0
+        allocator_before = self.state._next_stream_number
+
+        with patch.object(
+            self.store,
+            "_insert_outbox",
+            side_effect=PostgresStoreError("audit outbox unavailable"),
+        ), patch.object(
+            self.state, "_terminate_stream_process"
+        ) as terminate:
+            self.post_form(
+                "/start",
+                {
+                    "stream_id": generated.id,
+                    "protocol": "srt",
+                    "mode": "video_only",
+                },
+                headers=self.operator_headers(),
+                expected_status=503,
+            )
+        with self.store._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT config FROM feeds
+                WHERE tenant_id = %s AND id = %s
+                """,
+                (self.tenant_id, generated.id),
+            ).fetchone()
+        self.assertEqual(row["config"]["mode"], "normal")
+        self.assertEqual(generated.mode, "normal")
+        self.assertIs(generated.process, process)
+        self.assertEqual(self.state._next_stream_number, allocator_before)
+        terminate.assert_not_called()
+
+    def test_committed_update_and_delete_converge_when_process_cleanup_fails(self):
+        self.enable_trusted_security()
+        generated = self.state.create_stream(name="Cleanup failure feed")
+        process = MagicMock(pid=43212)
+        process.poll.return_value = None
+        generated.process = process
+        generated.started_at = 1.0
+        with patch.object(
+            self.state, "_terminate_stream_process", return_value=False
+        ):
+            self.post_form(
+                "/streams/update",
+                {
+                    "stream_id": generated.id,
+                    "name": "Committed despite cleanup failure",
+                    "source": "generated",
+                    "protocol": "srt",
+                    "mode": "video_only",
+                    "framerate": "30",
+                },
+                headers=self.operator_headers(),
+            )
+        with self.store._pool.connection() as connection:
+            updated = connection.execute(
+                "SELECT config FROM feeds WHERE tenant_id = %s AND id = %s",
+                (self.tenant_id, generated.id),
+            ).fetchone()
+        self.assertEqual(updated["config"]["name"], "Committed despite cleanup failure")
+        self.assertEqual(generated.name, "Committed despite cleanup failure")
+        self.assertEqual(generated.mode, "video_only")
+        self.assertIs(generated.process, process)
+        self.assertIn("previous process could not be stopped", generated.last_error)
+
+        cleanup_called = threading.Event()
+        with patch.object(
+            self.state, "_terminate_stream_process", return_value=False
+        ), patch.object(
+            self.state,
+            "_retry_detached_process_cleanup",
+            side_effect=lambda stream: cleanup_called.set(),
+        ) as retry_cleanup:
+            self.post_form(
+                "/streams/delete",
+                {"stream_id": generated.id},
+                headers=self.operator_headers(),
+            )
+        with self.store._pool.connection() as connection:
+            deleted = connection.execute(
+                "SELECT id FROM feeds WHERE tenant_id = %s AND id = %s",
+                (self.tenant_id, generated.id),
+            ).fetchone()
+        self.assertIsNone(deleted)
+        self.assertNotIn(generated.id, self.state.streams)
+        self.assertTrue(cleanup_called.wait(timeout=1))
+        retry_cleanup.assert_called_once_with(generated)
+
+    def test_stale_postgres_process_cannot_resurrect_deleted_or_recreated_feed(self):
+        other_store = PostgresControlPlaneStore(
+            DATABASE_URL,
+            tenant_id=self.tenant_id,
+            min_pool_size=1,
+            max_pool_size=2,
+        )
+        other_state = GuiState(feed_store=other_store)
+
+        def audit(action):
+            return {
+                "event_id": uuid.uuid4(),
+                "principal_kind": "operator",
+                "principal_subject": "admin@example.test",
+                "action": action,
+                "outcome": "succeeded",
+                "occurred_at": datetime.now(timezone.utc),
+                "payload": {"operation": "/test"},
+            }
+
+        try:
+            self.assertEqual(self.state.streams[self.stream_id].config_version, 1)
+            self.assertEqual(other_state.streams[self.stream_id].config_version, 1)
+            self.assertTrue(self.state.delete_stream(self.stream_id, audit=audit("feed.delete")))
+            recreated_state = GuiState(feed_store=other_store)
+            recreated = recreated_state.create_stream(
+                name="Recreated feed",
+                source="external",
+                external_url="srt://example.test:9001?mode=caller",
+                audit=audit("feed.create"),
+            )
+            self.assertEqual(recreated.id, self.stream_id)
+            self.assertEqual(recreated.config_version, 3)
+            with self.assertRaises(OperatorMutationPersistenceError):
+                other_state.apply_mode(
+                    "video_only",
+                    stream_id=self.stream_id,
+                    audit=audit("feed.expectation.update"),
+                )
+            with self.assertRaises(OperatorMutationPersistenceError):
+                other_state.update_alert_profile(
+                    self.stream_id,
+                    ["feed_reachable"],
+                    5,
+                    audit=audit("feed.alert_profile.update"),
+                )
+            with self.store._pool.connection() as connection:
+                feed_row = connection.execute(
+                    """
+                    SELECT config, config_version FROM feeds
+                    WHERE tenant_id = %s AND id = %s
+                    """,
+                    (self.tenant_id, self.stream_id),
+                ).fetchone()
+                generation = connection.execute(
+                    """
+                    SELECT config_version FROM feed_generations
+                    WHERE tenant_id = %s AND id = %s
+                    """,
+                    (self.tenant_id, self.stream_id),
+                ).fetchone()
+                actions = connection.execute(
+                    """
+                    SELECT action FROM audit_events
+                    WHERE tenant_id = %s AND resource_id = %s
+                    ORDER BY action
+                    """,
+                    (self.tenant_id, self.stream_id),
+                ).fetchall()
+            self.assertEqual(feed_row["config"]["name"], "Recreated feed")
+            self.assertEqual(feed_row["config_version"], 3)
+            self.assertEqual(generation["config_version"], 3)
+            self.assertEqual(
+                [row["action"] for row in actions], ["feed.create", "feed.delete"]
+            )
+        finally:
+            other_store.close()
+
+    def test_operator_mutation_fails_closed_when_audit_outbox_cannot_commit(self):
+        self.enable_trusted_security()
+        before = set(self.state.streams)
+        allocator_before = self.state._next_stream_number
+        with patch.object(
+            self.store,
+            "_insert_outbox",
+            side_effect=PostgresStoreError("audit outbox unavailable"),
+        ):
+            response = self.post_form(
+                "/streams/create",
+                {
+                    "name": "Must not commit",
+                    "source": "generated",
+                    "protocol": "srt",
+                    "mode": "normal",
+                },
+                headers=self.operator_headers(),
+                expected_status=503,
+            )
+        self.assertFalse(response["ok"])
+        self.assertEqual(set(self.state.streams), before)
+        self.assertEqual(self.state._next_stream_number, allocator_before)
+        with self.store._pool.connection() as connection:
+            feed_row = connection.execute(
+                """
+                SELECT id FROM feeds
+                WHERE tenant_id = %s AND config ->> 'name' = 'Must not commit'
+                """,
+                (self.tenant_id,),
+            ).fetchone()
+            audit_row = connection.execute(
+                """
+                SELECT event_id FROM audit_events
+                WHERE tenant_id = %s AND action = 'feed.create'
+                  AND payload ->> 'operation' = '/streams/create'
+                """,
+                (self.tenant_id,),
+            ).fetchone()
+        self.assertIsNone(feed_row)
+        self.assertIsNone(audit_row)
+
+        original_name = self.state.streams[self.stream_id].name
+        with patch.object(
+            self.store,
+            "_insert_outbox",
+            side_effect=PostgresStoreError("audit outbox unavailable"),
+        ):
+            self.post_form(
+                "/streams/update",
+                {
+                    "stream_id": self.stream_id,
+                    "name": "Must not update",
+                    "source": "generated",
+                    "protocol": "srt",
+                    "mode": "normal",
+                    "framerate": "30",
+                },
+                headers=self.operator_headers(),
+                expected_status=503,
+            )
+        self.assertEqual(self.state.streams[self.stream_id].name, original_name)
+        with self.store._pool.connection() as connection:
+            stored = connection.execute(
+                """
+                SELECT config FROM feeds
+                WHERE tenant_id = %s AND id = %s
+                """,
+                (self.tenant_id, self.stream_id),
+            ).fetchone()
+        self.assertEqual(stored["config"]["name"], original_name)
+        self.assertEqual(stored["config"]["source"], "external")
+
+        with patch.object(
+            self.store,
+            "_insert_outbox",
+            side_effect=PostgresStoreError("audit outbox unavailable"),
+        ):
+            self.post_form(
+                "/streams/delete",
+                {"stream_id": self.stream_id},
+                headers=self.operator_headers(),
+                expected_status=503,
+            )
+        self.assertIn(self.stream_id, self.state.streams)
+        with self.store._pool.connection() as connection:
+            self.assertIsNotNone(
+                connection.execute(
+                    """
+                    SELECT id FROM feeds
+                    WHERE tenant_id = %s AND id = %s
+                    """,
+                    (self.tenant_id, self.stream_id),
+                ).fetchone()
+            )
+
+    def test_operator_auth_denial_is_durable_even_without_mutation(self):
+        self.enable_trusted_security()
+        sentinel = "query-secret-must-not-persist"
+        denied = self.post_form(
+            f"/streams/create?access_token={sentinel}",
+            {
+                "name": "Denied feed",
+                "source": "generated",
+                "protocol": "srt",
+                "mode": "normal",
+            },
+            headers=self.operator_headers(origin=False),
+            expected_status=403,
+        )
+        self.assertIn("same-origin", denied["error"])
+        with self.store._pool.connection() as connection:
+            audit_row = connection.execute(
+                """
+                SELECT event_id, action, outcome, principal_kind,
+                       principal_subject, resource_id, payload
+                FROM audit_events
+                WHERE tenant_id = %s AND action = 'operator_auth'
+                ORDER BY occurred_at DESC LIMIT 1
+                """,
+                (self.tenant_id,),
+            ).fetchone()
+            outbox_row = connection.execute(
+                "SELECT payload FROM outbox WHERE event_id = %s",
+                (audit_row["event_id"],),
+            ).fetchone()
+        self.assertEqual((audit_row["action"], audit_row["outcome"]), ("operator_auth", "denied"))
+        self.assertEqual(
+            (audit_row["principal_kind"], audit_row["principal_subject"]),
+            ("operator", "admin@example.test"),
+        )
+        self.assertEqual(audit_row["resource_id"], "/streams/create")
+        self.assertIn("same-origin", audit_row["payload"]["reason"])
+        self.assertNotIn(sentinel, json.dumps(audit_row["payload"]))
+        self.assertNotIn(sentinel, json.dumps(outbox_row["payload"]))
+
+        with patch.object(
+            self.store,
+            "append_audit_event",
+            side_effect=PostgresStoreError("audit database unavailable"),
+        ):
+            still_denied = self.post_form(
+                "/streams/create",
+                {
+                    "name": "Still denied",
+                    "source": "generated",
+                    "protocol": "srt",
+                    "mode": "normal",
+                },
+                headers=self.operator_headers(origin=False),
+                expected_status=403,
+            )
+        self.assertIn("same-origin", still_denied["error"])
+        self.assertNotIn(
+            "Still denied", {stream.name for stream in self.state.streams.values()}
+        )
+
+    def test_oversized_authenticated_identities_are_rejected_with_durable_denials(self):
+        self.enable_trusted_security()
+        operator_headers = self.operator_headers()
+        operator_headers["X-VideoSim-User"] = "o" * 513
+        operator_denied = self.post_form(
+            "/streams/create",
+            {
+                "name": "Oversized denied feed",
+                "source": "generated",
+                "protocol": "srt",
+                "mode": "normal",
+            },
+            headers=operator_headers,
+            expected_status=401,
+        )
+        self.assertIn("identity exceeds maximum length", operator_denied["error"])
+        _, worker_denied = self.get_json(
+            "/api/workers/assignments",
+            {
+                "worker_id": "worker-v2-mtls",
+                "worker_incarnation_id": str(uuid.uuid4()),
+            },
+            expected_status=401,
+            headers=self.worker_headers("w" * 513),
+        )
+        self.assertIn("identity exceeds maximum length", worker_denied["error"])
+        with self.store._pool.connection() as connection:
+            audits = connection.execute(
+                """
+                SELECT event_id, action, outcome, principal_kind, principal_subject, payload
+                FROM audit_events
+                WHERE tenant_id = %s AND action IN ('operator_auth', 'worker_auth')
+                ORDER BY action
+                """,
+                (self.tenant_id,),
+            ).fetchall()
+            outbox_count = connection.execute(
+                """
+                SELECT count(*) AS count
+                FROM outbox
+                WHERE event_id = ANY(%s)
+                """,
+                ([row["event_id"] for row in audits],),
+            ).fetchone()["count"]
+        self.assertEqual(
+            [
+                (row["action"], row["outcome"], row["principal_kind"], row["principal_subject"])
+                for row in audits
+            ],
+            [
+                ("operator_auth", "denied", "unknown", "anonymous"),
+                ("worker_auth", "denied", "unknown", "anonymous"),
+            ],
+        )
+        self.assertEqual(outbox_count, 2)
+        self.assertTrue(
+            all("identity exceeds maximum length" in row["payload"]["reason"] for row in audits)
+        )
+
+    def test_proxy_auth_denial_is_durable(self):
+        self.enable_trusted_security()
+        _, denied = self.get_json(
+            "/dash/missing/manifest.mpd", {}, expected_status=401
+        )
+        self.assertIn("trusted proxy", denied["error"])
+        with self.store._pool.connection() as connection:
+            audit_row = connection.execute(
+                """
+                SELECT action, outcome, principal_kind, principal_subject,
+                       resource_id, payload
+                FROM audit_events
+                WHERE tenant_id = %s AND action = 'proxy_auth'
+                ORDER BY occurred_at DESC LIMIT 1
+                """,
+                (self.tenant_id,),
+            ).fetchone()
+        self.assertEqual(
+            (
+                audit_row["action"],
+                audit_row["outcome"],
+                audit_row["principal_kind"],
+                audit_row["principal_subject"],
+            ),
+            ("proxy_auth", "denied", "unknown", "anonymous"),
+        )
+        self.assertEqual(audit_row["resource_id"], "/dash/missing/manifest.mpd")
+        self.assertEqual(audit_row["payload"]["method"], "GET")
 
     def test_offer_ack_report_retry_and_config_fence(self):
         worker_id = "worker-v2-a"

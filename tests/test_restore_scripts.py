@@ -27,6 +27,102 @@ class PostgresRestoreSafetyTest(unittest.TestCase):
                 check=False,
             )
 
+    def test_restore_validates_secrets_before_destructive_restore_and_converges_after_migration(self):
+        script = SCRIPT.read_text(encoding="utf-8")
+
+        runtime_validate = script.index("scripts/postgres-runtime-role.sh validate")
+        restore = script.index('pg_restore --list "$backup"')
+        migration = script.index('python3 -m videosim migrate --database-url "$target_url"')
+        runtime_prepare = script.index("scripts/postgres-runtime-role.sh prepare")
+        runtime_grants = script.index("scripts/postgres-runtime-role.sh grant")
+
+        self.assertLess(runtime_validate, restore)
+        self.assertGreater(runtime_prepare, migration)
+        self.assertGreater(runtime_grants, runtime_prepare)
+
+    def test_reused_runtime_owner_password_stops_before_pg_restore(self):
+        source = "postgresql://owner:owner-secret@source.example.test/source"
+        target = "postgresql://owner:owner-secret@target.example.test/target"
+        identity = "target.example.test:5432/target"
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory, "pg_restore_called")
+            psql = Path(directory, "psql")
+            psql.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  *source.example.test*) echo '10.0.0.1:5432/source' ;;\n"
+                "  *) echo '10.0.0.2:5432/target' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            psql.chmod(0o755)
+            pg_restore = Path(directory, "pg_restore")
+            pg_restore.write_text(
+                "#!/bin/sh\nprintf called > \"$PG_RESTORE_MARKER\"\nexit 99\n",
+                encoding="utf-8",
+            )
+            pg_restore.chmod(0o755)
+            result = self.run_restore(
+                source,
+                target,
+                identity,
+                f"DESTROY_AND_RESTORE {identity}",
+                {
+                    "PATH": f"{directory}:{os.environ['PATH']}",
+                    "PG_RESTORE_MARKER": str(marker),
+                    "POSTGRES_APP_PASSWORD": "owner-secret",
+                    "POSTGRES_PUBLISHER_PASSWORD": "publisher-secret",
+                    "POSTGRES_PRUNER_PASSWORD": "pruner-secret",
+                },
+            )
+            pg_restore_called = marker.exists()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must differ from the PostgreSQL owner password", result.stdout)
+        self.assertFalse(pg_restore_called)
+
+    def test_non_owner_target_credential_stops_before_pg_restore(self):
+        source = "postgresql://owner:source-secret@source.example.test/source"
+        target = "postgresql://not_owner:target-secret@target.example.test/target"
+        identity = "target.example.test:5432/target"
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory, "pg_restore_called")
+            psql = Path(directory, "psql")
+            psql.write_text(
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "  *pg_has_role*) echo f ;;\n"
+                "  *source.example.test*) echo '10.0.0.1:5432/source' ;;\n"
+                "  *) echo '10.0.0.2:5432/target' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            psql.chmod(0o755)
+            pg_restore = Path(directory, "pg_restore")
+            pg_restore.write_text(
+                "#!/bin/sh\nprintf called > \"$PG_RESTORE_MARKER\"\nexit 99\n",
+                encoding="utf-8",
+            )
+            pg_restore.chmod(0o755)
+            result = self.run_restore(
+                source,
+                target,
+                identity,
+                f"DESTROY_AND_RESTORE {identity}",
+                {
+                    "PATH": f"{directory}:{os.environ['PATH']}",
+                    "PG_RESTORE_MARKER": str(marker),
+                    "POSTGRES_APP_PASSWORD": "app-secret",
+                    "POSTGRES_PUBLISHER_PASSWORD": "publisher-secret",
+                    "POSTGRES_PRUNER_PASSWORD": "pruner-secret",
+                },
+            )
+            pg_restore_called = marker.exists()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("target credential must be a non-runtime PostgreSQL owner", result.stdout)
+        self.assertFalse(pg_restore_called)
+
     def test_refuses_source_database_even_with_confirmation(self):
         identity = "db.example.test:5432/videosim"
         result = self.run_restore(

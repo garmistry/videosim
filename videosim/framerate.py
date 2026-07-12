@@ -7,6 +7,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .probe_deadline import probe_timeout
+
 if TYPE_CHECKING:
     from .feed import VideoFeedConfig
 
@@ -86,9 +88,14 @@ def measure_frame_rate(config: "VideoFeedConfig") -> FrameRateReport:
         "json",
         str(input_path),
     ]
+    timeout = probe_timeout(12)
     try:
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=12)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        if timeout < 12:
+            raise TimeoutError("stream probe budget exhausted") from exc
+        raise FrameRateError(f"frame-rate probe failed: {exc}") from exc
+    except OSError as exc:
         raise FrameRateError(f"frame-rate probe failed: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.splitlines()[-1:] or ["ffprobe frame-rate probe failed"]

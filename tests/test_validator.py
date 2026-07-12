@@ -1,15 +1,41 @@
 import json
+import subprocess
 import tempfile
+import time
 import unittest
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from videosim.feed import VideoFeedConfig
+from videosim.probe_deadline import use_probe_deadline
 from videosim.validator import ValidationReport, human_summary, validate_config
 
 
 class ValidatorOutputTest(unittest.TestCase):
+    def test_stream_budget_caps_and_cancels_gstreamer_receiver(self):
+        from videosim.validator import _receiver_succeeds
+
+        with use_probe_deadline(time.monotonic() + 1), patch(
+            "videosim.validator.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("gst-launch-1.0", 1),
+        ) as run:
+            with self.assertRaisesRegex(TimeoutError, "stream probe budget exhausted"):
+                _receiver_succeeds(["gst-launch-1.0"], timeout=15)
+
+        self.assertLess(run.call_args.kwargs["timeout"], 1)
+
+    def test_stream_budget_bounds_dash_polling(self):
+        from videosim.validator import _wait_for_dash_manifest
+
+        with tempfile.TemporaryDirectory() as directory, use_probe_deadline(
+            time.monotonic() + 0.01
+        ):
+            with self.assertRaisesRegex(TimeoutError, "stream probe budget exhausted"):
+                _wait_for_dash_manifest(
+                    VideoFeedConfig(protocol="dash", dash_dir=directory)
+                )
+
     def test_report_json_is_machine_readable(self):
         report = ValidationReport(endpoint="srt://127.0.0.1:9000?mode=caller", reachable=True, passed=True)
 

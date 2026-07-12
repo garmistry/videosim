@@ -74,9 +74,10 @@ implementation and must pass before those milestones advance.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker
-  execution only has budget-based lower-priority deferral. Hard cancellation,
-  cost-tier fairness, backpressure, measured media capacity, and 1,000-stream
-  failure/soak evidence remain open.
+  execution only has budget-based lower-priority deferral and hard bounds for
+  built-in media subprocess/poll waits. Arbitrary-checker and trickle-resistant
+  HTTP cancellation, cost-tier fairness, backpressure, measured media capacity,
+  and 1,000-stream failure/soak evidence remain open.
 
 ## Monitoring
 

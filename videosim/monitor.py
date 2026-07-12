@@ -26,6 +26,7 @@ from .loudness import (
 )
 from .monitor_catalog import SPEC_BY_ID, monitor_catalog_payload
 from .profile import load_profile
+from .probe_deadline import probe_timeout, use_probe_deadline
 from .tr101 import TR101_INDICATORS, analyze_ts
 from .validator import ValidationReport, validate_config
 
@@ -302,25 +303,42 @@ def frame_rate_issues_for_stream(stream: dict, config: VideoFeedConfig) -> list[
 def ts_sample(config: VideoFeedConfig, sample_seconds: float) -> tuple[bytes, float | None]:
     if config.protocol == "dash":
         paths = sorted(Path(config.dash_dir).glob("*.ts"), key=lambda path: path.stat().st_mtime)[-15:]
-        return b"".join(path.read_bytes() for path in paths), len(paths) * DASH_SEGMENT_DURATION_SECONDS if paths else None
+        chunks = []
+        for path in paths:
+            probe_timeout(float("inf"))
+            chunks.append(path.read_bytes())
+            probe_timeout(float("inf"))
+        return b"".join(chunks), len(paths) * DASH_SEGMENT_DURATION_SECONDS if paths else None
     return srt_ts_sample(config, sample_seconds), sample_seconds
 
 
 def srt_ts_sample(config: VideoFeedConfig, sample_seconds: float) -> bytes:
     args = ["gst-launch-1.0", "-q", "srtsrc", f"uri={config.endpoint}", "!", "fdsink", "fd=1"]
+    timeout = probe_timeout(sample_seconds)
+    budget_limited = timeout < sample_seconds
     try:
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError:
         return b""
     try:
-        stdout, _ = process.communicate(timeout=sample_seconds)
-    except subprocess.TimeoutExpired:
+        stdout, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
         process.terminate()
         try:
-            stdout, _ = process.communicate(timeout=3)
-        except subprocess.TimeoutExpired:
+            cleanup_timeout = probe_timeout(3)
+            stdout, _ = process.communicate(timeout=cleanup_timeout)
+        except TimeoutError:
             process.kill()
-            stdout, _ = process.communicate(timeout=3)
+            process.communicate(timeout=1)
+            raise
+        except subprocess.TimeoutExpired as cleanup_exc:
+            process.kill()
+            stdout, _ = process.communicate(timeout=1)
+            if cleanup_timeout < 3:
+                raise TimeoutError("stream probe budget exhausted") from cleanup_exc
+        if budget_limited:
+            raise TimeoutError("stream probe budget exhausted") from exc
+        probe_timeout(float("inf"))
     return stdout
 
 
@@ -649,6 +667,11 @@ def run_monitor_once(
             if stream_budget_seconds
             else None
         )
+        media_deadline = (
+            time.monotonic() + stream_budget_seconds
+            if stream_budget_seconds
+            else None
+        )
 
         def check_budget():
             if stream_deadline is not None and monotonic() >= stream_deadline:
@@ -658,7 +681,8 @@ def run_monitor_once(
         validation_started = monotonic()
         try:
             config = config_for_stream(stream, srt_host)
-            report = validator(config)
+            with use_probe_deadline(media_deadline):
+                report = validator(config)
             check_budget()
             validation_issues = issues_for_report(stream, report)
             issues_by_id = {item.monitor_id: item for item in validation_issues}
@@ -683,7 +707,8 @@ def run_monitor_once(
         tr101_started = monotonic()
         try:
             check_budget()
-            tr101_issues = tr101_checker(stream, config)
+            with use_probe_deadline(media_deadline):
+                tr101_issues = tr101_checker(stream, config)
             check_budget()
             issues.extend(tr101_issues)
             observe_checker(stream, tr101_issues)
@@ -707,7 +732,8 @@ def run_monitor_once(
             frame_started = monotonic()
             try:
                 check_budget()
-                frame_issues = frame_rate_checker(stream, config)
+                with use_probe_deadline(media_deadline):
+                    frame_issues = frame_rate_checker(stream, config)
                 check_budget()
                 issues.extend(frame_issues)
                 observe_checker(stream, frame_issues)
@@ -739,7 +765,8 @@ def run_monitor_once(
             loudness_started = monotonic()
             try:
                 check_budget()
-                loudness_issues = loudness_checker(stream, config)
+                with use_probe_deadline(media_deadline):
+                    loudness_issues = loudness_checker(stream, config)
                 check_budget()
                 issues.extend(loudness_issues)
                 observe_checker(stream, loudness_issues)

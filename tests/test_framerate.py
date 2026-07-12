@@ -1,6 +1,9 @@
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from videosim.feed import VideoFeedConfig, video_pipeline_args
 from videosim.framerate import (
@@ -8,12 +11,24 @@ from videosim.framerate import (
     frame_rate_float,
     frame_rate_fraction,
     frame_rate_keyint,
+    measure_frame_rate,
     normalize_frame_rate,
     parse_ffprobe_frame_rate,
 )
+from videosim.probe_deadline import use_probe_deadline
 
 
 class FrameRateTest(unittest.TestCase):
+    def test_stream_budget_caps_and_cancels_ffprobe(self):
+        with use_probe_deadline(time.monotonic() + 1), patch(
+            "videosim.framerate.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("ffprobe", 1),
+        ) as run:
+            with self.assertRaisesRegex(TimeoutError, "stream probe budget exhausted"):
+                measure_frame_rate(VideoFeedConfig())
+
+        self.assertLess(run.call_args.kwargs["timeout"], 1)
+
     def test_supported_broadcast_rates_map_to_gstreamer_fractions(self):
         self.assertEqual(frame_rate_fraction("23.97"), "24000/1001")
         self.assertEqual(frame_rate_fraction("59.94"), "60000/1001")

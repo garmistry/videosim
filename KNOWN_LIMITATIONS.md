@@ -92,7 +92,8 @@
   serial unless `--max-concurrent-checks` is configured. The pool is bounded
   stream-level concurrency, not measured media capacity or backpressure.
   `--stream-budget-seconds` defers remaining checks after budget exhaustion but
-  does not interrupt an in-flight media tool.
+  now caps built-in media subprocess and DASH polling/socket waits. Arbitrary
+  injected checker code and a trickling HTTP response are not preempted.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The
   future JetStream consumer must still use `consumer_inbox` atomically and prove

@@ -399,8 +399,9 @@ default and requires separate measured capacity testing.
 Use `--max-concurrent-checks N` to bound simultaneous stream checks. This is a
 local execution bound, not a deadline, backpressure, or capacity certification.
 Use `--stream-budget-seconds N` to classify an over-budget stream as timed out
-and defer its remaining checks. The budget does not interrupt an in-flight
-media tool and is not hard cancellation or backpressure.
+and defer its remaining checks. Built-in GStreamer, FFmpeg, FFprobe, and DASH
+polling waits use the remaining budget; this is not cost-tier fairness,
+backpressure, or capacity certification.
 
 Strict versioned reports are the default. During a controlled same-host upgrade,
 the GUI can temporarily accept old unversioned reporters with

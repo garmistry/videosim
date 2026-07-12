@@ -1,12 +1,26 @@
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from videosim.feed import VideoFeedConfig
-from videosim.loudness import LoudnessError, parse_ebur128_summary
+from videosim.loudness import LoudnessError, measure_loudness, parse_ebur128_summary
+from videosim.probe_deadline import use_probe_deadline
 
 
 class LoudnessTest(unittest.TestCase):
+    def test_stream_budget_caps_and_cancels_ffmpeg(self):
+        with use_probe_deadline(time.monotonic() + 1), patch(
+            "videosim.loudness.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("ffmpeg", 1),
+        ) as run:
+            with self.assertRaisesRegex(TimeoutError, "stream probe budget exhausted"):
+                measure_loudness(VideoFeedConfig())
+
+        self.assertLess(run.call_args.kwargs["timeout"], 1)
+
     def test_parse_ffmpeg_ebur128_summary(self):
         report = parse_ebur128_summary(
             """

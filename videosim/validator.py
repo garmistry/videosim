@@ -12,6 +12,7 @@ from urllib.request import urlopen
 from xml.etree import ElementTree
 
 from .feed import VideoFeedConfig
+from .probe_deadline import probe_timeout
 
 
 @dataclass
@@ -283,7 +284,7 @@ def _read_rgb_frames(config: VideoFeedConfig, count: int):
         ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=12,
+        timeout=probe_timeout(12),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode("utf-8", errors="replace"))
@@ -297,20 +298,26 @@ def _external_dash(config: VideoFeedConfig) -> bool:
 
 
 def _wait_for_dash_manifest(config: VideoFeedConfig, timeout: float = 15) -> Path | bytes | None:
+    wait_seconds = probe_timeout(timeout)
+    budget_limited = wait_seconds < timeout
     if _external_dash(config):
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
             data = _fetch_url(config.endpoint)
             if data:
                 return data
-            time.sleep(0.25)
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        if budget_limited:
+            raise TimeoutError("stream probe budget exhausted")
         return None
     manifest = Path(config.dash_dir) / config.dash_manifest
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + wait_seconds
     while time.monotonic() < deadline:
         if manifest.is_file() and manifest.stat().st_size > 0:
             return manifest
-        time.sleep(0.25)
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    if budget_limited:
+        raise TimeoutError("stream probe budget exhausted")
     return None
 
 
@@ -330,17 +337,23 @@ def _dash_adaptations(manifest: Path | bytes) -> set[str]:
 
 
 def _wait_for_dash_adaptations(config: VideoFeedConfig, manifest: Path | bytes, timeout: float = 8) -> set[str]:
-    deadline = time.monotonic() + timeout
+    wait_seconds = probe_timeout(timeout)
+    budget_limited = wait_seconds < timeout
+    deadline = time.monotonic() + wait_seconds
     adaptations = _dash_adaptations(manifest)
     while not isinstance(manifest, bytes) and config.captions and "text" not in adaptations and time.monotonic() < deadline:
-        time.sleep(0.25)
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
         adaptations = _dash_adaptations(manifest)
+    if budget_limited and time.monotonic() >= deadline:
+        raise TimeoutError("stream probe budget exhausted")
     return adaptations
 
 
 def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, manifest: Path | bytes | None = None, timeout: float = 15) -> Path | bytes | None:
+    wait_seconds = probe_timeout(timeout)
+    budget_limited = wait_seconds < timeout
     if _external_dash(config):
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
             source = manifest or _wait_for_dash_manifest(config, timeout=1)
             if source:
@@ -352,11 +365,13 @@ def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, manifest: Path | 
                     data = _fetch_url(url)
                     if data:
                         return data
-            time.sleep(0.25)
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        if budget_limited:
+            raise TimeoutError("stream probe budget exhausted")
         return None
     pattern = f"{kind}_0_*.ts"
     root = Path(config.dash_dir)
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + wait_seconds
     while time.monotonic() < deadline:
         segments = sorted(root.glob(pattern), key=lambda path: (path.stat().st_mtime, path.name))
         segments = [path for path in segments if path.stat().st_size > 0]
@@ -364,7 +379,9 @@ def _wait_for_dash_segment(config: VideoFeedConfig, kind: str, manifest: Path | 
             if kind == "video" and len(segments) > 1:
                 return segments[-2]
             return segments[-1]
-        time.sleep(0.25)
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    if budget_limited:
+        raise TimeoutError("stream probe budget exhausted")
     return None
 
 
@@ -375,7 +392,9 @@ def _dash_captions_present(config: VideoFeedConfig, manifest: Path | bytes | Non
     caption_file = Path(config.dash_dir) / "captions.vtt"
     if not caption_file.is_file():
         return False
+    probe_timeout(float("inf"))
     text = caption_file.read_text(encoding="utf-8", errors="replace")
+    probe_timeout(float("inf"))
     return text.startswith("WEBVTT") and "VIDEOSIM" in text
 
 
@@ -383,6 +402,7 @@ def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path | bytes, count:
     frame_size = config.width * config.height * 3
     temp_path = None
     if isinstance(segment, bytes):
+        probe_timeout(float("inf"))
         tmp = tempfile.NamedTemporaryFile(prefix="videosim-dash-segment-", suffix=".ts", delete=False)
         tmp.write(segment)
         tmp.close()
@@ -418,7 +438,7 @@ def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path | bytes, count:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=12,
+            timeout=probe_timeout(12),
         )
     finally:
         if temp_path:
@@ -431,19 +451,29 @@ def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path | bytes, count:
 
 
 def _receiver_succeeds(args, timeout):
+    bounded_timeout = probe_timeout(timeout)
     try:
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=bounded_timeout)
+    except subprocess.TimeoutExpired as exc:
+        if bounded_timeout < timeout:
+            raise TimeoutError("stream probe budget exhausted") from exc
         return False
     return result.returncode == 0
 
 
 def _fetch_url(url: str, timeout: float = 8) -> bytes:
+    bounded_timeout = probe_timeout(timeout)
     try:
-        with urlopen(url, timeout=timeout) as response:
-            return response.read()
+        with urlopen(url, timeout=bounded_timeout) as response:
+            data = response.read()
+    except TimeoutError:
+        if bounded_timeout < timeout:
+            raise
+        return b""
     except Exception:
         return b""
+    probe_timeout(float("inf"))
+    return data
 
 
 def _adaptation_kind(element) -> str:

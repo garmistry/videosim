@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .feed import VideoFeedConfig
+from .probe_deadline import probe_timeout
 
 
 EBU_R128_TARGET_LUFS = -23.0
@@ -42,14 +43,20 @@ def measure_loudness(config: VideoFeedConfig, sample_seconds: float = 5.0) -> Lo
         "null",
         "-",
     ]
+    max_timeout = max(10, sample_seconds + 6)
+    timeout = probe_timeout(max_timeout)
     try:
         result = subprocess.run(
             args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=max(10, sample_seconds + 6),
+            timeout=timeout,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
+        if timeout < max_timeout:
+            raise TimeoutError("stream probe budget exhausted") from exc
+        raise LoudnessError(f"loudness probe failed: {exc}") from exc
+    except OSError as exc:
         raise LoudnessError(f"loudness probe failed: {exc}") from exc
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").splitlines()[-1:] or ["ffmpeg loudness probe failed"]

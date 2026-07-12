@@ -1,8 +1,10 @@
+import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from videosim.feed import VideoFeedConfig
 from videosim.framerate import FrameRateReport
@@ -15,8 +17,10 @@ from videosim.monitor import (
     issue,
     loudness_issues_for_stream,
     run_monitor_once,
+    srt_ts_sample,
     tr101_issues_for_stream,
 )
+from videosim.probe_deadline import use_probe_deadline
 from videosim.tr101 import TR101_INDICATORS
 from videosim.validator import ValidationReport
 from tests.test_tr101 import (
@@ -64,6 +68,22 @@ def repeated_with_nulls(*packets):
 
 
 class MonitorTest(unittest.TestCase):
+    def test_stream_budget_cancels_srt_transport_sample(self):
+        process = Mock()
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired("gst-launch-1.0", 1),
+            (b"", b""),
+        ]
+        with use_probe_deadline(time.monotonic() + 1), patch(
+            "videosim.monitor.subprocess.Popen",
+            return_value=process,
+        ):
+            with self.assertRaisesRegex(TimeoutError, "stream probe budget exhausted"):
+                srt_ts_sample(VideoFeedConfig(), sample_seconds=5)
+
+        self.assertLess(process.communicate.call_args_list[0].kwargs["timeout"], 1)
+        process.terminate.assert_called_once_with()
+
     def test_stream_budget_defers_remaining_checks_without_clearing_alarm(self):
         current_stream = stream()
         previous = apply_issues(

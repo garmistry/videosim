@@ -16,7 +16,7 @@ linked evidence passes in a production-like environment.
 |---|---|---|---|
 | F0 — contract and measurement foundation | Versioned worker contract; assignment generation/token; strict report ownership; worker-state pruning; independent heartbeat; probe instrumentation; deterministic control-plane benchmark | Rebalance, empty-assignment, stale-instance/generation/token, malformed/out-of-scope report, heartbeat-over-TTL, persistence failure, and concurrency tests; benchmark invariant report | Implemented and locally verified; not a scale gate |
 | F1 — secure bounded APIs | Operator and worker authentication/authorization; mTLS workload identity; request schemas/limits; rate limits; SSRF controls; audit log; retry policy | Contract, abuse, replay, tenant-isolation, credential rotation, and SSRF tests | Core Compose/VM boundary implemented; external OIDC/rotation/tenant evidence pending |
-| F2 — durable control plane | Production repository adapters; migrations; workers, leases, assignments, results, alarms/events, audit records; idempotent ingestion; backup/restore | Migration/reversal checksums, fencing, stale-result rejection, idempotency, PITR/RPO/RTO evidence | In progress: PostgreSQL/JetStream foundation plus HTTP worker-v2 lease/probe-result shadow cutover and local service/restore evidence implemented; monitor-alarm reads, security audit, consumers, and production PITR/RPO/RTO remain |
+| F2 — durable control plane | Production repository adapters; migrations; workers, leases, assignments, results, alarms/events, audit records; idempotent ingestion; backup/restore | Migration/reversal checksums, fencing, stale-result rejection, idempotency, PITR/RPO/RTO evidence | In progress: PostgreSQL/JetStream foundation, HTTP worker-v2, and direct PostgreSQL monitor-alarm/operator-read projection implemented with local service/restore evidence; security audit, consumers, and production PITR/RPO/RTO remain |
 | F3 — scalable workers | Independent heartbeat; bounded protocol-aware concurrency; deadlines/cancellation; capacity tokens; backpressure; encrypted spool; drain | Worker death/partition/ABA, slow-stream storm, spool recovery, fairness, and freshness evidence | Not started |
 | F4 — HA and data-plane split | Replicated stateless APIs; leader-elected scheduler; HA DB/broker; generated-feed service; dedicated DASH origin; SRT allocation; observability | API/scheduler/storage/zone failover, rolling upgrade/rollback, game-day, and operator runbook evidence | Not started |
 | F5 — 1,000-stream admission | Production-like workload manifest and immutable evidence bundle | 24-hour run, 30% headroom after one failure-domain loss, all audit Section 13.3 criteria | Not started |
@@ -31,7 +31,7 @@ linked evidence passes in a production-like environment.
 | Restart and ABA protection | Per-process instance ID plus monotonic assignment generation | Implemented; process-local transition fence |
 | Authoritative assignment scope | Server-derived stream ownership; caller scope never grants authority | Implemented and tested |
 | Stale report fencing | Instance, generation, and opaque assignment token validation before mutation | Implemented with HTTP 409 tests |
-| Out-of-scope containment | Validate every alarm/event/pending/probe-metric item; reject malformed and report dropped IDs | Implemented with HTTP 422 and direct tests |
+| Out-of-scope containment | Validate every alarm/event/pending/catalog-observation/probe-metric item; reject malformed and report dropped IDs | Implemented with HTTP 422 and direct tests |
 | Empty/rebalanced worker safety | Prune retained monitor state and recompute metric aggregates before and after every monitor pass | Implemented and tested |
 | Long-batch liveness | Independent heartbeat remains active while serial probes run | Implemented with batch-over-TTL regression |
 | Conflict recovery | HTTP 409 causes bounded immediate refetch instead of worker termination | Implemented and tested |
@@ -68,8 +68,8 @@ linked evidence passes in a production-like environment.
 | Migration safety | Advisory lock, applied checksum/name validation, unknown-version rejection | Implemented and integration-tested |
 | Feed cutover | PostgreSQL adapter and idempotent `import-sqlite-feeds` | Implemented and integration-tested |
 | Worker incarnation and lease epochs | DB-time heartbeat/expiry, offered→acknowledged active leases, monotonic epochs with per-epoch sequence reset | PostgreSQL-backed HTTP worker v2 implemented; SQLite v1 retained only for lab compatibility; real HTTP integration-tested |
-| Result ingestion | Immutable report/result IDs and hashes; worker/lease/config/per-lease-sequence/observation-time fencing; stored duplicate dispositions | HTTP v2 durably ingests scoped `probe.*` checks before a durable-fenced retryable JSON shadow; real worker/retry/rebalance integration-tested |
-| Alarm authority | Transactional current check/alarm projection, immutable edges, only explicit healthy clears; inconclusive states preserve | Repository primitive implemented and integration-tested; operator reads remain JSON-backed |
+| Result ingestion | Immutable report/result IDs and hashes; worker/lease/config/per-lease-sequence/observation-time fencing; stored duplicate dispositions | HTTP v2 durably ingests scoped `probe.*` and catalog monitor observations; duplicate/stale/reassigned reports cannot rerun direct projection |
+| Alarm authority | Transactional current check/alarm/pending projection, immutable edges, only explicit healthy clears; inconclusive or omitted observations preserve; server-owned delay/repeat/retention | PostgreSQL direct `/state.json` reads implemented and integration-tested; inbox-deduplicated consumer replay remains open |
 | Durable audit | Immutable audit IDs plus transactional outbox | Repository primitive implemented; security stdout path not connected |
 | Event transport | Hash-immutable transactional outbox, concurrent `SKIP LOCKED`, retry/dead state, exact JetStream policy, at-least-once IDs, consumer-inbox schema | Producer implemented and local integration-tested; no consumer deployed, so consumer/read cutover remains blocked |
 | Backup/restore | Custom-format scripts, migration check, informational generation increment, enforced lease expiry, explicit broker mode, repeatable-read semantic comparator | Implemented; local empty/retained-broker functional restores passed; PITR/RPO/RTO not certified |
@@ -82,7 +82,7 @@ and remaining cutover work are in
 
 ## Constraints and deferred decisions
 
-- F0 itself added no production database, broker, orchestrator, or authentication system. F2 now adds PostgreSQL/JetStream and uses durable epochs for PostgreSQL-backed worker v2, while the JSON operator projection remains transitional.
+- F0 itself added no production database, broker, orchestrator, or authentication system. F2 now adds PostgreSQL/JetStream, durable PostgreSQL worker v2, and a direct PostgreSQL operator projection; SQLite v1 retains its isolated JSON view.
 - The v1 in-process generation remains a trusted-lab transition fence, not an
   HA lease. Production-path v2 uses durable epochs and transactional fencing;
   HA scheduling/leadership is still an F4 gate.

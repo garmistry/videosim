@@ -9,6 +9,39 @@ from videosim.feed import SRT_CALLER_LIMIT, VideoFeedConfig, cea608_pairs, run_v
 
 
 class VideoFeedCliTest(unittest.TestCase):
+    def test_monitor_history_prune_runs_bounded_batches_once(self):
+        class Store:
+            def __init__(self):
+                self.batches = [2, 0]
+                self.calls = []
+                self.closed = False
+
+            def prune_expired_alarm_events(self, *, batch_size):
+                self.calls.append(batch_size)
+                return self.batches.pop(0)
+
+            def close(self):
+                self.closed = True
+
+        store = Store()
+        output = StringIO()
+        with patch("videosim.cli.configured_database_url", return_value="postgresql://db/videosim"), patch(
+            "videosim.cli.PostgresControlPlaneStore", return_value=store
+        ), redirect_stdout(output):
+            code = main(
+                [
+                    "monitor-history-prune",
+                    "--once",
+                    "--batch-size",
+                    "2",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(store.calls, [2, 2])
+        self.assertTrue(store.closed)
+        self.assertIn("Pruned 2 expired monitor event rows", output.getvalue())
+
     def test_endpoint_uses_caller_mode_for_receivers(self):
         config = VideoFeedConfig(port=9910)
 

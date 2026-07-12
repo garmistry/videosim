@@ -23,13 +23,24 @@ from videosim.worker import run_worker
 DATABASE_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_URL", "")
 
 
-def probe_state(stream_id, validation_outcome="success"):
+def probe_state(stream_id, validation_outcome="success", monitor_status=None):
     observed_at = datetime.now(timezone.utc).isoformat()
+    monitor_status = monitor_status or (
+        "unhealthy" if validation_outcome == "issue" else "healthy"
+    )
     return {
         "updatedAt": observed_at,
         "alarms": [],
         "events": [],
         "pending": [],
+        "monitorObservations": [
+            {
+                "streamId": stream_id,
+                "monitorId": "feed_reachable",
+                "status": monitor_status,
+                "message": "Feed is unreachable" if monitor_status == "unhealthy" else "Feed is reachable",
+            }
+        ],
         "probeMetrics": {
             "observedAt": observed_at,
             "batchDurationMs": 12.5,
@@ -156,6 +167,13 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             "X-VideoSim-Worker-ID": worker_id,
             "X-Forwarded-Proto": "https",
         }
+
+    def enable_feed_reachable_alert(self, delay_seconds=0):
+        self.assertTrue(
+            self.state.update_alert_profile(
+                self.stream_id, ["feed_reachable"], delay_seconds
+            )
+        )
 
     def make_worker_stale(self, worker_id):
         with self.store._pool.connection() as connection:
@@ -296,23 +314,36 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "SELECT count(*) AS count FROM check_results WHERE tenant_id = %s AND stream_id = %s",
                 (self.tenant_id, self.stream_id),
             ).fetchone()["count"]
-        self.assertEqual(result_count, 2)
+        self.assertEqual(result_count, 3)
 
-    def test_db_commit_can_retry_json_shadow_with_same_report_id(self):
-        worker_id = "worker-v2-shadow-retry"
+    def test_db_projection_is_independent_of_legacy_json_shadow(self):
+        self.enable_feed_reachable_alert()
+        worker_id = "worker-v2-direct-projection"
         incarnation = uuid.uuid4()
         assignment = self.assignment(worker_id, incarnation)
         self.acknowledge(worker_id, incarnation, assignment)
-        report = self.report_payload(worker_id, incarnation, assignment, 1)
+        report = self.report_payload(
+            worker_id,
+            incarnation,
+            assignment,
+            1,
+            probe_state(self.stream_id, "issue"),
+        )
 
         with patch("videosim.gui.write_monitor_payload", return_value=False):
-            failed = self.post_json(
-                "/api/workers/report", report, expected_status=503
-            )
-        retried = self.post_json("/api/workers/report", report)
+            accepted = self.post_json("/api/workers/report", report)
+        duplicate = self.post_json("/api/workers/report", report)
+        _, state = self.get_json("/state.json", {})
 
-        self.assertTrue(failed["retryReport"])
-        self.assertTrue(retried["disposition"]["duplicate"])
+        self.assertTrue(accepted["ok"])
+        self.assertTrue(duplicate["disposition"]["duplicate"])
+        self.assertEqual(duplicate["projectedStreamIds"], [])
+        self.assertFalse(Path(self.state.monitor_state_path).exists())
+        self.assertTrue(state["monitor"]["connected"])
+        self.assertFalse(state["monitor"]["eventHistoryMutable"])
+        self.assertEqual(state["monitor"]["alarms"][0]["monitorId"], "feed_reachable")
+        self.assertTrue(state["monitor"]["alarms"][0]["active"])
+        self.assertEqual(state["monitor"]["events"][0]["type"], "alarm_raised")
         with self.store._pool.connection() as connection:
             reports = connection.execute(
                 "SELECT count(*) AS count FROM worker_reports WHERE report_id = %s",
@@ -322,9 +353,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "SELECT count(*) AS count FROM check_results WHERE report_id = %s",
                 (uuid.UUID(report["reportId"]),),
             ).fetchone()["count"]
-        self.assertEqual((reports, results), (1, 2))
+        self.assertEqual((reports, results), (1, 3))
 
-    def test_delayed_duplicate_cannot_overwrite_newer_json_projection(self):
+    def test_delayed_duplicate_cannot_overwrite_newer_direct_projection(self):
+        self.enable_feed_reachable_alert()
         worker_id = "worker-v2-delayed-retry"
         incarnation = uuid.uuid4()
         assignment = self.assignment(worker_id, incarnation)
@@ -336,8 +368,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             1,
             probe_state(self.stream_id, "success"),
         )
-        with patch("videosim.gui.write_monitor_payload", return_value=False):
-            self.post_json("/api/workers/report", older, expected_status=503)
+        self.post_json("/api/workers/report", older)
         newer = self.report_payload(
             worker_id,
             incarnation,
@@ -348,25 +379,32 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.post_json("/api/workers/report", newer)
 
         delayed = self.post_json("/api/workers/report", older)
+        _, state = self.get_json("/state.json", {})
 
         self.assertEqual(delayed["projectedStreamIds"], [])
-        with open(self.state.monitor_state_path, encoding="utf-8") as projection_file:
-            projection = json.load(projection_file)
-        metrics = projection["workerProbeMetrics"][worker_id]["streams"]
-        validation = next(item for item in metrics if item["check"] == "validation")
-        self.assertEqual(validation["outcome"], "issue")
+        alarm = next(
+            item for item in state["monitor"]["alarms"]
+            if item["monitorId"] == "feed_reachable"
+        )
+        self.assertTrue(alarm["active"])
+        self.assertEqual(alarm["message"], "Feed is unreachable")
+        self.assertFalse(Path(self.state.monitor_state_path).exists())
 
-    def test_pending_shadow_cannot_apply_after_reassignment_without_successor_report(self):
-        old_worker = "worker-v2-z-pending"
+    def test_direct_projection_duplicate_is_noop_after_reassignment(self):
+        self.enable_feed_reachable_alert()
+        old_worker = "worker-v2-z-direct"
         new_worker = "worker-v2-a-replacement"
         old_incarnation = uuid.uuid4()
         old_assignment = self.assignment(old_worker, old_incarnation)
         self.acknowledge(old_worker, old_incarnation, old_assignment)
         old_report = self.report_payload(
-            old_worker, old_incarnation, old_assignment, 1
+            old_worker,
+            old_incarnation,
+            old_assignment,
+            1,
+            probe_state(self.stream_id, "issue"),
         )
-        with patch("videosim.gui.write_monitor_payload", return_value=False):
-            self.post_json("/api/workers/report", old_report, expected_status=503)
+        self.post_json("/api/workers/report", old_report)
 
         new_incarnation = uuid.uuid4()
         replacement = self.assignment(new_worker, new_incarnation)
@@ -374,25 +412,26 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         delayed = self.post_json("/api/workers/report", old_report)
 
         self.assertEqual(delayed["projectedStreamIds"], [])
-        self.assertFalse(Path(self.state.monitor_state_path).exists())
         with self.store._pool.connection() as connection:
-            marker = connection.execute(
+            alarm = connection.execute(
                 """
-                SELECT state FROM worker_projection_state
-                WHERE tenant_id = %s AND stream_id = %s
+                SELECT source_result_id FROM current_alarms
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = 'feed_reachable'
                 """,
                 (self.tenant_id, self.stream_id),
             ).fetchone()
-        self.assertEqual(marker["state"], "superseded")
+        self.assertEqual(str(alarm["source_result_id"]), str(uuid.uuid5(
+            uuid.UUID(old_report["reportId"]), f"{self.stream_id}:monitor:feed_reachable"
+        )))
 
-    def test_pending_shadow_cannot_apply_after_expiry_and_reoffer(self):
-        worker_id = "worker-v2-pending-expiry"
+    def test_direct_projection_duplicate_is_noop_after_expiry_and_reoffer(self):
+        self.enable_feed_reachable_alert()
+        worker_id = "worker-v2-direct-expiry"
         incarnation = uuid.uuid4()
         assignment = self.assignment(worker_id, incarnation)
         self.acknowledge(worker_id, incarnation, assignment)
         report = self.report_payload(worker_id, incarnation, assignment, 1)
-        with patch("videosim.gui.write_monitor_payload", return_value=False):
-            self.post_json("/api/workers/report", report, expected_status=503)
+        self.post_json("/api/workers/report", report)
         old_epoch = assignment["streams"][0]["lease"]["epoch"]
         with self.store._pool.connection() as connection:
             with connection.transaction():
@@ -426,22 +465,23 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(delayed["projectedStreamIds"], [])
         self.assertFalse(Path(self.state.monitor_state_path).exists())
 
-    def test_pending_shadow_cannot_apply_after_config_revocation(self):
-        worker_id = "worker-v2-pending-config"
+    def test_direct_projection_duplicate_is_noop_after_config_revocation(self):
+        self.enable_feed_reachable_alert()
+        worker_id = "worker-v2-direct-config"
         incarnation = uuid.uuid4()
         assignment = self.assignment(worker_id, incarnation)
         self.acknowledge(worker_id, incarnation, assignment)
         report = self.report_payload(worker_id, incarnation, assignment, 1)
-        with patch("videosim.gui.write_monitor_payload", return_value=False):
-            self.post_json("/api/workers/report", report, expected_status=503)
+        self.post_json("/api/workers/report", report)
 
-        self.state.update_alert_profile(self.stream_id, ["feed_reachable"], 0)
+        self.state.update_alert_profile(self.stream_id, ["feed_reachable"], 1)
         delayed = self.post_json("/api/workers/report", report)
 
         self.assertEqual(delayed["projectedStreamIds"], [])
         self.assertFalse(Path(self.state.monitor_state_path).exists())
 
-    def test_old_incarnation_duplicate_cannot_overwrite_replacement_projection(self):
+    def test_old_incarnation_duplicate_cannot_overwrite_replacement_direct_projection(self):
+        self.enable_feed_reachable_alert()
         worker_id = "worker-v2-projection-owner"
         old_incarnation = uuid.uuid4()
         old_assignment = self.assignment(worker_id, old_incarnation)
@@ -470,13 +510,15 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         )
 
         delayed = self.post_json("/api/workers/report", old_report)
+        _, state = self.get_json("/state.json", {})
 
         self.assertEqual(delayed["projectedStreamIds"], [])
-        with open(self.state.monitor_state_path, encoding="utf-8") as projection_file:
-            projection = json.load(projection_file)
-        metrics = projection["workerProbeMetrics"][worker_id]["streams"]
-        validation = next(item for item in metrics if item["check"] == "validation")
-        self.assertEqual(validation["outcome"], "issue")
+        alarm = next(
+            item for item in state["monitor"]["alarms"]
+            if item["monitorId"] == "feed_reachable"
+        )
+        self.assertTrue(alarm["active"])
+        self.assertEqual(alarm["message"], "Feed is unreachable")
 
     def test_concurrent_v2_assignment_polls_partition_streams_once(self):
         second_stream = self.state.create_stream(

@@ -34,13 +34,21 @@ class FeedStoreTest(unittest.TestCase):
                 "VIDEOSIM_DATABASE_URL": "postgresql://db/videosim",
                 "VIDEOSIM_DB_POOL_MIN": "2",
                 "VIDEOSIM_DB_POOL_MAX": "7",
+                "VIDEOSIM_ALARM_REPEAT_SECONDS": "9",
+                "VIDEOSIM_ALARM_EVENT_HISTORY_LIMIT": "321",
+                "VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS": "654321",
             },
         ), patch("videosim.postgres_store.PostgresControlPlaneStore") as store_class:
             selected = default_feed_store()
 
         self.assertIs(selected, store_class.return_value)
         store_class.assert_called_once_with(
-            "postgresql://db/videosim", min_pool_size=2, max_pool_size=7
+            "postgresql://db/videosim",
+            min_pool_size=2,
+            max_pool_size=7,
+            alarm_repeat_seconds=9,
+            alarm_event_history_limit=321,
+            alarm_event_retention_seconds=654321,
         )
 
     def test_sqlite_store_round_trips_feed_registration(self):

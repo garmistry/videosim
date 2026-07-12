@@ -5,6 +5,7 @@ import asyncio
 import json
 import shlex
 import sys
+import time
 import uuid
 from dataclasses import replace
 
@@ -61,6 +62,15 @@ def build_parser() -> argparse.ArgumentParser:
     outbox_requeue = subparsers.add_parser("outbox-requeue", help="requeue one inspected dead outbox event")
     outbox_requeue.add_argument("--database-url", default="")
     outbox_requeue.add_argument("--event-id", required=True)
+
+    monitor_history_prune = subparsers.add_parser(
+        "monitor-history-prune",
+        help="prune age-expired durable monitor event history",
+    )
+    monitor_history_prune.add_argument("--database-url", default="")
+    monitor_history_prune.add_argument("--poll-interval-seconds", type=float, default=3600)
+    monitor_history_prune.add_argument("--batch-size", type=int, default=1000)
+    monitor_history_prune.add_argument("--once", action="store_true")
 
     start = subparsers.add_parser("start", help="start a synthetic video feed")
     start.add_argument("--profile", help="load feed settings from a flat YAML profile")
@@ -239,6 +249,30 @@ def main(argv: list[str] | None = None) -> int:
                 store.close()
             print(f"{'Requeued' if requeued else 'Did not requeue'} outbox event {event_id}")
             return 0 if requeued else 1
+
+        if args.command == "monitor-history-prune":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            if args.poll_interval_seconds <= 0:
+                raise ValueError("poll interval must be greater than 0")
+            store = PostgresControlPlaneStore(database_url)
+            try:
+                while True:
+                    deleted = 0
+                    while True:
+                        batch = store.prune_expired_alarm_events(
+                            batch_size=args.batch_size
+                        )
+                        deleted += batch
+                        if batch < args.batch_size:
+                            break
+                    print(f"Pruned {deleted} expired monitor event rows")
+                    if args.once:
+                        return 0
+                    time.sleep(args.poll_interval_seconds)
+            finally:
+                store.close()
 
         if args.command == "gui":
             run_gui(

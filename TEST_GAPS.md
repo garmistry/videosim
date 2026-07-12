@@ -54,14 +54,15 @@ implementation and must pass before those milestones advance.
   outbox claims, and durable JetStream publish acknowledgements. A local custom-format
   backup/restore plus semantic comparison also passed.
 - PostgreSQL HTTP worker v2 now uses durable incarnation/offer/ack/heartbeat/
-  epoch/config/per-lease-sequence/result fences and stores scoped probe checks
-  before a durable-fenced retryable JSON shadow update; stale duplicate,
-  reassigned, expired, and config-revoked reports cannot regress that shadow.
-  SQLite retains process-local v1 for lab use.
-  Actual monitor-alarm snapshot projection, PostgreSQL operator reads,
-  security-audit wiring, consumer inbox/projection replay, ack-before-mark recovery beyond the broker
-  dedup window, DB/broker restore combinations, schema upgrade under load, PITR,
-  measured RPO/RTO, and HA remain open F2/F4 P0 gates.
+  epoch/config/per-lease-sequence/result fences. Catalog monitor observations
+  atomically project server-timed pending/current alarms, bounded event edges,
+  and direct PostgreSQL `/state.json` reads; stale duplicate, reassigned,
+  expired, and config-revoked reports cannot rerun that projection. SQLite
+  retains process-local v1 and file-backed monitor state for lab use.
+  Durable security-audit wiring, consumer inbox/projection replay and replay
+  parity, ack-before-mark recovery beyond the broker dedup window, DB/broker
+  restore combinations, schema upgrade under load, PITR, measured RPO/RTO, and
+  HA remain open F2/F4 P0 gates.
 - The control-plane benchmark runs no SRT/DASH probes. Representative media
   load, failure storms, 24-hour soak, security, restore, and 1,000/5,000/10,000
   admission evidence remain missing and must not be inferred from it.

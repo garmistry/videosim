@@ -266,8 +266,9 @@ Compare feed IDs/counts in the retained SQLite snapshot and PostgreSQL-backed
 GUI before operator DNS/traffic cutover. On mismatch, stop new services and
 restart the retained old image/SQLite file; never run the down migration. The
 import excludes transient process and JSON alarm state. PostgreSQL deployments
-use worker v2 durable lease/probe-result fencing plus a fenced JSON shadow, but
-this remains neither an HA nor production-scale completion claim. See
+use worker v2 durable lease/probe-result/catalog-monitor fencing and direct
+PostgreSQL monitor reads, but this remains neither an HA nor production-scale
+completion claim. See
 [`docs/durable-control-plane.md`](docs/durable-control-plane.md) for authority,
 rollback, integration evidence, and open gates.
 
@@ -309,14 +310,21 @@ docker compose up --build app monitor
 
 The monitor polls `http://app:8080/state.json`, validates running feeds, writes
 `/tmp/videosim-monitor/state.json`, and repeats active alarm events every 5
-seconds until the alarm clears. The GUI reads that shared state file and shows
-monitor alarms plus event audit history. Create or open a feed detail page and
-use `Alert profile` to select enabled alarms for that stream, disable alarms,
-enable all alarms, and set the alarm delay in seconds. The alert profile UI is
-available even before the monitor writes state; alarms begin evaluating after
-`docker compose up --build app monitor` starts the monitor service. Disabled
-active alarms clear on the next monitor poll; enabled issues must persist for
-the configured delay before they raise.
+seconds until the alarm clears. In SQLite/trusted-lab mode the GUI reads that
+shared file. In PostgreSQL worker-v2 mode, reports carry catalog observations
+and PostgreSQL atomically owns pending/current alarms, immutable event edges,
+and the `/state.json` operator view; it uses server time for alert delay and
+repeat cadence. Create or open a feed detail page and use `Alert profile` to
+select enabled alarms for that stream, disable alarms, enable all alarms, and
+set the alarm delay in seconds. Explicitly disabling an active PostgreSQL alarm
+creates a `suppressed` edge rather than a recovery clear. Missing, skipped, or
+failed observations never imply a clear. Production Compose runs
+`monitor-history-pruner` hourly to delete age-expired durable event rows for
+inactive streams too; run an inspected one-shot sweep manually with:
+
+```sh
+python3 -m videosim monitor-history-prune --once
+```
 
 ## Run Master/Worker Monitoring
 
@@ -348,10 +356,11 @@ python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 --worker-id
 Workers auto-negotiate by storage mode. The default SQLite trusted-lab path uses
 `videosim.worker/v1`. PostgreSQL-backed deployments require
 `videosim.worker/v2`: one process-incarnation UUID, offered/acknowledged durable
-leases, immutable report IDs, per-epoch sequences, and DB-fenced probe results
-before the JSON shadow update. Workers send an independent heartbeat every 20
-seconds; in v2 it refreshes membership and extends only active leases for the
-same incarnation. Keep the interval safely below the current 60-second TTL:
+leases, immutable report IDs, per-epoch sequences, and DB-fenced probe plus
+catalog-monitor results committed with the direct PostgreSQL alarm projection.
+Workers send an independent heartbeat every 20 seconds; in v2 it refreshes
+membership and extends only active leases for the same incarnation. Keep the
+interval safely below the current 60-second TTL:
 
 ```sh
 python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 \

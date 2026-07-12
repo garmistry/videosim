@@ -47,6 +47,9 @@ services:
       VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
       VIDEOSIM_DB_POOL_MIN: "${VIDEOSIM_DB_POOL_MIN:-1}"
       VIDEOSIM_DB_POOL_MAX: "${VIDEOSIM_DB_POOL_MAX:-10}"
+      VIDEOSIM_ALARM_REPEAT_SECONDS: "${VIDEOSIM_ALARM_REPEAT_SECONDS:-5}"
+      VIDEOSIM_ALARM_EVENT_HISTORY_LIMIT: "${VIDEOSIM_ALARM_EVENT_HISTORY_LIMIT:-1000}"
+      VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS: "${VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS:-604800}"
       VIDEOSIM_SECURITY_MODE: trusted-proxy
       VIDEOSIM_PROXY_SHARED_SECRET: "${VIDEOSIM_PROXY_SHARED_SECRET:?set a 32+ character proxy secret}"
       VIDEOSIM_VIEWER_GROUP: "${VIDEOSIM_VIEWER_GROUP:-videosim-viewer}"
@@ -85,6 +88,20 @@ services:
       python -m videosim outbox-publisher
       --nats-url "nats://${NATS_USER:-videosim}:${NATS_PASSWORD}@nats:4222"
       --batch-size 100
+    restart: unless-stopped
+
+  monitor-history-pruner:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+      VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS: "${VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS:-604800}"
+    command: >
+      python -m videosim monitor-history-prune
+      --poll-interval-seconds "${VIDEOSIM_MONITOR_HISTORY_PRUNE_INTERVAL_SECONDS:-3600}"
+      --batch-size 1000
     restart: unless-stopped
 
   oauth2-proxy:

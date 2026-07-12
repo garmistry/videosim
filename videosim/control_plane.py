@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from .monitor_catalog import SPEC_BY_ID
+
 
 WORKER_API_VERSION_V1 = "videosim.worker/v1"
 WORKER_API_VERSION_V2 = "videosim.worker/v2"
@@ -140,8 +142,15 @@ def validate_monitor_items(worker_state: Mapping, accepted_stream_ids: set[str])
         "alarms": [],
         "events": [],
         "pending": [],
+        "monitorObservations": [],
     }
-    dropped: dict[str, list[str]] = {"alarms": [], "events": [], "pending": [], "probeMetrics": []}
+    dropped: dict[str, list[str]] = {
+        "alarms": [],
+        "events": [],
+        "pending": [],
+        "monitorObservations": [],
+        "probeMetrics": [],
+    }
     for collection in ("alarms", "events", "pending"):
         items = worker_state.get(collection, [])
         if not isinstance(items, list):
@@ -162,6 +171,54 @@ def validate_monitor_items(worker_state: Mapping, accepted_stream_ids: set[str])
                 scoped[collection].append(dict(item))
             else:
                 dropped[collection].append(str(item.get("id", f"{collection}[{index}]")))
+
+    observations = worker_state.get("monitorObservations", [])
+    if not isinstance(observations, list):
+        raise WorkerReportValidationError("state.monitorObservations must be an array")
+    if len(observations) > MAX_REPORT_ITEMS_PER_COLLECTION:
+        raise WorkerReportValidationError(
+            f"state.monitorObservations exceeds {MAX_REPORT_ITEMS_PER_COLLECTION} items"
+        )
+    seen_observations = set()
+    allowed_statuses = {"healthy", "unhealthy", "unknown", "stale", "error", "timeout", "skipped"}
+    for index, item in enumerate(observations):
+        if not isinstance(item, Mapping):
+            raise WorkerReportValidationError(
+                f"state.monitorObservations[{index}] must be an object"
+            )
+        stream_id = item.get("streamId")
+        monitor_id = item.get("monitorId")
+        status = item.get("status")
+        message = item.get("message", "")
+        if (
+            not isinstance(stream_id, str)
+            or not stream_id
+            or not isinstance(monitor_id, str)
+            or monitor_id not in SPEC_BY_ID
+            or status not in allowed_statuses
+            or not isinstance(message, str)
+        ):
+            raise WorkerReportValidationError(
+                f"state.monitorObservations[{index}] has invalid streamId, monitorId, status, or message"
+            )
+        if (
+            len(stream_id) > MAX_IDENTIFIER_LENGTH
+            or len(monitor_id) > MAX_IDENTIFIER_LENGTH
+            or len(message) > 200
+        ):
+            raise WorkerReportValidationError(
+                f"state.monitorObservations[{index}] identifier or message is too long"
+            )
+        key = (stream_id, monitor_id)
+        if key in seen_observations:
+            raise WorkerReportValidationError(
+                "state.monitorObservations must contain at most one item per stream and monitor"
+            )
+        seen_observations.add(key)
+        if stream_id in accepted_stream_ids:
+            scoped["monitorObservations"].append(dict(item))
+        else:
+            dropped["monitorObservations"].append(f"{stream_id}:{monitor_id}")
 
     metrics = worker_state.get("probeMetrics")
     if metrics is not None:

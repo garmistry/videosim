@@ -123,6 +123,14 @@ class MonitorTest(unittest.TestCase):
 
         self.assertEqual(reports[0].endpoint, "srt://app:9000?mode=caller")
         self.assertEqual({alarm["monitorId"] for alarm in state["alarms"]}, {"essence_video_present", "essence_audio_present"})
+        observations = {
+            item["monitorId"]: item["status"]
+            for item in state["monitorObservations"]
+        }
+        self.assertEqual(observations["feed_reachable"], "healthy")
+        self.assertEqual(observations["essence_video_present"], "unhealthy")
+        self.assertEqual(observations["essence_audio_present"], "unhealthy")
+        self.assertEqual(observations["essence_captions_present"], "healthy")
 
     def test_monitor_records_deterministic_probe_and_batch_metrics(self):
         ticks = iter([0, 1, 1.1, 2, 2.2, 3, 3.3, 4, 4.4, 5])
@@ -180,6 +188,14 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(metrics["frame_rate"]["outcome"], "skipped")
         self.assertEqual(metrics["loudness"]["outcome"], "skipped")
         self.assertEqual(state["probeMetrics"]["outcomes"], {"issue": 1, "timeout": 1, "skipped": 2})
+        observations = {
+            item["monitorId"]: item["status"]
+            for item in state["monitorObservations"]
+        }
+        self.assertEqual(observations["feed_reachable"], "unhealthy")
+        self.assertEqual(observations["video_frame_rate_match"], "skipped")
+        self.assertEqual(observations["loudness_bs1770_measurement"], "skipped")
+        self.assertEqual(observations["tr101_1_1_ts_sync_loss"], "timeout")
 
     def test_monitor_probe_metrics_classify_checker_error(self):
         ticks = iter([0, 1, 1.1, 2, 2.1, 3, 3.2, 4])

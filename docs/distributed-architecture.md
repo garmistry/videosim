@@ -29,14 +29,15 @@ VideoSim should split into a master control plane and many worker nodes:
    only active leases for the same incarnation.
 6. Workers prune retained state, reuse the existing monitor engine, and post an
    immutable report UUID, per-lease epoch/config sequence, claimed lease tuples,
-   monitor state, and bounded probe metrics.
+   bounded probe metrics, and bounded catalog monitor observations.
 7. PostgreSQL revalidates worker/incarnation/heartbeat/lease/epoch/config/
-   expiry/sequence/observation time, commits accepted `probe.*` results and
-   outbox events, and returns explicit duplicate/rejection disposition.
-8. Fully accepted streams update the durable-fenced retryable shared-JSON shadow
-   projection exposed through `/state.json`; stale duplicates/reassigned reports
-   cannot overwrite a newer shadow. That projection remains transitional pending
-   per-monitor PostgreSQL projection and operator-read cutover.
+   expiry/sequence/observation time, commits accepted `probe.*` and catalog
+   monitor results, pending/current alarm state, alarm edges, and outbox events
+   atomically, then returns explicit duplicate/rejection disposition.
+8. `/state.json` reads the PostgreSQL monitor projection in durable mode.
+   Missing/inconclusive observations cannot clear active or pending alarms;
+   stale duplicates/reassigned reports cannot rerun projection. SQLite v1 alone
+   retains the file-backed JSON monitor view.
 
 ## Implemented First Slice
 
@@ -95,9 +96,10 @@ VideoSim should split into a master control plane and many worker nodes:
   leases, but its scheduler is still round-robin and not leader-elected.
 - Assignment is round-robin, not capacity-aware.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
-- V2 HTTP report aggregation durably commits scoped probe-check results before
-  writing the monitor JSON shadow. Actual monitor-alarm projection and operator
-  reads have not cut over from JSON.
+- PostgreSQL v2 report aggregation commits scoped probe and catalog-monitor
+  observations, pending/current alarm state, immutable alarm edges, and outbox
+  records atomically. It exposes a bounded direct PostgreSQL monitor read model;
+  an inbox-deduplicated JetStream consumer/replay projection remains open.
 - The independent v2 heartbeat has authenticated identity and renews only
   unexpired active leases for its incarnation. Worker-health alarms and
   retry/backoff telemetry are not implemented yet.
@@ -106,11 +108,9 @@ VideoSim should split into a master control plane and many worker nodes:
 
 ## Next Upgrade Points
 
-- Promote actual monitor alarm snapshots and operator reads from the JSON shadow
-  to a replayable PostgreSQL projection.
+- Deploy JetStream consumers that replay immutable PostgreSQL monitor source
+  results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/capacity metadata and capacity-aware assignment decisions.
-- Deploy JetStream consumers that atomically combine durable inbox deduplication
-  with projection mutation and prove replay parity.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

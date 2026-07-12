@@ -724,10 +724,14 @@ function MonitorPanel({ stream, monitor }) {
           <span className="card-meta">{events.length} recent</span>
         </summary>
         <div className="event-audit-actions">
-          <form action="/streams/events/clear" method="post">
-            <input name="stream_id" type="hidden" value={stream.id} />
-            <button className="button small ghost" disabled={events.length === 0} type="submit">Clear audit</button>
-          </form>
+          {monitor.eventHistoryMutable === false ? (
+            <span className="card-meta">Durable history is immutable</span>
+          ) : (
+            <form action="/streams/events/clear" method="post">
+              <input name="stream_id" type="hidden" value={stream.id} />
+              <button className="button small ghost" disabled={events.length === 0} type="submit">Clear audit</button>
+            </form>
+          )}
         </div>
         <div className="event-list">
           {events.length === 0 ? <p className="empty-copy">No monitor events</p> : events.map((event) => <EventRow event={event} key={event.id} />)}

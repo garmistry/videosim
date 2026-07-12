@@ -7,8 +7,26 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Mapping
 
+from .monitor_catalog import SPEC_BY_ID
+
 
 DEFAULT_TENANT_ID = "default"
+DEFAULT_ALARM_REPEAT_SECONDS = 5
+DEFAULT_ALARM_EVENT_HISTORY_LIMIT = 1000
+DEFAULT_ALARM_EVENT_RETENTION_SECONDS = 7 * 24 * 60 * 60
+
+# Keep the durable policy independent of GUI runtime objects. These controls
+# mirror feed-mode expectations so an explicit config change can suppress an
+# alarm that is no longer applicable without treating missing probe evidence as
+# a recovery.
+_MODE_MONITOR_CONTROLS = {
+    "normal": {"video": True, "audio": True, "captions": True, "black": False, "frozen": False},
+    "audio_only": {"video": False, "audio": True, "captions": False, "black": False, "frozen": False},
+    "video_only": {"video": True, "audio": False, "captions": True, "black": False, "frozen": False},
+    "no_captions": {"video": True, "audio": True, "captions": False, "black": False, "frozen": False},
+    "black_video": {"video": True, "audio": True, "captions": True, "black": True, "frozen": False},
+    "frozen_video": {"video": True, "audio": True, "captions": True, "black": False, "frozen": True},
+}
 
 
 class PostgresStoreError(RuntimeError):
@@ -133,6 +151,9 @@ class PostgresControlPlaneStore:
         worker_freshness_seconds: int = 60,
         max_future_skew_seconds: int = 30,
         result_freshness_seconds: int = 120,
+        alarm_repeat_seconds: int = DEFAULT_ALARM_REPEAT_SECONDS,
+        alarm_event_history_limit: int = DEFAULT_ALARM_EVENT_HISTORY_LIMIT,
+        alarm_event_retention_seconds: int = DEFAULT_ALARM_EVENT_RETENTION_SECONDS,
     ):
         if not database_url:
             raise ValueError("database_url is required")
@@ -140,12 +161,17 @@ class PostgresControlPlaneStore:
             raise ValueError("invalid PostgreSQL pool size")
         if min(worker_freshness_seconds, max_future_skew_seconds, result_freshness_seconds) <= 0:
             raise ValueError("freshness and clock-skew limits must be greater than 0")
+        if min(alarm_repeat_seconds, alarm_event_history_limit, alarm_event_retention_seconds) <= 0:
+            raise ValueError("alarm repeat and retention limits must be greater than 0")
         ConnectionPool, dict_row = _postgres_modules()
         self.database_url = database_url
         self.tenant_id = tenant_id
         self.worker_freshness_seconds = worker_freshness_seconds
         self.max_future_skew_seconds = max_future_skew_seconds
         self.result_freshness_seconds = result_freshness_seconds
+        self.alarm_repeat_seconds = alarm_repeat_seconds
+        self.alarm_event_history_limit = alarm_event_history_limit
+        self.alarm_event_retention_seconds = alarm_event_retention_seconds
         self._pool = ConnectionPool(
             conninfo=database_url,
             min_size=min_pool_size,
@@ -209,7 +235,11 @@ class PostgresControlPlaneStore:
                         """,
                         (self.tenant_id, str(feed["id"])),
                     )
-                    return int(row["config_version"])
+                    version = int(row["config_version"])
+                    self._suppress_disabled_alarms_for_feed(
+                        connection, str(feed["id"]), config, version
+                    )
+                    return version
                 existing = connection.execute(
                     "SELECT config, config_version FROM feeds WHERE tenant_id = %s AND id = %s",
                     (self.tenant_id, str(feed["id"])),
@@ -250,7 +280,11 @@ class PostgresControlPlaneStore:
                         """,
                         (self.tenant_id, str(feed["id"])),
                     )
-                    return True, int(row["config_version"])
+                    version = int(row["config_version"])
+                    self._suppress_disabled_alarms_for_feed(
+                        connection, str(feed["id"]), config, version
+                    )
+                    return True, version
                 existing = connection.execute(
                     "SELECT config_version FROM feeds WHERE tenant_id = %s AND id = %s",
                     (self.tenant_id, str(feed["id"])),
@@ -583,6 +617,253 @@ class PostgresControlPlaneStore:
             ).fetchall()
         return [_lease(row) for row in rows]
 
+    def prune_expired_alarm_events(self, *, batch_size: int = 1000) -> int:
+        """Delete one bounded batch of age-expired operator history rows.
+
+        Per-stream count retention runs at write time. This global sweep is run
+        by the production pruner so stopped streams cannot retain event history
+        past the configured age.
+        """
+        if batch_size < 1 or batch_size > 10_000:
+            raise ValueError("alarm-event prune batch_size must be between 1 and 10000")
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                rows = connection.execute(
+                    """
+                    WITH expired AS (
+                        SELECT event_id FROM alarm_events
+                        WHERE tenant_id = %s
+                          AND created_at < clock_timestamp()
+                              - (%s * interval '1 second')
+                        ORDER BY created_at, event_id
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    DELETE FROM alarm_events
+                    WHERE event_id IN (SELECT event_id FROM expired)
+                    RETURNING event_id
+                    """,
+                    (
+                        self.tenant_id,
+                        self.alarm_event_retention_seconds,
+                        batch_size,
+                    ),
+                ).fetchall()
+        return len(rows)
+
+    def monitor_projection_payload(
+        self,
+        *,
+        alarm_limit: int = 100,
+        event_limit: int = 200,
+        pending_limit: int = 100,
+    ) -> dict:
+        if min(alarm_limit, event_limit, pending_limit) < 1:
+            raise ValueError("monitor projection limits must be positive")
+        if max(alarm_limit, event_limit, pending_limit) > 1000:
+            raise ValueError("monitor projection limits must not exceed 1000")
+        with self._pool.connection() as connection:
+            # All response collections must describe one authority snapshot.
+            # READ COMMITTED would take a new PostgreSQL snapshot for each
+            # query and could expose an alarm edge without its matching row.
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            alarms = connection.execute(
+                """
+                SELECT a.stream_id, COALESCE(f.config->>'name', a.stream_id) AS stream_name,
+                       a.monitor_id, a.active, a.severity, a.message,
+                       a.raised_at, a.cleared_at, a.last_event_at, a.updated_at
+                FROM current_alarms a
+                JOIN feeds f ON f.tenant_id = a.tenant_id AND f.id = a.stream_id
+                WHERE a.tenant_id = %s AND a.monitor_id = ANY(%s::text[])
+                ORDER BY a.active DESC, a.updated_at DESC, a.stream_id, a.monitor_id
+                LIMIT %s
+                """,
+                (self.tenant_id, sorted(SPEC_BY_ID), alarm_limit),
+            ).fetchall()
+            events = connection.execute(
+                """
+                SELECT e.event_id, e.stream_id,
+                       COALESCE(f.config->>'name', e.stream_id) AS stream_name,
+                       e.monitor_id, e.transition, e.payload, e.occurred_at
+                FROM alarm_events e
+                JOIN feeds f ON f.tenant_id = e.tenant_id AND f.id = e.stream_id
+                WHERE e.tenant_id = %s AND e.monitor_id = ANY(%s::text[])
+                ORDER BY e.occurred_at DESC, e.event_id DESC
+                LIMIT %s
+                """,
+                (self.tenant_id, sorted(SPEC_BY_ID), event_limit),
+            ).fetchall()
+            pending = connection.execute(
+                """
+                SELECT p.stream_id, COALESCE(f.config->>'name', p.stream_id) AS stream_name,
+                       p.monitor_id, p.severity, p.message, p.first_seen_at, p.updated_at
+                FROM current_alarm_pending p
+                JOIN feeds f ON f.tenant_id = p.tenant_id AND f.id = p.stream_id
+                WHERE p.tenant_id = %s AND p.monitor_id = ANY(%s::text[])
+                ORDER BY p.updated_at DESC, p.stream_id, p.monitor_id
+                LIMIT %s
+                """,
+                (self.tenant_id, sorted(SPEC_BY_ID), pending_limit),
+            ).fetchall()
+            probe_rows = connection.execute(
+                """
+                SELECT wr.worker_id, c.stream_id, c.check_id, c.status,
+                       c.observed_at, c.evidence
+                FROM current_check_state c
+                JOIN check_results r ON r.result_id = c.result_id
+                JOIN worker_reports wr ON wr.report_id = r.report_id
+                WHERE c.tenant_id = %s AND c.check_id LIKE 'probe.%%'
+                  AND c.expires_at > transaction_timestamp()
+                ORDER BY wr.worker_id, c.stream_id, c.check_id
+                """,
+                (self.tenant_id,),
+            ).fetchall()
+            workers = connection.execute(
+                """
+                SELECT worker_id, last_heartbeat_at
+                FROM workers
+                WHERE tenant_id = %s AND state = 'active'
+                  AND last_heartbeat_at > transaction_timestamp()
+                      - (%s * interval '1 second')
+                ORDER BY worker_id
+                """,
+                (self.tenant_id, self.worker_freshness_seconds),
+            ).fetchall()
+
+        worker_metrics: dict[str, dict] = {}
+        outcome_by_status = {
+            "healthy": "success",
+            "unhealthy": "issue",
+            "unknown": "unknown",
+            "stale": "stale",
+            "error": "error",
+            "timeout": "timeout",
+            "skipped": "skipped",
+        }
+        for row in probe_rows:
+            worker_id = row["worker_id"]
+            evidence = dict(row["evidence"])
+            metrics = worker_metrics.setdefault(
+                worker_id,
+                {
+                    "observedAt": "",
+                    "batchDurationMs": 0,
+                    "streamCount": 0,
+                    "checkCount": 0,
+                    "outcomes": {},
+                    "streams": [],
+                },
+            )
+            outcome = outcome_by_status[row["status"]]
+            item = {
+                "streamId": row["stream_id"],
+                "check": str(row["check_id"])[len("probe.") :],
+                "outcome": outcome,
+                "durationMs": evidence.get("durationMs", 0),
+                "protocol": evidence.get("protocol", "unknown"),
+                "source": evidence.get("source", "unknown"),
+            }
+            if evidence.get("message"):
+                item["detail"] = str(evidence["message"])[:200]
+            metrics["streams"].append(item)
+            metrics["checkCount"] += 1
+            metrics["outcomes"][outcome] = metrics["outcomes"].get(outcome, 0) + 1
+            observed_at = _iso_datetime(row["observed_at"])
+            metrics["observedAt"] = max(metrics["observedAt"], observed_at)
+        for metrics in worker_metrics.values():
+            metrics["streamCount"] = len({item["streamId"] for item in metrics["streams"]})
+
+        alarm_payload = [
+            {
+                "id": f"{row['stream_id']}:{row['monitor_id']}",
+                "streamId": row["stream_id"],
+                "streamName": row["stream_name"],
+                "monitorId": row["monitor_id"],
+                "monitorName": SPEC_BY_ID.get(row["monitor_id"], None).name
+                if row["monitor_id"] in SPEC_BY_ID
+                else row["monitor_id"],
+                "severity": row["severity"],
+                "active": bool(row["active"]),
+                "status": "active" if row["active"] else "steady",
+                "raisedAt": _iso_datetime(row["raised_at"]),
+                "clearedAt": _iso_datetime(row["cleared_at"]),
+                "lastEventAt": _iso_datetime(row["last_event_at"]),
+                "message": row["message"],
+            }
+            for row in alarms
+        ]
+        event_payload = [
+            {
+                "id": str(row["event_id"]),
+                "time": _iso_datetime(row["occurred_at"]),
+                "type": f"alarm_{row['transition']}",
+                "alarmId": f"{row['stream_id']}:{row['monitor_id']}",
+                "streamId": row["stream_id"],
+                "streamName": row["stream_name"],
+                "monitorId": row["monitor_id"],
+                "monitorName": SPEC_BY_ID.get(row["monitor_id"], None).name
+                if row["monitor_id"] in SPEC_BY_ID
+                else row["monitor_id"],
+                "severity": dict(row["payload"]).get("severity", "major"),
+                "message": dict(row["payload"]).get("message", ""),
+            }
+            for row in reversed(events)
+        ]
+        pending_payload = [
+            {
+                "id": f"{row['stream_id']}:{row['monitor_id']}",
+                "streamId": row["stream_id"],
+                "streamName": row["stream_name"],
+                "monitorId": row["monitor_id"],
+                "monitorName": SPEC_BY_ID.get(row["monitor_id"], None).name
+                if row["monitor_id"] in SPEC_BY_ID
+                else row["monitor_id"],
+                "severity": row["severity"],
+                "message": row["message"],
+                "firstSeenAt": _iso_datetime(row["first_seen_at"]),
+            }
+            for row in pending
+        ]
+        updated_candidates = [
+            _iso_datetime(row["updated_at"])
+            for row in alarms
+        ] + [
+            _iso_datetime(row["updated_at"])
+            for row in pending
+        ] + [
+            metrics["observedAt"]
+            for metrics in worker_metrics.values()
+            if metrics["observedAt"]
+        ]
+        all_probe_streams = [
+            item
+            for worker in worker_metrics.values()
+            for item in worker["streams"]
+        ]
+        all_outcomes: dict[str, int] = {}
+        for item in all_probe_streams:
+            outcome = item["outcome"]
+            all_outcomes[outcome] = all_outcomes.get(outcome, 0) + 1
+        return {
+            "updatedAt": max(updated_candidates, default=""),
+            "alarms": alarm_payload,
+            "events": event_payload,
+            "pending": pending_payload,
+            "workers": [
+                {"id": row["worker_id"], "lastSeenAt": _iso_datetime(row["last_heartbeat_at"])}
+                for row in workers
+            ],
+            "probeMetrics": {
+                "streamCount": len({item["streamId"] for item in all_probe_streams}),
+                "checkCount": len(all_probe_streams),
+                "outcomes": all_outcomes,
+                "streams": all_probe_streams,
+            },
+            "workerProbeMetrics": worker_metrics,
+            "eventHistoryMutable": False,
+            "connected": True,
+        }
+
     def ingest_report(self, report: FencedReport) -> IngestDisposition:
         if report.tenant_id != self.tenant_id:
             raise ReportConflict("report tenant does not match repository tenant")
@@ -663,7 +944,7 @@ class PostgresControlPlaneStore:
                         continue
                     feed = connection.execute(
                         """
-                        SELECT config_version FROM feeds
+                        SELECT config, config_version FROM feeds
                         WHERE tenant_id = %s AND id = %s
                         FOR SHARE
                         """,
@@ -813,7 +1094,9 @@ class PostgresControlPlaneStore:
                             json.dumps(dict(result.evidence), sort_keys=True),
                         ),
                     )
-                    self._apply_alarm_transition(connection, report, result)
+                    self._apply_alarm_transition(
+                        connection, report, result, dict(feed["config"])
+                    )
                     accepted.append(str(result.result_id))
                     max_sequences[result.stream_id] = max(max_sequences.get(result.stream_id, prior_sequence), result.sequence)
                     projection_fences[result.stream_id] = (
@@ -836,6 +1119,11 @@ class PostgresControlPlaneStore:
                         """,
                         (sequence, report.tenant_id, stream_id),
                     )
+
+                # Enforce age retention even during steady-state reports that
+                # do not generate a new transition event.
+                for stream_id in projection_fences:
+                    self._prune_alarm_events(connection, report.tenant_id, stream_id)
 
                 if report.projection_sha256:
                     for stream_id, (
@@ -1275,98 +1563,475 @@ class PostgresControlPlaneStore:
                 if row is None:
                     raise PostgresStoreError("outbox failure claim is no longer owned")
 
-    def _apply_alarm_transition(self, connection, report: FencedReport, result: CheckResult):
+    def _apply_alarm_transition(
+        self,
+        connection,
+        report: FencedReport,
+        result: CheckResult,
+        feed_config: Mapping,
+    ):
+        # Probe metrics are operational evidence, not catalog monitor alarms.
+        # Keeping them out of current_alarms prevents an aggregate
+        # ``probe.validation`` row from masquerading as a user-visible monitor.
+        if result.check_id.startswith("probe."):
+            return
         if result.status in {"unknown", "stale", "skipped", "error", "timeout"}:
             # Inconclusive evidence updates current_check_state but can neither
-            # raise nor clear authoritative alarm state.
+            # raise nor clear authoritative alarm state or pending delay.
             return
-        active = result.status == "unhealthy"
+
+        monitor_id = result.check_id
+        spec = SPEC_BY_ID.get(monitor_id)
+        message = str(result.evidence.get("message", result.status))[:2000]
+        severity = (spec.severity if spec else str(result.evidence.get("severity", "major")))[:64]
+        enabled, delay_seconds = self._alert_policy(feed_config, monitor_id)
+        database_now = connection.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
         existing = connection.execute(
             """
-            SELECT active FROM current_alarms
+            SELECT active, last_event_at FROM current_alarms
             WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
             FOR UPDATE
             """,
-            (report.tenant_id, result.stream_id, result.check_id),
+            (report.tenant_id, result.stream_id, monitor_id),
         ).fetchone()
-        previous_active = bool(existing["active"]) if existing else False
-        message = str(result.evidence.get("message", result.status))[:2000]
-        severity = str(result.evidence.get("severity", "major"))[:64]
+        pending = connection.execute(
+            """
+            SELECT first_seen_at FROM current_alarm_pending
+            WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+            FOR UPDATE
+            """,
+            (report.tenant_id, result.stream_id, monitor_id),
+        ).fetchone()
+
+        if not enabled:
+            self._suppress_alarm_for_result(
+                connection, report, result, monitor_id, severity, message, existing
+            )
+            connection.execute(
+                """
+                DELETE FROM current_alarm_pending
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                """,
+                (report.tenant_id, result.stream_id, monitor_id),
+            )
+            return
+
+        if result.status == "healthy":
+            connection.execute(
+                """
+                DELETE FROM current_alarm_pending
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                """,
+                (report.tenant_id, result.stream_id, monitor_id),
+            )
+            if not existing or not existing["active"]:
+                return
+            connection.execute(
+                """
+                UPDATE current_alarms
+                SET active = FALSE, severity = %s, message = %s,
+                    source_result_id = %s, lease_epoch = %s, config_version = %s,
+                    sequence = %s, cleared_at = %s, last_event_at = %s,
+                    updated_at = %s
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                """,
+                (
+                    severity,
+                    message,
+                    result.result_id,
+                    result.lease_epoch,
+                    result.config_version,
+                    result.sequence,
+                    database_now,
+                    database_now,
+                    database_now,
+                    report.tenant_id,
+                    result.stream_id,
+                    monitor_id,
+                ),
+            )
+            self._append_alarm_event(
+                connection, report, result, monitor_id, "cleared", severity, message
+            )
+            return
+
+        # Only an explicit unhealthy observation reaches this branch.
+        if existing and existing["active"]:
+            repeat_due = (
+                existing["last_event_at"] is None
+                or database_now - existing["last_event_at"]
+                >= timedelta(seconds=self.alarm_repeat_seconds)
+            )
+            connection.execute(
+                """
+                UPDATE current_alarms
+                SET severity = %s, message = %s, source_result_id = %s,
+                    lease_epoch = %s, config_version = %s, sequence = %s,
+                    last_event_at = CASE WHEN %s THEN %s ELSE last_event_at END,
+                    updated_at = %s
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                """,
+                (
+                    severity,
+                    message,
+                    result.result_id,
+                    result.lease_epoch,
+                    result.config_version,
+                    result.sequence,
+                    repeat_due,
+                    database_now,
+                    database_now,
+                    report.tenant_id,
+                    result.stream_id,
+                    monitor_id,
+                ),
+            )
+            if repeat_due:
+                self._append_alarm_event(
+                    connection, report, result, monitor_id, "active", severity, message
+                )
+            return
+
+        if delay_seconds > 0:
+            if pending is None:
+                connection.execute(
+                    """
+                    INSERT INTO current_alarm_pending (
+                        tenant_id, stream_id, monitor_id, severity, message,
+                        source_result_id, lease_epoch, config_version, sequence,
+                        first_seen_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        report.tenant_id,
+                        result.stream_id,
+                        monitor_id,
+                        severity,
+                        message,
+                        result.result_id,
+                        result.lease_epoch,
+                        result.config_version,
+                        result.sequence,
+                        database_now,
+                        database_now,
+                    ),
+                )
+                return
+            if database_now - pending["first_seen_at"] < timedelta(seconds=delay_seconds):
+                connection.execute(
+                    """
+                    UPDATE current_alarm_pending
+                    SET severity = %s, message = %s, source_result_id = %s,
+                        lease_epoch = %s, config_version = %s, sequence = %s,
+                        updated_at = %s
+                    WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                    """,
+                    (
+                        severity,
+                        message,
+                        result.result_id,
+                        result.lease_epoch,
+                        result.config_version,
+                        result.sequence,
+                        database_now,
+                        report.tenant_id,
+                        result.stream_id,
+                        monitor_id,
+                    ),
+                )
+                return
+            connection.execute(
+                """
+                DELETE FROM current_alarm_pending
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                """,
+                (report.tenant_id, result.stream_id, monitor_id),
+            )
+
         connection.execute(
             """
             INSERT INTO current_alarms (
                 tenant_id, stream_id, monitor_id, active, severity, message,
                 source_result_id, lease_epoch, config_version, sequence,
-                raised_at, cleared_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                      CASE WHEN %s THEN clock_timestamp() ELSE NULL END,
-                      CASE WHEN %s THEN NULL ELSE clock_timestamp() END)
+                raised_at, cleared_at, last_event_at, updated_at
+            ) VALUES (%s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s,
+                      %s, NULL, %s, %s)
             ON CONFLICT (tenant_id, stream_id, monitor_id) DO UPDATE SET
-                active = EXCLUDED.active,
-                severity = EXCLUDED.severity,
-                message = EXCLUDED.message,
-                source_result_id = EXCLUDED.source_result_id,
+                active = TRUE, severity = EXCLUDED.severity,
+                message = EXCLUDED.message, source_result_id = EXCLUDED.source_result_id,
                 lease_epoch = EXCLUDED.lease_epoch,
                 config_version = EXCLUDED.config_version,
-                sequence = EXCLUDED.sequence,
-                raised_at = CASE WHEN NOT current_alarms.active AND EXCLUDED.active THEN clock_timestamp() ELSE current_alarms.raised_at END,
-                cleared_at = CASE WHEN current_alarms.active AND NOT EXCLUDED.active THEN clock_timestamp() ELSE current_alarms.cleared_at END,
-                updated_at = clock_timestamp()
+                sequence = EXCLUDED.sequence, raised_at = EXCLUDED.raised_at,
+                cleared_at = NULL, last_event_at = EXCLUDED.last_event_at,
+                updated_at = EXCLUDED.updated_at
             """,
             (
                 report.tenant_id,
                 result.stream_id,
-                result.check_id,
-                active,
+                monitor_id,
                 severity,
                 message,
                 result.result_id,
                 result.lease_epoch,
                 result.config_version,
                 result.sequence,
-                active,
-                active,
+                database_now,
+                database_now,
+                database_now,
             ),
         )
-        if active == previous_active:
+        self._append_alarm_event(
+            connection, report, result, monitor_id, "raised", severity, message
+        )
+
+    @staticmethod
+    def _alert_policy(feed_config: Mapping, monitor_id: str) -> tuple[bool, int]:
+        configured = feed_config.get("alert_enabled_ids")
+        if isinstance(configured, list):
+            enabled = monitor_id in configured
+        elif monitor_id not in SPEC_BY_ID:
+            # Preserve the generic repository primitive for callers outside the
+            # HTTP catalog contract; direct operator reads filter those rows.
+            enabled = True
+        elif feed_config.get("source") == "external":
+            enabled = True
+        else:
+            controls = _MODE_MONITOR_CONTROLS.get(
+                str(feed_config.get("mode", "normal")), _MODE_MONITOR_CONTROLS["normal"]
+            )
+            enabled = (
+                monitor_id == "feed_reachable"
+                or monitor_id.startswith("tr101_")
+                or (monitor_id in {"essence_video_present", "video_frame_rate_match"} and controls["video"])
+                or (monitor_id in {"essence_audio_present"} or monitor_id.startswith("loudness_")) and controls["audio"]
+                or (monitor_id == "essence_captions_present" and controls["captions"])
+                or (monitor_id == "black_video_detected" and controls["black"])
+                or (monitor_id == "frozen_video_detected" and controls["frozen"])
+            )
+        try:
+            delay_seconds = max(0, int(feed_config.get("alert_delay_seconds", 0)))
+        except (TypeError, ValueError):
+            delay_seconds = 0
+        return enabled, delay_seconds
+
+    def _suppress_disabled_alarms_for_feed(
+        self,
+        connection,
+        stream_id: str,
+        feed_config: Mapping,
+        config_version: int,
+    ):
+        active_rows = connection.execute(
+            """
+            SELECT monitor_id, severity, message, source_result_id,
+                   lease_epoch, sequence
+            FROM current_alarms
+            WHERE tenant_id = %s AND stream_id = %s AND active
+            FOR UPDATE
+            """,
+            (self.tenant_id, stream_id),
+        ).fetchall()
+        pending_rows = connection.execute(
+            """
+            SELECT monitor_id FROM current_alarm_pending
+            WHERE tenant_id = %s AND stream_id = %s
+            FOR UPDATE
+            """,
+            (self.tenant_id, stream_id),
+        ).fetchall()
+        database_now = connection.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
+        for row in active_rows:
+            monitor_id = row["monitor_id"]
+            if self._alert_policy(feed_config, monitor_id)[0]:
+                continue
+            message = "Alert profile disabled this monitor"
+            connection.execute(
+                """
+                UPDATE current_alarms
+                SET active = FALSE, message = %s, config_version = %s,
+                    cleared_at = %s, last_event_at = %s, updated_at = %s
+                WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                """,
+                (
+                    message,
+                    config_version,
+                    database_now,
+                    database_now,
+                    database_now,
+                    self.tenant_id,
+                    stream_id,
+                    monitor_id,
+                ),
+            )
+            event_id = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"videosim:{self.tenant_id}:{stream_id}:{config_version}:{monitor_id}:suppressed",
+            )
+            payload = {
+                "eventId": str(event_id),
+                "tenantId": self.tenant_id,
+                "streamId": stream_id,
+                "monitorId": monitor_id,
+                "transition": "suppressed",
+                "resultId": str(row["source_result_id"] or ""),
+                "message": message,
+                "severity": row["severity"],
+            }
+            inserted = connection.execute(
+                """
+                INSERT INTO alarm_events (
+                    event_id, tenant_id, stream_id, monitor_id, transition,
+                    source_result_id, payload, occurred_at
+                ) VALUES (%s, %s, %s, %s, 'suppressed', %s, %s::jsonb, %s)
+                ON CONFLICT (event_id) DO NOTHING
+                RETURNING event_id
+                """,
+                (
+                    event_id,
+                    self.tenant_id,
+                    stream_id,
+                    monitor_id,
+                    row["source_result_id"],
+                    json.dumps(payload, sort_keys=True),
+                    database_now,
+                ),
+            ).fetchone()
+            if inserted is not None:
+                self._insert_outbox(
+                    connection, event_id, "videosim.alarms.transition.v1", payload
+                )
+                self._prune_alarm_events(connection, self.tenant_id, stream_id)
+        for row in pending_rows:
+            if not self._alert_policy(feed_config, row["monitor_id"])[0]:
+                connection.execute(
+                    """
+                    DELETE FROM current_alarm_pending
+                    WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+                    """,
+                    (self.tenant_id, stream_id, row["monitor_id"]),
+                )
+
+    def _suppress_alarm_for_result(
+        self,
+        connection,
+        report: FencedReport,
+        result: CheckResult,
+        monitor_id: str,
+        severity: str,
+        message: str,
+        existing,
+    ):
+        if not existing or not existing["active"]:
             return
-        transition = "raised" if active else "cleared"
+        database_now = connection.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
+        connection.execute(
+            """
+            UPDATE current_alarms
+            SET active = FALSE, severity = %s, message = %s,
+                source_result_id = %s, lease_epoch = %s, config_version = %s,
+                sequence = %s, cleared_at = %s, last_event_at = %s,
+                updated_at = %s
+            WHERE tenant_id = %s AND stream_id = %s AND monitor_id = %s
+            """,
+            (
+                severity,
+                message,
+                result.result_id,
+                result.lease_epoch,
+                result.config_version,
+                result.sequence,
+                database_now,
+                database_now,
+                database_now,
+                report.tenant_id,
+                result.stream_id,
+                monitor_id,
+            ),
+        )
+        self._append_alarm_event(
+            connection, report, result, monitor_id, "suppressed", severity, message
+        )
+
+    def _append_alarm_event(
+        self,
+        connection,
+        report: FencedReport,
+        result: CheckResult,
+        monitor_id: str,
+        transition: str,
+        severity: str,
+        message: str,
+    ):
         event_id = uuid.uuid5(result.result_id, f"alarm-{transition}")
         event_payload = {
             "eventId": str(event_id),
             "tenantId": report.tenant_id,
             "streamId": result.stream_id,
-            "monitorId": result.check_id,
+            "monitorId": monitor_id,
             "transition": transition,
             "resultId": str(result.result_id),
             "message": message,
             "severity": severity,
         }
-        connection.execute(
+        inserted = connection.execute(
             """
             INSERT INTO alarm_events (
                 event_id, tenant_id, stream_id, monitor_id, transition,
                 source_result_id, payload, occurred_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
             ON CONFLICT (event_id) DO NOTHING
+            RETURNING event_id
             """,
             (
                 event_id,
                 report.tenant_id,
                 result.stream_id,
-                result.check_id,
+                monitor_id,
                 transition,
                 result.result_id,
                 json.dumps(event_payload, sort_keys=True),
                 result.observed_at,
             ),
-        )
+        ).fetchone()
+        if inserted is None:
+            return
         self._insert_outbox(
             connection,
             event_id,
             "videosim.alarms.transition.v1",
             event_payload,
         )
+        self._prune_alarm_events(connection, report.tenant_id, result.stream_id)
+
+    def _prune_alarm_events(self, connection, tenant_id: str, stream_id: str):
+        connection.execute(
+            """
+            DELETE FROM alarm_events
+            WHERE tenant_id = %s AND stream_id = %s
+              AND created_at < clock_timestamp() - (%s * interval '1 second')
+            """,
+            (tenant_id, stream_id, self.alarm_event_retention_seconds),
+        )
+        connection.execute(
+            """
+            DELETE FROM alarm_events
+            WHERE event_id IN (
+                SELECT event_id FROM alarm_events
+                WHERE tenant_id = %s AND stream_id = %s
+                ORDER BY created_at DESC, event_id DESC
+                OFFSET %s
+            )
+            """,
+            (tenant_id, stream_id, self.alarm_event_history_limit),
+        )
+
+
+def _iso_datetime(value) -> str:
+    if value is None:
+        return ""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.isoformat()
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _lease(row) -> DurableLease:

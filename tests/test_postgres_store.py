@@ -6,6 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from videosim.migrations import DEFAULT_MIGRATIONS_DIR, MigrationError, PostgresMigrator
 from videosim.postgres_store import (
@@ -125,6 +126,7 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         down_sql = "\n".join(
             Path(DEFAULT_MIGRATIONS_DIR, name).read_text(encoding="utf-8")
             for name in (
+                "003_direct_monitor_projection.down.sql",
                 "002_worker_projection_fence.down.sql",
                 "001_durable_control_plane.down.sql",
             )
@@ -138,6 +140,11 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
                 self.assertIsNone(
                     connection.execute(
                         "SELECT to_regclass('public.worker_projection_state')"
+                    ).fetchone()["to_regclass"]
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT to_regclass('public.current_alarm_pending')"
                     ).fetchone()["to_regclass"]
                 )
         with self.store._pool.connection() as connection:
@@ -747,6 +754,419 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
                 (feed_id,),
             ).fetchone()
         self.assertFalse(final_alarm["active"])
+
+    def test_missing_monitor_observation_does_not_clear_active_alarm(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        version = self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+        active = CheckResult(
+            uuid.uuid4(), feed_id, "feed_reachable", lease.epoch, version, 1,
+            "unhealthy", datetime.now(timezone.utc), {"message": "unreachable"},
+        )
+        unrelated = CheckResult(
+            uuid.uuid4(), feed_id, "probe.validation", lease.epoch, version, 2,
+            "healthy", datetime.now(timezone.utc), {"message": "another check passed"},
+        )
+        self.store.ingest_report(
+            FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (active,))
+        )
+        self.store.ingest_report(
+            FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (unrelated,))
+        )
+        with self.store._pool.connection() as connection:
+            alarm = connection.execute(
+                """
+                SELECT active FROM current_alarms
+                WHERE tenant_id = 'default' AND stream_id = %s
+                  AND monitor_id = 'feed_reachable'
+                """,
+                (feed_id,),
+            ).fetchone()
+        self.assertTrue(alarm["active"])
+
+    def test_catalog_alarm_delay_pending_and_conclusive_lifecycle(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        version = self.store.upsert(
+            feed(feed_id)
+            | {
+                "alert_enabled_ids": ["feed_reachable"],
+                "alert_delay_seconds": 10,
+            }
+        )
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+
+        def send(status, sequence, message="monitor evidence"):
+            result = CheckResult(
+                uuid.uuid4(),
+                feed_id,
+                "feed_reachable",
+                lease.epoch,
+                version,
+                sequence,
+                status,
+                datetime.now(timezone.utc),
+                {"message": message, "source": "monitor_observation"},
+            )
+            self.store.ingest_report(
+                FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+            )
+            return result
+
+        first = send("unhealthy", 1, "feed unreachable")
+        send("timeout", 2, "probe timeout")
+        with self.store._pool.connection() as connection:
+            pending = connection.execute(
+                """
+                SELECT source_result_id FROM current_alarm_pending
+                WHERE tenant_id = 'default' AND stream_id = %s
+                  AND monitor_id = 'feed_reachable'
+                """,
+                (feed_id,),
+            ).fetchone()
+            alarm = connection.execute(
+                """
+                SELECT active FROM current_alarms
+                WHERE tenant_id = 'default' AND stream_id = %s
+                  AND monitor_id = 'feed_reachable'
+                """,
+                (feed_id,),
+            ).fetchone()
+        self.assertEqual(pending["source_result_id"], first.result_id)
+        self.assertIsNone(alarm)
+
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE current_alarm_pending
+                    SET first_seen_at = clock_timestamp() - interval '11 seconds'
+                    WHERE tenant_id = 'default' AND stream_id = %s
+                      AND monitor_id = 'feed_reachable'
+                    """,
+                    (feed_id,),
+                )
+        send("unhealthy", 3, "feed still unreachable")
+        send("unknown", 4, "inconclusive")
+        send("healthy", 5, "feed recovered")
+
+        projection = self.store.monitor_projection_payload()
+        alarm = next(
+            item
+            for item in projection["alarms"]
+            if item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+        )
+        events = [
+            item["type"]
+            for item in projection["events"]
+            if item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+        ]
+        self.assertFalse(alarm["active"])
+        self.assertEqual(events, ["alarm_raised", "alarm_cleared"])
+        self.assertFalse(
+            any(
+                item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+                for item in projection["pending"]
+            )
+        )
+
+    def test_direct_projection_read_uses_one_repeatable_snapshot(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        version = self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+
+        def report(status, sequence):
+            result = CheckResult(
+                uuid.uuid4(), feed_id, "feed_reachable", lease.epoch, version,
+                sequence, status, datetime.now(timezone.utc), {"message": status},
+            )
+            return FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+
+        self.store.ingest_report(report("unhealthy", 1))
+        writer_store = PostgresControlPlaneStore(DATABASE_URL)
+        original_connection = self.store._pool.connection
+        triggered = False
+
+        class WrappedConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, query, params=None):
+                nonlocal triggered
+                cursor = self.connection.execute(query, params)
+                if not triggered and "FROM current_alarms a" in query:
+                    triggered = True
+                    writer_store.ingest_report(report("healthy", 2))
+                return cursor
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        class WrappedContext:
+            def __init__(self):
+                self.context = original_connection()
+
+            def __enter__(self):
+                return WrappedConnection(self.context.__enter__())
+
+            def __exit__(self, *args):
+                return self.context.__exit__(*args)
+
+        try:
+            with patch.object(self.store._pool, "connection", side_effect=WrappedContext):
+                projection = self.store.monitor_projection_payload()
+        finally:
+            writer_store.close()
+
+        alarm = next(
+            item
+            for item in projection["alarms"]
+            if item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+        )
+        transitions = [
+            item["type"]
+            for item in projection["events"]
+            if item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+        ]
+        self.assertTrue(triggered)
+        self.assertTrue(alarm["active"])
+        self.assertEqual(transitions, ["alarm_raised"])
+
+    def test_profile_disable_suppresses_active_alarm_and_pending_state(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        enabled_feed = feed(feed_id) | {
+            "alert_enabled_ids": ["feed_reachable"],
+            "alert_delay_seconds": 0,
+        }
+        version = self.store.upsert(enabled_feed)
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+        result = CheckResult(
+            uuid.uuid4(),
+            feed_id,
+            "feed_reachable",
+            lease.epoch,
+            version,
+            1,
+            "unhealthy",
+            datetime.now(timezone.utc),
+            {"message": "feed unreachable"},
+        )
+        self.store.ingest_report(
+            FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+        )
+
+        changed, new_version = self.store.import_feed_if_changed(
+            enabled_feed | {"alert_enabled_ids": []}
+        )
+        projection = self.store.monitor_projection_payload()
+        alarm = next(
+            item
+            for item in projection["alarms"]
+            if item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+        )
+        events = [
+            item["type"]
+            for item in projection["events"]
+            if item["streamId"] == feed_id and item["monitorId"] == "feed_reachable"
+        ]
+        self.assertTrue(changed)
+        self.assertGreater(new_version, version)
+        self.assertFalse(alarm["active"])
+        self.assertEqual(events, ["alarm_raised", "alarm_suppressed"])
+
+    def test_mode_change_suppresses_no_longer_applicable_alarm(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        generated = feed(feed_id) | {
+            "source": "generated",
+            "external_url": "",
+            "mode": "normal",
+            "alert_enabled_ids": None,
+        }
+        version = self.store.upsert(generated)
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+        result = CheckResult(
+            uuid.uuid4(), feed_id, "essence_video_present", lease.epoch,
+            version, 1, "unhealthy", datetime.now(timezone.utc),
+            {"message": "video absent"},
+        )
+        self.store.ingest_report(
+            FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+        )
+        self.store.import_feed_if_changed(generated | {"mode": "audio_only"})
+        projection = self.store.monitor_projection_payload()
+        alarm = next(
+            item
+            for item in projection["alarms"]
+            if item["streamId"] == feed_id and item["monitorId"] == "essence_video_present"
+        )
+        self.assertFalse(alarm["active"])
+        self.assertIn(
+            "alarm_suppressed",
+            [
+                item["type"]
+                for item in projection["events"]
+                if item["streamId"] == feed_id
+            ],
+        )
+
+    def test_alarm_event_history_is_hard_capped_without_pruning_outbox(self):
+        retention_store = PostgresControlPlaneStore(
+            DATABASE_URL,
+            alarm_repeat_seconds=1,
+            alarm_event_history_limit=2,
+            alarm_event_retention_seconds=60,
+        )
+        try:
+            feed_id = f"feed-{uuid.uuid4()}"
+            version = retention_store.upsert(
+                feed(feed_id) | {"alert_enabled_ids": ["feed_reachable"]}
+            )
+            worker_id = f"worker-{uuid.uuid4()}"
+            incarnation = uuid.uuid4()
+            retention_store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+            offered = retention_store.reconcile_lease(
+                feed_id, worker_id, incarnation, ttl_seconds=60
+            )
+            lease = retention_store.acknowledge_lease(
+                feed_id,
+                worker_id,
+                incarnation,
+                epoch=offered.epoch,
+                config_version=offered.config_version,
+                ttl_seconds=60,
+            )
+
+            def send(sequence):
+                result = CheckResult(
+                    uuid.uuid4(), feed_id, "feed_reachable", lease.epoch,
+                    version, sequence, "unhealthy", datetime.now(timezone.utc),
+                    {"message": "still unreachable"},
+                )
+                retention_store.ingest_report(
+                    FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+                )
+
+            send(1)
+            for sequence in (2, 3):
+                with retention_store._pool.connection() as connection:
+                    with connection.transaction():
+                        connection.execute(
+                            """
+                            UPDATE current_alarms
+                            SET last_event_at = clock_timestamp() - interval '2 seconds'
+                            WHERE tenant_id = 'default' AND stream_id = %s
+                              AND monitor_id = 'feed_reachable'
+                            """,
+                            (feed_id,),
+                        )
+                send(sequence)
+            with retention_store._pool.connection() as connection:
+                event_count = connection.execute(
+                    """
+                    SELECT count(*) AS count FROM alarm_events
+                    WHERE tenant_id = 'default' AND stream_id = %s
+                    """,
+                    (feed_id,),
+                ).fetchone()["count"]
+                outbox_count = connection.execute(
+                    """
+                    SELECT count(*) AS count FROM outbox
+                    WHERE payload ->> 'tenantId' = 'default'
+                      AND payload ->> 'streamId' = %s
+                      AND subject = 'videosim.alarms.transition.v1'
+                    """,
+                    (feed_id,),
+                ).fetchone()["count"]
+            self.assertEqual(event_count, 2)
+            self.assertEqual(outbox_count, 3)
+        finally:
+            retention_store.close()
+
+    def test_global_pruner_expires_stopped_stream_history_without_outbox_loss(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        version = self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+        result = CheckResult(
+            uuid.uuid4(), feed_id, "feed_reachable", lease.epoch, version, 1,
+            "unhealthy", datetime.now(timezone.utc), {"message": "unreachable"},
+        )
+        self.store.ingest_report(
+            FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+        )
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE alarm_events
+                    SET created_at = clock_timestamp() - interval '8 days'
+                    WHERE tenant_id = 'default' AND stream_id = %s
+                    """,
+                    (feed_id,),
+                )
+        self.assertEqual(self.store.prune_expired_alarm_events(batch_size=10), 1)
+        with self.store._pool.connection() as connection:
+            event_count = connection.execute(
+                """
+                SELECT count(*) AS count FROM alarm_events
+                WHERE tenant_id = 'default' AND stream_id = %s
+                """,
+                (feed_id,),
+            ).fetchone()["count"]
+            outbox_count = connection.execute(
+                """
+                SELECT count(*) AS count FROM outbox
+                WHERE payload ->> 'tenantId' = 'default'
+                  AND payload ->> 'streamId' = %s
+                  AND subject = 'videosim.alarms.transition.v1'
+                """,
+                (feed_id,),
+            ).fetchone()["count"]
+        self.assertEqual(event_count, 0)
+        self.assertEqual(outbox_count, 1)
+
+    def test_probe_metrics_do_not_materialize_operator_alarms(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        version = self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+        result = CheckResult(
+            uuid.uuid4(),
+            feed_id,
+            "probe.validation",
+            lease.epoch,
+            version,
+            1,
+            "unhealthy",
+            datetime.now(timezone.utc),
+            {"message": "aggregate probe issue"},
+        )
+        self.store.ingest_report(
+            FencedReport(uuid.uuid4(), "default", worker_id, incarnation, (result,))
+        )
+        projection = self.store.monitor_projection_payload()
+        self.assertFalse(
+            any(item["streamId"] == feed_id for item in projection["alarms"])
+        )
+        self.assertEqual(projection["workerProbeMetrics"][worker_id]["streams"][0]["check"], "validation")
 
     def test_simultaneous_reports_accept_one_authoritative_sequence(self):
         feed_id = f"feed-{uuid.uuid4()}"

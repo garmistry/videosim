@@ -17,7 +17,8 @@ distributed monitoring workers.
 - Persist feed definitions and alert profiles in SQLite by default; the
   production overlay uses the first PostgreSQL/JetStream durable foundation.
 - Run local monitoring or master/worker monitoring; PostgreSQL deployments use
-  durable worker-v2 lease/report fencing while SQLite retains lab-compatible v1.
+  durable worker-v2 lease/report fencing plus direct PostgreSQL monitor
+  alarm/event reads, while SQLite retains lab-compatible v1/file JSON.
 
 ## Quick Start
 

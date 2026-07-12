@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import copy
-import hashlib
 import html
 import json
 import mimetypes
@@ -1125,7 +1124,12 @@ class GuiHandler(BaseHTTPRequestHandler):
             stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
             if stream_id:
                 redirect_stream_id = stream_id
-                if clear_monitor_events(self.state, stream_id):
+                if durable_control_store(self.state) is not None:
+                    self.state.log(
+                        "Durable PostgreSQL alarm history is immutable and cannot be cleared",
+                        stream_id,
+                    )
+                elif clear_monitor_events(self.state, stream_id):
                     self.state.log("Cleared event audit", stream_id)
         elif self.path == "/api/workers/register":
             payload = self._read_json()
@@ -1562,10 +1566,10 @@ def render_page(state: GuiState) -> str:
     </fieldset>
   </form>
   {alert_profile_form}
-  <form method="post" action="/streams/events/clear" class="row">
+  {'' if durable_control_store(state) is not None else f'''<form method="post" action="/streams/events/clear" class="row">
     <input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}">
     <button class="secondary" type="submit">Clear event audit</button>
-  </form>
+  </form>'''}
   <div class="row">
     <form method="post" action="/stop"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Stop</button></form>
     <form method="post" action="/validate"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Validate</button></form>
@@ -2059,6 +2063,26 @@ def diagnostics_text(state: GuiState) -> str:
 
 
 def monitor_payload(state: GuiState) -> dict:
+    store = durable_control_store(state)
+    if store is not None:
+        try:
+            payload = store.monitor_projection_payload()
+        except Exception as exc:
+            state.log(f"Durable monitor projection read failed: {exc}")
+            return {
+                "updatedAt": "",
+                "alarms": [],
+                "events": [],
+                "pending": [],
+                "monitors": monitor_catalog_payload(),
+                "workers": [],
+                "probeMetrics": {},
+                "workerProbeMetrics": {},
+                "eventHistoryMutable": False,
+                "connected": False,
+            }
+        payload["monitors"] = monitor_catalog_payload()
+        return payload
     path = monitor_state_path(state)
     if not path.is_file():
         return {
@@ -2070,6 +2094,7 @@ def monitor_payload(state: GuiState) -> dict:
             "workers": [],
             "probeMetrics": {},
             "workerProbeMetrics": {},
+            "eventHistoryMutable": True,
             "connected": False,
         }
     try:
@@ -2084,6 +2109,7 @@ def monitor_payload(state: GuiState) -> dict:
             "workers": [],
             "probeMetrics": {},
             "workerProbeMetrics": {},
+            "eventHistoryMutable": True,
             "connected": False,
         }
     return {
@@ -2095,11 +2121,17 @@ def monitor_payload(state: GuiState) -> dict:
         "workers": payload.get("workers", []),
         "probeMetrics": payload.get("probeMetrics", {}),
         "workerProbeMetrics": payload.get("workerProbeMetrics", {}),
+        "eventHistoryMutable": True,
         "connected": True,
     }
 
 
 def clear_monitor_events(state: GuiState, stream_id: str) -> bool:
+    # PostgreSQL event history is immutable operational evidence. The legacy
+    # trusted-lab JSON clear action must not silently erase its direct read
+    # projection.
+    if durable_control_store(state) is not None:
+        return False
     path = monitor_state_path(state)
     if not path.is_file():
         return False
@@ -2259,11 +2291,6 @@ def apply_durable_worker_report(
     scoped_claimed, dropped_claimed = validate_monitor_items(
         worker_state, claimed_stream_ids
     )
-    projection_sha256 = hashlib.sha256(
-        json.dumps(
-            scoped_claimed, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
     metrics = scoped_claimed.get("probeMetrics")
     if not isinstance(metrics, dict):
         raise WorkerReportValidationError("worker API v2 requires state.probeMetrics")
@@ -2274,6 +2301,11 @@ def apply_durable_worker_report(
     }
     for item in metric_items:
         metrics_by_stream[item["streamId"]].append(item)
+    observations_by_stream: dict[str, list[dict]] = {
+        stream_id: [] for stream_id in stream_ids
+    }
+    for item in scoped_claimed.get("monitorObservations", []):
+        observations_by_stream[item["streamId"]].append(item)
 
     status_by_outcome = {
         "success": "healthy",
@@ -2326,6 +2358,28 @@ def apply_durable_worker_report(
             )
             results.append(result)
             result_streams[str(result_id)] = stream_id
+        for observation in sorted(
+            observations_by_stream[stream_id], key=lambda item: item["monitorId"]
+        ):
+            monitor_id = observation["monitorId"]
+            result_id = uuid.uuid5(report_id, f"{stream_id}:monitor:{monitor_id}")
+            epoch, config_version, lease_sequence = lease_by_stream[stream_id]
+            result = CheckResult(
+                result_id=result_id,
+                stream_id=stream_id,
+                check_id=monitor_id,
+                lease_epoch=epoch,
+                config_version=config_version,
+                sequence=lease_sequence,
+                status=observation["status"],
+                observed_at=observed_at,
+                evidence={
+                    "message": observation["message"],
+                    "source": "monitor_observation",
+                },
+            )
+            results.append(result)
+            result_streams[str(result_id)] = stream_id
 
     disposition = store.ingest_report(
         FencedReport(
@@ -2334,7 +2388,6 @@ def apply_durable_worker_report(
             worker_id=worker_id,
             worker_incarnation_id=incarnation,
             results=tuple(results),
-            projection_sha256=projection_sha256,
         )
     )
     rejected_stream_ids = {
@@ -2359,24 +2412,10 @@ def apply_durable_worker_report(
         for stream_id in accepted_stream_ids
     }
     dropped_items = dropped_claimed
-    projected_stream_ids: set[str] = set()
-    if projection_fences:
-        with state.control_plane_lock:
-            def apply_current_projection(current_stream_ids: set[str]):
-                nonlocal dropped_items
-                scoped_state, dropped_items = validate_monitor_items(
-                    worker_state, current_stream_ids
-                )
-                persist_worker_projection(
-                    state, worker_id, current_stream_ids, scoped_state
-                )
-
-            projected_stream_ids = store.apply_projection_if_current(
-                report_id,
-                projection_sha256,
-                projection_fences,
-                apply_current_projection,
-            )
+    # PostgreSQL commits catalog monitor observations and their direct read
+    # projection in the fenced ingestion transaction. The legacy JSON shadow
+    # is deliberately not a durable-mode retry target.
+    projected_stream_ids = set() if disposition.duplicate else set(projection_fences)
     conflict = bool(disposition.rejected)
     return {
         "ok": not conflict,

@@ -47,8 +47,15 @@ SEMANTIC_QUERIES = {
     "current_alarms": """
         SELECT tenant_id, stream_id, monitor_id, active, severity, message,
                source_result_id, lease_epoch, config_version, sequence,
-               raised_at, cleared_at
+               raised_at, cleared_at, last_event_at
         FROM current_alarms ORDER BY tenant_id, stream_id, monitor_id
+    """,
+    "current_alarm_pending": """
+        SELECT tenant_id, stream_id, monitor_id, severity, message,
+               source_result_id, lease_epoch, config_version, sequence,
+               first_seen_at
+        FROM current_alarm_pending
+        ORDER BY tenant_id, stream_id, monitor_id
     """,
     "alarm_events": """
         SELECT event_id, tenant_id, stream_id, monitor_id, transition,

@@ -3,9 +3,9 @@
 This document describes the F2 durable foundation and its first HTTP cutover
 slice. It adds a PostgreSQL authority model, checksum-verified migrations,
 fenced transactions, a transactional outbox, a durable NATS JetStream event
-stream, and a `videosim.worker/v2` lease/report path. It does **not** claim that
-operator alarm reads, security audit writes, or event consumers have completed
-their cutover.
+stream, a `videosim.worker/v2` lease/report path, and a direct PostgreSQL
+monitor-alarm/operator-read projection. It does **not** claim that security
+audit writes or event consumers have completed their cutover.
 
 ## Evidence status
 
@@ -42,19 +42,24 @@ Confirmed in this unit:
 - Backup, restore, restored-lease expiry fencing, explicit broker-recovery
   mode, and snapshot-consistent semantic comparison tools exist under `scripts/`.
 
-Not yet confirmed or implemented:
+Remaining work and evidence limits:
 
-- PostgreSQL-backed deployments now negotiate `videosim.worker/v2`: durable
-  worker incarnation, offered/acknowledged lease epoch/config, per-lease
-  epoch/config sequence, immutable report ID, bounded observation time, and deterministic
-  result IDs. SQLite trusted-lab deployments retain worker v1 compatibility.
-  V2 stores probe-check results durably first, then updates the legacy JSON
-  monitor projection; that projection remains the operator alarm read path.
+- PostgreSQL-backed deployments negotiate `videosim.worker/v2`: durable worker
+  incarnation, offered/acknowledged lease epoch/config, per-lease epoch/config
+  sequence, immutable report ID, bounded observation time, deterministic result
+  IDs, and bounded catalog monitor observations. SQLite trusted-lab deployments
+  retain worker v1 compatibility.
+- Migration `003_direct_monitor_projection.sql` adds durable pending-alert
+  state, alarm repeat timestamps, and an alarm-event read/retention index. In
+  PostgreSQL mode, accepted catalog observations update pending/current alarms,
+  immutable alarm edges, and outbox records in the same fenced transaction;
+  `/state.json` reads that PostgreSQL projection rather than a local JSON file
+  in one repeatable-read database snapshot.
 - Security audit events still go to structured stdout; the durable audit
   repository primitive is not yet connected to every HTTP authorization path.
-- Operator alarm/event reads have not yet moved to a disposable PostgreSQL
-  projection, actual per-monitor alarm snapshots are not yet projected from v2
-  reports, and no JetStream consumer is deployed.
+- No JetStream consumer is deployed. The direct PostgreSQL projection is the
+  current operator read model; an inbox-deduplicated consumer/replay parity
+  path remains required before event-driven projection can be claimed.
 - PostgreSQL and NATS are single instances in Compose. There is no HA, PITR,
   multi-zone, or production RPO/RTO evidence.
 - NATS credentials protect the private Compose network, but cross-VM broker TLS
@@ -77,11 +82,20 @@ an alternative source of truth.
    hash.
 5. Each result is checked against the current locked lease and its last
    accepted sequence.
-6. Accepted immutable results update `current_check_state`. Only conclusive
-   healthy evidence clears an alarm; unknown/stale/skipped/error/timeout
-   evidence preserves alarm state. Alarm edges append `alarm_events`.
-7. Events are appended to `outbox` before the transaction commits.
-8. Publishers claim due rows with `FOR UPDATE SKIP LOCKED`, publish with the
+6. Accepted immutable results update `current_check_state`. Catalog monitor
+   observations additionally update server-profiled pending/current alarms;
+   only conclusive healthy evidence clears, while
+   unknown/stale/skipped/error/timeout and an omitted monitor preserve active
+   and pending state. The PostgreSQL clock owns alert delay and repeat cadence.
+7. Alarm edges (`raised`, repeat `active`, `cleared`, or explicit profile
+   `suppressed`) append immutable `alarm_events`; per-stream history is bounded
+   to 1,000 events and seven days by default without deleting immutable outbox
+   records. The production `monitor-history-pruner` runs a bounded global age
+   sweep hourly so stopped streams also expire; invoke
+   `python3 -m videosim monitor-history-prune --once` for an inspected manual
+   sweep.
+8. Events are appended to `outbox` before the transaction commits.
+9. Publishers claim due rows with `FOR UPDATE SKIP LOCKED`, publish with the
    outbox `event_id` as `Nats-Msg-Id`, and persist the broker sequence.
 
 A stale or mismatched result is recorded only in the report disposition. It
@@ -103,24 +117,25 @@ When `VIDEOSIM_DATABASE_URL` selects PostgreSQL, worker endpoints require v2:
 4. Each lease tuple maintains its own positive sequence, resetting to one when
    epoch/config changes and advancing only while that tuple persists. The worker
    also sends an immutable batch report UUID. The server deterministically
-   derives result UUIDs for scoped probe checks, maps
-   success/issue/error/timeout/skipped to explicit statuses, and lets PostgreSQL
-   revalidate every fence.
-5. PostgreSQL commits accepted results/outbox and a durable per-stream shadow
-   projection fence first. The legacy JSON projection applies only a pending
-   fence matching its report/epoch/config/sequence/payload hash; a newer report
-   or reassignment makes an old duplicate retry a no-op. A JSON-write failure
-   returns 503; retrying the same report ID can safely complete only its still
-   current pending projection. A fence rejection returns 409 and causes a
-   bounded assignment refetch.
+   derives result UUIDs for scoped `probe.*` metrics and catalog monitor
+   observations, maps statuses explicitly, and lets PostgreSQL revalidate every
+   fence.
+5. PostgreSQL commits accepted results, current check state, pending/current
+   monitor alarms, alarm edges, and outbox atomically. A duplicate report
+   returns its stored disposition and cannot rerun projection; stale,
+   reassigned, expired, or config-revoked reports mutate none of those rows.
+   `/state.json` directly queries the durable projection, so a JSON shadow write
+   cannot leave the PostgreSQL operator view behind committed results.
+6. Monitor observations are expand-compatible: deploy workers that emit them
+   before switching an environment to direct PostgreSQL operator reads. Missing
+   observations preserve existing active/pending alarms; they never imply a
+   healthy clear. A fence rejection returns 409 and causes a bounded assignment
+   refetch.
 
-SQLite keeps `videosim.worker/v1` for trusted-lab compatibility. V1 is not a
-production fallback and cannot submit to the durable result path. V2 currently
-stores `probe.*` checks as shadow durability evidence; actual monitor alarm
-snapshot projection and PostgreSQL operator reads remain the next F2 gate. A
-pending shadow write is no-regression fenced but has no independent replay
-worker yet, so a crashed worker can leave `/state.json` temporarily behind the
-committed result state.
+SQLite keeps `videosim.worker/v1` and its file-backed monitor JSON for
+trusted-lab compatibility. V1 is not a production fallback and cannot submit
+to the durable result path. PostgreSQL mode never falls back to that file when
+a direct projection read fails; it reports a disconnected monitor view instead.
 
 ## Migrations
 
@@ -237,13 +252,12 @@ operationally simple: stop the new app and publisher, restore the prior
 Compose file/app image, and point it at the retained SQLite data. Preserve
 PostgreSQL/NATS volumes for investigation; do not execute a down migration.
 
-After the implemented worker-v2 cutover, rollback is a planned compatibility
-operation: quiesce workers, preserve/inspect the durable report and shadow
-fence state, route only a controlled lab population to retained SQLite v1, and
-start replacement workers with new durable lease epochs. Never allow old
-process-local tokens, pending shadow callbacks, or restored leases to regain
-authority. Dual-read alarm projection, consumer replay, and HA rollback drills
-remain open F2/F4 gates.
+After the implemented direct PostgreSQL cutover, rollback is a planned
+compatibility operation: quiesce workers, preserve/inspect durable reports,
+monitor pending/alarm/event rows, and outbox state, route only a controlled lab
+population to retained SQLite v1, and start replacement workers with new
+lease epochs. Never allow old process-local tokens or restored leases to regain
+authority. Consumer replay and HA rollback drills remain open F2/F4 gates.
 
 ## Verification
 
@@ -263,5 +277,7 @@ semantics; no false alarm clear on inconclusive evidence; immutable
 audit/outbox IDs; simultaneous report and outbox-claim serialization;
 JetStream persistence/configuration/deduplication; publish acknowledgement; and
 real HTTP worker-v2 offer/ack/report/retry/config-fence/incarnation-restart
-behavior including one complete `run_worker --once` flow.
+behavior including one complete `run_worker --once` flow; direct PostgreSQL
+`/state.json` reads; catalog monitor pending/delay/repeat/clear/suppress
+transitions; omission/inconclusive preservation; and bounded event retention.
 See `docs/work-log.md` for the exact most recent run and restore evidence.

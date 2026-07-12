@@ -43,6 +43,48 @@ class ControlPlaneContractTest(unittest.TestCase):
         ):
             validate_monitor_items(state, {"stream-1"})
 
+    def test_monitor_observations_are_catalog_scoped_and_fenced(self):
+        scoped, dropped = validate_monitor_items(
+            {
+                "alarms": [],
+                "events": [],
+                "pending": [],
+                "monitorObservations": [
+                    {
+                        "streamId": "stream-1",
+                        "monitorId": "feed_reachable",
+                        "status": "unhealthy",
+                        "message": "unreachable",
+                    },
+                    {
+                        "streamId": "stream-2",
+                        "monitorId": "feed_reachable",
+                        "status": "healthy",
+                        "message": "out of scope",
+                    },
+                ],
+            },
+            {"stream-1"},
+        )
+        self.assertEqual(scoped["monitorObservations"][0]["streamId"], "stream-1")
+        self.assertEqual(dropped["monitorObservations"], ["stream-2:feed_reachable"])
+        with self.assertRaises(WorkerReportValidationError):
+            validate_monitor_items(
+                {
+                    "alarms": [],
+                    "events": [],
+                    "pending": [],
+                    "monitorObservations": [
+                        {
+                            "streamId": "stream-1",
+                            "monitorId": "forged-monitor",
+                            "status": "unhealthy",
+                        }
+                    ],
+                },
+                {"stream-1"},
+            )
+
     def test_identifier_limit_is_enforced(self):
         state = {
             "alarms": [{"id": "x" * 513, "streamId": "stream-1"}],

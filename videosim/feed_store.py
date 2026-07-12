@@ -32,6 +32,11 @@ def default_feed_store() -> FeedRegistrationStore:
             database_url,
             min_pool_size=int(os.environ.get("VIDEOSIM_DB_POOL_MIN", "1")),
             max_pool_size=int(os.environ.get("VIDEOSIM_DB_POOL_MAX", "10")),
+            alarm_repeat_seconds=int(os.environ.get("VIDEOSIM_ALARM_REPEAT_SECONDS", "5")),
+            alarm_event_history_limit=int(os.environ.get("VIDEOSIM_ALARM_EVENT_HISTORY_LIMIT", "1000")),
+            alarm_event_retention_seconds=int(
+                os.environ.get("VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS", str(7 * 24 * 60 * 60))
+            ),
         )
     return SqliteFeedStore(default_feed_db_path())
 

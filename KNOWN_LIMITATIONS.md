@@ -48,8 +48,8 @@
   fencing, server-derived report scope, retained-state pruning, and independent
   heartbeat prevent known stale-report and long-batch TTL failures in this
   single-process HTTP path. PostgreSQL-backed deployments now use worker v2
-  durable incarnation/offer/ack/epoch/config/sequence fencing and store scoped
-  probe results before updating the transitional JSON projection.
+  durable incarnation/offer/ack/epoch/config/sequence fencing and atomically
+  store scoped probe results plus catalog monitor observations in PostgreSQL.
 - Strict versioned worker reports are the default. The explicit
   `--allow-legacy-worker-reports` compatibility mode cannot fence stale
   generations and is unsuitable for production.
@@ -72,23 +72,23 @@
 
 ## Monitoring
 
-- The separate local monitor still uses a shared JSON state file. Worker v2
-  durably stores `probe.*` results and then updates that JSON projection, but
-  actual monitor-alarm snapshots and operator reads have not moved to the
-  PostgreSQL projection yet.
+- SQLite/trusted-lab monitoring still uses a shared JSON state file. In
+  PostgreSQL worker-v2 mode, catalog monitor observations, pending/current
+  alarms, and event edges project atomically into PostgreSQL and operator
+  `/state.json` reads that database projection instead of the file.
 - Outbox delivery is at least once. JetStream's duplicate window cannot replace
   a durable consumer inbox; no consumer/projection is deployed yet. Coordinated
   DB/broker recovery, PITR, and measured RPO/RTO remain unproven.
-- Feed definitions and alert profiles are persisted by the GUI, but monitor
-  alarm/event history still lives in the shared JSON monitor state file.
+- PostgreSQL retains bounded per-stream monitor event history (1,000 rows and
+  seven days by default) plus current pending/alarm state. It is not yet a
+  replayed consumer read model, and SQLite retains file-backed history.
 - SQLite worker v1 registration/fencing is in-memory with a 60-second TTL.
   PostgreSQL worker v2 membership/leases are durable and heartbeat-renewed, but
   scheduling remains deterministic round-robin rather than capacity-aware.
-- Worker v2 report aggregation writes durable probe results and then the shared
-  JSON monitor state through a durable no-regression fence. The JSON write is
-  retryable but not independently replayed: if a worker dies after DB commit
-  and before retrying its shadow write, operator JSON can lag until a later
-  report. It is not a durable alarm/event read model.
+- PostgreSQL worker-v2 reports now commit direct monitor projection atomically
+  with fenced results, so a local JSON write cannot lag operator reads. The
+  future JetStream consumer must still use `consumer_inbox` atomically and prove
+  replay parity; it is not implemented.
 - The default direct-app/trusted-lab path has no worker authentication or TLS
   and retains worker v1. The production Compose/VM proxy path adds mTLS and
   worker v2 durable lease fencing, but there is no HA scheduler/storage failover.

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import shlex
 import sys
+import uuid
 from dataclasses import replace
 
 from .distributed_benchmark import (
@@ -11,9 +14,12 @@ from .distributed_benchmark import (
     run_control_plane_benchmark,
 )
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
-from .feed_store import SqliteFeedStore, default_feed_db_path
+from .feed_store import SqliteFeedStore, configured_database_url, default_feed_db_path, default_feed_store
 from .gui import GuiState, run_gui
+from .migrations import MigrationError, PostgresMigrator
 from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
+from .nats_publisher import NatsPublisherError, ensure_event_stream, run_outbox_publisher
+from .postgres_store import PostgresControlPlaneStore, PostgresStoreError
 from .profile import ProfileError, load_profile
 from .security import SecurityConfig
 from .soak import check_reports
@@ -29,6 +35,32 @@ from .worker import build_ssl_context, default_worker_id, run_worker
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="videosim")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    migrate = subparsers.add_parser("migrate", help="apply checksum-verified PostgreSQL migrations")
+    migrate.add_argument("--database-url", default="")
+
+    migration_status = subparsers.add_parser("migration-status", help="show PostgreSQL migration status")
+    migration_status.add_argument("--database-url", default="")
+    migration_status.add_argument("--json", action="store_true")
+
+    import_sqlite = subparsers.add_parser("import-sqlite-feeds", help="idempotently import SQLite feed definitions into PostgreSQL")
+    import_sqlite.add_argument("--database-url", default="")
+    import_sqlite.add_argument("--sqlite-path", default=str(default_feed_db_path()))
+
+    nats_init = subparsers.add_parser("nats-init", help="provision the VideoSim JetStream event stream")
+    nats_init.add_argument("--nats-url", default="nats://127.0.0.1:4222")
+
+    outbox = subparsers.add_parser("outbox-publisher", help="publish committed PostgreSQL outbox events to JetStream")
+    outbox.add_argument("--database-url", default="")
+    outbox.add_argument("--nats-url", default="nats://127.0.0.1:4222")
+    outbox.add_argument("--poll-interval-seconds", type=float, default=1)
+    outbox.add_argument("--batch-size", type=int, default=100)
+    outbox.add_argument("--publisher-id", default="")
+    outbox.add_argument("--once", action="store_true")
+
+    outbox_requeue = subparsers.add_parser("outbox-requeue", help="requeue one inspected dead outbox event")
+    outbox_requeue.add_argument("--database-url", default="")
+    outbox_requeue.add_argument("--event-id", required=True)
 
     start = subparsers.add_parser("start", help="start a synthetic video feed")
     start.add_argument("--profile", help="load feed settings from a flat YAML profile")
@@ -142,6 +174,72 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command in {"migrate", "migration-status"}:
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            migrator = PostgresMigrator(database_url)
+            states = migrator.apply() if args.command == "migrate" else migrator.status()
+            payload = [
+                {
+                    "version": state.version,
+                    "name": state.name,
+                    "checksum": state.checksum,
+                    "applied": state.applied,
+                }
+                for state in states
+            ]
+            if args.command == "migration-status" and args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                for state in payload:
+                    print(f"{state['version']:03d} {state['name']}: {'applied' if state['applied'] else 'pending'}")
+            return 0 if all(state["applied"] for state in payload) else 1
+
+        if args.command == "import-sqlite-feeds":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            target = PostgresControlPlaneStore(database_url)
+            try:
+                feeds = SqliteFeedStore(args.sqlite_path).load()
+                changed = sum(target.import_feed_if_changed(feed)[0] for feed in feeds)
+            finally:
+                target.close()
+            print(f"Imported {changed} changed feed definitions; inspected {len(feeds)}")
+            return 0
+
+        if args.command == "nats-init":
+            asyncio.run(ensure_event_stream(args.nats_url))
+            print("JetStream event stream ready")
+            return 0
+
+        if args.command == "outbox-publisher":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            return run_outbox_publisher(
+                database_url,
+                args.nats_url,
+                once=args.once,
+                poll_seconds=args.poll_interval_seconds,
+                batch_size=args.batch_size,
+                publisher_id=args.publisher_id,
+            )
+
+        if args.command == "outbox-requeue":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            event_id = uuid.UUID(args.event_id)
+            store = PostgresControlPlaneStore(database_url)
+            try:
+                requeued = store.requeue_dead_outbox(event_id)
+            finally:
+                store.close()
+            print(f"{'Requeued' if requeued else 'Did not requeue'} outbox event {event_id}")
+            return 0 if requeued else 1
+
         if args.command == "gui":
             run_gui(
                 args.host,
@@ -153,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                     height=args.height,
                     framerate=args.framerate,
                     worker_base_url=args.worker_base_url,
-                    feed_store=SqliteFeedStore(default_feed_db_path()),
+                    feed_store=default_feed_store(),
                     allow_legacy_worker_reports=args.allow_legacy_worker_reports,
                     security=SecurityConfig.from_env(),
                 ),
@@ -315,7 +413,15 @@ def main(argv: list[str] | None = None) -> int:
             print(config.endpoint)
             return 0
         return run_video_feed(config)
-    except (BenchmarkInvariantError, FeedError, ProfileError, ValueError) as exc:
+    except (
+        BenchmarkInvariantError,
+        FeedError,
+        MigrationError,
+        NatsPublisherError,
+        PostgresStoreError,
+        ProfileError,
+        ValueError,
+    ) as exc:
         parser.exit(2, f"error: {exc}\n")
 
 

@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 node_modules/
 reports/
+.env.production
+*.dump
 deploy/certs/*
 !deploy/certs/.gitkeep
 !deploy/certs/README.md

@@ -8,6 +8,14 @@
 
 **Decision:** The current distributed slice can be used for isolated, non-authoritative development evaluation only when exactly one monitoring ownership path is enabled and the network is trusted. It is not production-ready for 1,000 or more monitored streams.
 
+**Post-audit implementation note:** this file preserves the audited baseline and
+its original conclusions. F0, the core F1 boundary, and the first F2
+PostgreSQL/JetStream repository unit were implemented afterward. Their current
+evidence and remaining gates are tracked in
+[`distributed-implementation-progress.md`](distributed-implementation-progress.md)
+and [`durable-control-plane.md`](durable-control-plane.md); none changes the
+no-capacity-certification decision above.
+
 ## 1. Scope, evidence, and claim labels
 
 This audit evaluates how Video Feed Simulator could reliably monitor 1,000, 5,000, and 10,000 concurrent SRT/DASH streams with a highly available control plane and horizontally scalable workers. It does not implement that redesign.

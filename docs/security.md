@@ -32,9 +32,14 @@ outside the proxy-to-app hop.
 4. Put certificates in `deploy/certs/` using the names documented there. Never
    commit private keys.
 5. Copy `.env.production.example` to a protected environment file and replace
-   every placeholder. Generate the proxy secret with at least 32 random bytes.
-6. Restrict VM/container networking so only Nginx reaches app TCP 8080 and only
-   approved worker networks reach Nginx TCP 9443.
+   every placeholder. Generate the proxy secret with at least 32 random bytes,
+   plus distinct URL-safe PostgreSQL and NATS credentials. Keep the environment
+   file out of source control.
+6. Restrict VM/container networking so only Nginx reaches app TCP 8080, only
+   approved worker networks reach Nginx TCP 9443, and PostgreSQL 5432/NATS 4222
+   remain private to approved control-plane services. The single-host Compose
+   broker uses credentials on its private bridge; cross-VM broker/database TLS
+   remains an F4 requirement.
 
 Validate configuration:
 

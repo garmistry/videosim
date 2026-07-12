@@ -4,8 +4,10 @@
 
 ## Current Gate
 
-Milestones 0 through 11 have no known P0 test gaps. Milestone 1 through 11 live SRT
-receiver proof runs in Docker with `docker compose run --build --rm live-srt`.
+Product Milestones 0 through 11 have no known P0 test gaps. Milestone 1 through
+11 live SRT receiver proof runs in Docker with
+`docker compose run --build --rm live-srt`. The separate production-distribution
+F2 gate is explicitly incomplete below.
 
 ## Deferred Until Later Milestones
 
@@ -45,17 +47,24 @@ implementation and must pass before those milestones advance.
   heartbeat during a probe batch, typed worker API conflicts/validation/storage
   errors, scoped probe metrics, concurrent assignment/allocation behavior, and
   an in-process assignment/report benchmark.
-- The process-local generation/token is not a durable lease and has no
-  multi-replica or control-plane failover proof. PostgreSQL/broker-backed
-  persistence, authenticated worker identity, idempotent results, and durable
-  fencing belong to the next gates in
-  `docs/distributed-implementation-progress.md`.
+- PostgreSQL/JetStream integration coverage now proves migration safeguards,
+  feed version/import behavior, fresh offered/acknowledged worker leases,
+  observation-time and inconclusive-alarm fencing, idempotent
+  result/alarm/audit/outbox transactions, simultaneous reports, concurrent
+  outbox claims, and durable JetStream publish acknowledgements. A local custom-format
+  backup/restore plus semantic comparison also passed.
+- The process-local HTTP generation/token path has not cut over to those durable
+  primitives and has no multi-replica or control-plane failover proof. Worker-v2
+  lease/result contracts, PostgreSQL operator reads, security-audit wiring,
+  consumer inbox/projection replay, ack-before-mark recovery beyond the broker
+  dedup window, DB/broker restore combinations, schema upgrade under load, PITR,
+  measured RPO/RTO, and HA remain open F2/F4 P0 gates.
 - The control-plane benchmark runs no SRT/DASH probes. Representative media
   load, failure storms, 24-hour soak, security, restore, and 1,000/5,000/10,000
   admission evidence remain missing and must not be inferred from it.
-- The independent heartbeat currently lacks retry/backoff metrics and a durable
-  worker incarnation. Worker execution remains serial and is not yet
-  capacity-aware or backpressured.
+- The active HTTP heartbeat currently lacks retry/backoff metrics and does not
+  renew the durable worker incarnation/lease rows. Worker execution remains
+  serial and is not yet capacity-aware or backpressured.
 
 ## Monitoring
 

@@ -20,6 +20,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY requirements.txt ./
+RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY . .
 COPY --from=ui /ui/videosim/static ./videosim/static
 

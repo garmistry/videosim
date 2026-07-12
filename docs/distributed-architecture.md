@@ -13,7 +13,7 @@ VideoSim should split into a master control plane and many worker nodes:
 - Master control plane: GUI/API, feed registration database, stream assignment endpoint, monitor report aggregation, and operator-facing alarm/event views.
 - Worker node: polls the master for assigned streams, validates/monitors those feeds, and posts alarm/event state back to the master.
 - Feed runtime: generated feeds can still run beside the master for now; external feeds are monitored from worker nodes through their registered endpoints.
-- Storage boundary: feed definitions stay behind the `FeedRegistrationStore` interface so SQLite can be replaced without touching GUI orchestration or monitor logic.
+- Storage boundary: feed definitions stay behind the `FeedRegistrationStore` interface. SQLite remains the lab default; the production overlay selects the PostgreSQL adapter.
 
 ## Data Flow
 
@@ -58,22 +58,39 @@ VideoSim should split into a master control plane and many worker nodes:
   bounded transient retries form the current security gate.
 - See [Security and Identity](security.md) for setup and remaining boundaries.
 
+## Implemented Durable Foundation
+
+- PostgreSQL migrations and a bounded-pool repository now model feed config
+  versions, worker incarnations, fresh offered/acknowledged expiring leases,
+  immutable reports/results, bounded observation time, current check/alarm
+  projection with inconclusive-state preservation, alarm/audit events, and a
+  transactional outbox.
+- NATS JetStream is provisioned as at-least-once committed-event transport.
+  Outbox publisher claims are concurrent-safe, use hash-immutable event IDs,
+  retain acknowledgement sequence, and retry before dead state. A consumer
+  inbox schema exists, but no consumer is deployed.
+- The production Compose overlay gates app startup on migrations and publisher
+  startup on JetStream initialization. Backup/restore, restore generation
+  fencing, and SQLite feed import tools exist.
+- The integration evidence covers these repository primitives, not the current
+  HTTP worker path. See [Durable Control-Plane Foundation](durable-control-plane.md).
+
 ## Current Limits
 
-- Worker registry, assignment generation, and tokens are process-local and expire inactive workers after 60 seconds. They are transition fences, not durable HA leases.
+- The HTTP worker v1 registry, assignment generation, and tokens remain process-local and expire inactive workers after 60 seconds. They are transition fences, not the implemented-but-not-yet-wired durable lease repository.
 - Assignment is round-robin, not capacity-aware.
-- Worker identity is still caller supplied. Strict versioned reports are the default; `--allow-legacy-worker-reports` is an explicit temporary compatibility escape hatch that lacks stale-generation protection.
-- Report aggregation still writes the monitor JSON state file; alarm/event history is not database-backed or append-only yet.
-- The independent heartbeat has no authenticated identity, health alarm, or retry/backoff telemetry yet.
-- No worker authentication, TLS, or tenant isolation.
-- The master is still a single process. HA control-plane storage and leader election are not implemented.
+- The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
+- HTTP report aggregation still writes the monitor JSON state file. Database-backed alarm/result methods exist but the handler and operator read projection have not cut over.
+- The independent heartbeat has authenticated identity on the production proxy path, but no durable lease renewal, health alarm, or retry/backoff telemetry yet.
+- Durable tenant keys exist, but authorization grants and tenant-isolation behavior are not implemented.
+- The app, PostgreSQL, and NATS deployments remain single instances. HA storage and leader election are not implemented.
 
 ## Next Upgrade Points
 
-- Persist workers, leases, assignments, and alarm/event history through a database-backed repository boundary.
+- Cut worker assignments/reports from process-local v1 fencing to the durable incarnation/epoch/config/result contract.
 - Add worker health and capacity metadata to assignment decisions.
-- Move monitor report writes from the JSON file to the same DB boundary used by feed registrations.
-- Add signed worker credentials before this runs outside a trusted lab network.
+- Move monitor report writes and operator reads from JSON to the PostgreSQL authority/projection, then deploy idempotent JetStream consumers.
+- Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 
 These upgrade points are necessary but not sufficient for production. The audit

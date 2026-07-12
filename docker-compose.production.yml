@@ -1,16 +1,61 @@
 services:
+  postgres:
+    image: postgres:17-alpine@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-videosim}"
+      POSTGRES_USER: "${POSTGRES_USER:-videosim}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set a strong PostgreSQL password}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
+    command: ["-js", "-sd", "/data", "--user", "${NATS_USER:-videosim}", "--pass", "${NATS_PASSWORD:?set a strong NATS password}"]
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+    command: python -m videosim migrate
+    restart: "no"
+
+  nats-init:
+    build: .
+    depends_on:
+      nats:
+        condition: service_started
+    command: python -m videosim nats-init --nats-url "nats://${NATS_USER:-videosim}:${NATS_PASSWORD}@nats:4222"
+    restart: on-failure
+
   app:
     build: .
     environment:
       VIDEOSIM_VERBOSE: "1"
       VIDEOSIM_MONITOR_STATE: /var/lib/videosim/monitor/state.json
-      VIDEOSIM_DB_PATH: /var/lib/videosim/feeds.sqlite3
+      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+      VIDEOSIM_DB_POOL_MIN: "${VIDEOSIM_DB_POOL_MIN:-1}"
+      VIDEOSIM_DB_POOL_MAX: "${VIDEOSIM_DB_POOL_MAX:-10}"
       VIDEOSIM_SECURITY_MODE: trusted-proxy
       VIDEOSIM_PROXY_SHARED_SECRET: "${VIDEOSIM_PROXY_SHARED_SECRET:?set a 32+ character proxy secret}"
       VIDEOSIM_VIEWER_GROUP: "${VIDEOSIM_VIEWER_GROUP:-videosim-viewer}"
       VIDEOSIM_ADMIN_GROUP: "${VIDEOSIM_ADMIN_GROUP:-videosim-admin}"
       VIDEOSIM_ALLOW_PRIVATE_FEEDS: "${VIDEOSIM_ALLOW_PRIVATE_FEEDS:-0}"
       VIDEOSIM_ALLOWED_FEED_HOST_SUFFIXES: "${VIDEOSIM_ALLOWED_FEED_HOST_SUFFIXES:-}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     expose:
       - "8080"
     volumes:
@@ -25,6 +70,21 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    restart: unless-stopped
+
+  outbox-publisher:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats-init:
+        condition: service_completed_successfully
+    environment:
+      VIDEOSIM_DATABASE_URL: "postgresql://${POSTGRES_USER:-videosim}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+    command: >
+      python -m videosim outbox-publisher
+      --nats-url "nats://${NATS_USER:-videosim}:${NATS_PASSWORD}@nats:4222"
+      --batch-size 100
     restart: unless-stopped
 
   oauth2-proxy:
@@ -89,3 +149,5 @@ services:
 volumes:
   app-data:
   dash-data:
+  postgres-data:
+  nats-data:

@@ -19,6 +19,23 @@ class FeedRegistrationStore(Protocol):
         ...
 
 
+def configured_database_url() -> str:
+    return os.environ.get("VIDEOSIM_DATABASE_URL", "").strip()
+
+
+def default_feed_store() -> FeedRegistrationStore:
+    database_url = configured_database_url()
+    if database_url:
+        from .postgres_store import PostgresControlPlaneStore
+
+        return PostgresControlPlaneStore(
+            database_url,
+            min_pool_size=int(os.environ.get("VIDEOSIM_DB_POOL_MIN", "1")),
+            max_pool_size=int(os.environ.get("VIDEOSIM_DB_POOL_MAX", "10")),
+        )
+    return SqliteFeedStore(default_feed_db_path())
+
+
 def default_feed_db_path() -> Path:
     configured = os.environ.get("VIDEOSIM_DB_PATH")
     if configured:

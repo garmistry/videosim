@@ -1,5 +1,13 @@
 .git
+.DS_Store
+.env
+.env.*
+!.env.production.example
+*.dump
+.pi-subagents/
+design_docs/
 __pycache__/
 *.py[cod]
 node_modules/
 reports/
+deploy/certs/*

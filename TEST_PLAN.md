@@ -111,6 +111,25 @@ The master/worker control-plane slice is additive to the local monitor service.
 | In-process control-plane benchmark enforces assignment/report invariants and disclaims media capacity | P1 | implemented | `python3 -m unittest tests.test_distributed_benchmark`; `python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterations 3` |
 | Compose exposes a sample worker node service | P1 | implemented | `docker compose config --quiet` |
 
+## Durable Control-Plane Foundation Coverage
+
+These tests require disposable PostgreSQL/NATS services and do not run merely
+because the unit suite is green.
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| Migration application is idempotent, serialized, checksum/name guarded, and transactionally reversible | P0 | implemented integration | `VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest tests.test_postgres_store` |
+| Feed config versions and retry-safe SQLite cutover import | P0 | implemented integration | same PostgreSQL command |
+| Fresh worker offers/acknowledges incarnation/config/epoch lease; stale heartbeat cannot renew/ingest; new epoch restarts sequence at 1 while same epoch preserves it | P0 | implemented integration | same PostgreSQL command |
+| Fenced ingestion rejects stale incarnation/epoch/config/sequence, reordered/future observations, and immutable-ID payload drift | P0 | implemented integration | same PostgreSQL command |
+| Accepted result/current state/alarm edges/outbox commit atomically; duplicates are idempotent and inconclusive evidence never clears | P0 | implemented integration | same PostgreSQL command |
+| Durable audit IDs are immutable and enqueue exactly one event | P1 | implemented integration | same PostgreSQL command |
+| Concurrent outbox claims are disjoint/publisher-fenced; failed rows retry with bounded backoff/dead state; event-ID drift fails | P0 | implemented integration | same PostgreSQL command |
+| JetStream stream uses file storage/required subjects and stores publish acknowledgement sequence | P0 | implemented integration | `VIDEOSIM_TEST_POSTGRES_URL=... VIDEOSIM_TEST_NATS_URL=... python3 -m unittest tests.test_nats_publisher` |
+| Backup restores schema/data, advances generation, expires restored leases, and matches semantic hash | P0 | local functional evidence only | commands/evidence in `docs/work-log.md`; production PITR/RPO/RTO open |
+| HTTP worker v2 uses durable lease/result contract end-to-end | P0 | not implemented | F2 cutover gate |
+| Operator reads and security audit use PostgreSQL authority; JetStream consumer atomically uses durable inbox and projection | P0 | not implemented | F2 cutover gate |
+
 ## Milestone Gates
 
 Each milestone may advance only when all P0 tests for that milestone are

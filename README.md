@@ -14,7 +14,8 @@ distributed monitoring workers.
 - Start, stop, validate, and inspect feeds from the GUI.
 - Copy receiver endpoints and view feed logs, errors, preview frames, metrics,
   alarms, and event history.
-- Persist feed definitions and alert profiles in SQLite by default.
+- Persist feed definitions and alert profiles in SQLite by default; the
+  production overlay uses the first PostgreSQL/JetStream durable foundation.
 - Run local monitoring or master/worker monitoring for assigned feeds.
 
 ## Quick Start
@@ -95,6 +96,9 @@ docker compose run --build --rm monitor-fixtures
 ```
 
 The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.
+PostgreSQL/JetStream integration tests are separately gated by
+`VIDEOSIM_TEST_POSTGRES_URL` and `VIDEOSIM_TEST_NATS_URL`; see the durable
+control-plane document. Passing either suite is not a scale-admission result.
 
 Exercise the versioned in-process worker assignment/report invariants:
 
@@ -120,6 +124,9 @@ This command runs no media probes and is not evidence of 1,000-stream monitoring
   active gate checklist and evidence status for implementing that roadmap.
 - [Security and identity](docs/security.md): production Compose/VM mTLS worker
   identity, OIDC operator access, input limits, and egress controls.
+- [Durable control-plane foundation](docs/durable-control-plane.md):
+  PostgreSQL schema/migrations, fenced transaction primitives, JetStream
+  outbox, cutover, backup/restore, evidence, and explicit open gates.
 - [Compatibility report](docs/compatibility-report.md): tested receivers.
 - [Stability report](docs/stability-report.md): soak harness and pending
   long-run evidence.

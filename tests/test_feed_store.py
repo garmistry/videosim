@@ -1,9 +1,11 @@
+import os
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from videosim.feed_store import SqliteFeedStore
+from videosim.feed_store import SqliteFeedStore, default_feed_store
 
 
 class FeedStoreTest(unittest.TestCase):
@@ -24,6 +26,22 @@ class FeedStoreTest(unittest.TestCase):
             "alert_enabled_ids": ["essence_video_present"],
             "alert_delay_seconds": 3,
         }
+
+    def test_database_url_selects_bounded_postgres_store(self):
+        with patch.dict(
+            os.environ,
+            {
+                "VIDEOSIM_DATABASE_URL": "postgresql://db/videosim",
+                "VIDEOSIM_DB_POOL_MIN": "2",
+                "VIDEOSIM_DB_POOL_MAX": "7",
+            },
+        ), patch("videosim.postgres_store.PostgresControlPlaneStore") as store_class:
+            selected = default_feed_store()
+
+        self.assertIs(selected, store_class.return_value)
+        store_class.assert_called_once_with(
+            "postgresql://db/videosim", min_pool_size=2, max_pool_size=7
+        )
 
     def test_sqlite_store_round_trips_feed_registration(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,14 @@
+DROP TABLE IF EXISTS consumer_inbox;
+DROP TABLE IF EXISTS outbox;
+DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS alarm_events;
+DROP TABLE IF EXISTS current_alarms;
+DROP TABLE IF EXISTS current_check_state;
+DROP TABLE IF EXISTS check_results;
+DROP TABLE IF EXISTS worker_reports;
+DROP TABLE IF EXISTS leases;
+DROP TABLE IF EXISTS workers;
+DROP TABLE IF EXISTS feeds;
+DROP TABLE IF EXISTS tenants;
+DROP TABLE IF EXISTS control_plane_state;
+DELETE FROM schema_migrations WHERE version = 1;

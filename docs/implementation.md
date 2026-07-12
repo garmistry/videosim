@@ -55,13 +55,17 @@ master.
 
 ## Feed Registration
 
-Feed registrations are persisted in SQLite when the GUI is launched from the
-CLI. By default the database is
-`$XDG_DATA_HOME/videosim/feeds.sqlite3` or `~/.local/share/videosim/feeds.sqlite3`;
-set `VIDEOSIM_DB_PATH` to use another location.
+Feed registrations are persisted in SQLite by default when the GUI is launched
+from the CLI. The database is `$XDG_DATA_HOME/videosim/feeds.sqlite3` or
+`~/.local/share/videosim/feeds.sqlite3`; set `VIDEOSIM_DB_PATH` to use another
+location.
 
-The GUI stores feed definitions and alert profiles there. Local subprocess
-runtime state is recreated after restart.
+When `VIDEOSIM_DATABASE_URL` is set, the CLI selects the bounded-pool PostgreSQL
+adapter instead. Apply migrations first. The production Compose overlay does
+this automatically and an idempotent `import-sqlite-feeds` command supports
+cutover. See [durable-control-plane.md](durable-control-plane.md). The GUI stores
+feed definitions and alert profiles through the same interface. Local
+subprocess runtime state is recreated after restart.
 
 Generated feed forms show protocol, mode, and frame rate. External feed forms
 show protocol and URL only. External SRT URLs and external DASH manifest URLs

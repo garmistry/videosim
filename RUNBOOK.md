@@ -222,14 +222,84 @@ scripts/generate-dev-mtls-certs.sh  # local smoke only; replace in production
 # Fill every placeholder in .env.production.
 docker compose --env-file .env.production \
   -f docker-compose.production.yml config --quiet
+# Brand-new deployment only; use the quiesced sequence below for SQLite cutover.
 docker compose --env-file .env.production \
   -f docker-compose.production.yml up --build -d
 ```
 
-The production overlay does not publish app TCP 8080. Nginx exposes the OIDC
-operator path on 8443 and the worker-mTLS path on 9443. Worker certificate CN
-must equal `--worker-id`; the app independently checks the proxy secret and
-identity headers. Use a managed CA/secret store and VM firewall in production.
+The production overlay does not publish app TCP 8080, PostgreSQL 5432, or NATS
+4222. Nginx exposes the OIDC operator path on 8443 and the worker-mTLS path on
+9443. Worker certificate CN must equal `--worker-id`; the app independently
+checks the proxy secret and identity headers. Use a managed CA/secret store and
+VM firewall in production.
+
+The overlay also starts single-instance PostgreSQL and NATS JetStream services.
+`migrate` must complete before `app`, and `nats-init` must complete before the
+outbox publisher. Check their status explicitly:
+
+```sh
+docker compose --env-file .env.production -f docker-compose.production.yml ps
+docker compose --env-file .env.production -f docker-compose.production.yml logs migrate nats-init outbox-publisher
+```
+
+For an existing SQLite deployment, do **not** run the full `up` command first.
+Quiesce the old app, retain and checksum its SQLite file, then build/start only
+storage, migrate, import, verify the idempotent retry, and finally open app/proxy
+traffic:
+
+```sh
+prod='docker compose --env-file .env.production -f docker-compose.production.yml'
+$prod build app
+$prod up -d postgres nats
+$prod run --rm migrate
+$prod run --rm nats-init
+$prod run --rm --no-deps -v "$PWD/data:/import:ro" app \
+  python -m videosim import-sqlite-feeds --sqlite-path /import/feeds.sqlite3
+# Retry must report zero changed definitions.
+$prod run --rm --no-deps -v "$PWD/data:/import:ro" app \
+  python -m videosim import-sqlite-feeds --sqlite-path /import/feeds.sqlite3
+$prod run --rm migrate python -m videosim migration-status
+$prod up -d app outbox-publisher oauth2-proxy proxy worker
+```
+
+Compare feed IDs/counts in the retained SQLite snapshot and PostgreSQL-backed
+GUI before operator DNS/traffic cutover. On mismatch, stop new services and
+restart the retained old image/SQLite file; never run the down migration. The
+import excludes transient process and JSON alarm state. The worker HTTP
+path has not yet cut over to durable leases/results, so this foundation is not
+an HA or production-scale completion claim. See
+[`docs/durable-control-plane.md`](docs/durable-control-plane.md) for authority,
+rollback, integration evidence, and open gates.
+
+### PostgreSQL backup and restore
+
+Run backups from a host/tool image with PostgreSQL 17 client utilities and the
+Python requirements installed:
+
+```sh
+export VIDEOSIM_DATABASE_URL='postgresql://.../videosim'
+scripts/postgres-backup.sh /secure/backups/videosim.dump
+```
+
+Restore into an explicitly approved target, never over the active database:
+
+```sh
+export VIDEOSIM_RESTORE_DATABASE_URL='postgresql://.../videosim_restore'
+export VIDEOSIM_RESTORE_EXPECTED_TARGET='restore-db.example:5432/videosim_restore'
+export VIDEOSIM_RESTORE_CONFIRM="DESTROY_AND_RESTORE $VIDEOSIM_RESTORE_EXPECTED_TARGET"
+export VIDEOSIM_RESTORE_BROKER_MODE=empty  # use retained only when that broker survived
+scripts/postgres-restore.sh /secure/backups/videosim.dump
+scripts/verify-postgres-restore.py \
+  --source-url "$VIDEOSIM_DATABASE_URL" \
+  --restored-url "$VIDEOSIM_RESTORE_DATABASE_URL"
+```
+
+Stop app/scheduler/publisher writes before semantic comparison. A restore
+expires restored leases; `empty` broker mode requeues non-dead outbox events, while
+`retained` preserves broker acknowledgement state. Record the DB/broker loss
+matrix, backup age, restore duration, semantic comparison, replay boundary, and
+any lost event window. All consumers must deduplicate durable event IDs. A
+functional local restore does not certify PITR, RPO, or RTO.
 
 Run the separate monitor container beside the GUI:
 

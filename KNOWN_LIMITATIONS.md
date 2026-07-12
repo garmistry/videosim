@@ -35,9 +35,9 @@
 - GUI feed metrics are estimates from configured media tracks and elapsed run
   time for generated feeds. They are not actual SRT socket byte counters,
   external-feed ingress counters, or per-receiver telemetry.
-- SQLite feed registration persists feed definitions and alert profiles only.
-  Local feed subprocesses are intentionally not restored as running processes
-  after a GUI restart.
+- SQLite remains the trusted-lab feed-registration default and persists feed
+  definitions/alert profiles only. The production overlay selects PostgreSQL,
+  but local feed subprocesses are intentionally not restored after restart.
 - External DASH validation supports reachable MPDs with common `SegmentURL` or
   `SegmentTemplate` media references. Unusual DASH packaging may need a new
   resolver in the validation layer.
@@ -47,14 +47,17 @@
   process-instance/generation/token
   fencing, server-derived report scope, retained-state pruning, and independent
   heartbeat prevent known stale-report and long-batch TTL failures in this
-  single-process design, but they are not durable authenticated leases.
+  single-process HTTP path. A durable PostgreSQL lease/report repository is now
+  implemented and integration-tested, but the worker HTTP contract has not yet
+  cut over to it.
 - Strict versioned worker reports are the default. The explicit
   `--allow-legacy-worker-reports` compatibility mode cannot fence stale
   generations and is unsuitable for production.
 - The production Compose/VM overlay enforces mTLS worker certificates and OIDC
   viewer/admin identities through Nginx plus oauth2-proxy, but a real
-  organization OIDC tenant, automated certificate rotation/revocation, and
-  durable identity/audit records are not implemented in the repository.
+  organization OIDC tenant and automated certificate rotation/revocation are
+  not repository-proven. A durable audit primitive exists, but HTTP security
+  events still emit only to structured stdout until the F2 cutover is complete.
 - Trusted-mode destination checks deny private addresses by default and support
   explicit private/suffix policy. They do not replace VM firewall/egress rules
   and do not yet provide redirect-aware DNS rebinding protection.
@@ -69,8 +72,12 @@
 
 ## Monitoring
 
-- The separate monitor app uses a shared JSON state file rather than a database
-  or event broker.
+- The separate monitor and HTTP worker paths still use a shared JSON state file.
+  PostgreSQL alarm/result authority and a JetStream outbox exist as unwired F2
+  repository primitives, not yet as the operator read path.
+- Outbox delivery is at least once. JetStream's duplicate window cannot replace
+  a durable consumer inbox; no consumer/projection is deployed yet. Coordinated
+  DB/broker recovery, PITR, and measured RPO/RTO remain unproven.
 - Feed definitions and alert profiles are persisted by the GUI, but monitor
   alarm/event history still lives in the shared JSON monitor state file.
 - Worker registration and assignment fencing are in-memory with a 60-second
@@ -79,8 +86,9 @@
 - Worker report aggregation still writes the shared JSON monitor state file,
   not a database-backed alarm/event history.
 - The default direct-app/trusted-lab path has no worker authentication or TLS;
-  the production Compose/VM proxy overlay adds mTLS. Neither path yet has
-  durable lease fencing or high-availability master failover.
+  the production Compose/VM proxy overlay adds mTLS. The HTTP path does not yet
+  use the durable lease fencing primitive, and there is no HA master/storage
+  failover.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import tempfile
 import threading
@@ -27,6 +28,38 @@ def security_config(**overrides):
 
 
 class SecurityConfigTest(unittest.TestCase):
+    def test_docker_build_context_excludes_secrets_backups_and_certificates(self):
+        rules = [
+            rule for rule in Path(".dockerignore").read_text(encoding="utf-8").splitlines()
+            if rule and not rule.startswith("#")
+        ]
+
+        def ignored(path):
+            result = False
+            for raw_rule in rules:
+                negated = raw_rule.startswith("!")
+                rule = raw_rule[1:] if negated else raw_rule
+                directory_rule = rule.endswith("/")
+                rule = rule.rstrip("/")
+                matches = fnmatch.fnmatch(path, rule) or (
+                    directory_rule and (path == rule or path.startswith(f"{rule}/"))
+                )
+                if matches:
+                    result = not negated
+            return result
+
+        for sensitive_path in (
+            ".env",
+            ".env.production",
+            "incident.dump",
+            "deploy/certs/worker.key",
+            ".pi-subagents/session.json",
+            "design_docs/private-note.md",
+        ):
+            with self.subTest(path=sensitive_path):
+                self.assertTrue(ignored(sensitive_path))
+        self.assertFalse(ignored(".env.production.example"))
+
     def test_trusted_proxy_mode_requires_long_random_secret(self):
         with patch.dict(
             "os.environ",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import signal
 import socket
 import ssl
 import threading
@@ -101,6 +102,30 @@ def post_heartbeat(
     request = Request(
         f"{control_plane_url.rstrip('/')}/api/workers/register",
         data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with _open(request, ssl_context) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def post_drain(
+    control_plane_url: str,
+    worker_id: str,
+    ssl_context: ssl.SSLContext | None = None,
+    worker_incarnation_id: str = "",
+) -> dict:
+    payload = {"workerId": worker_id}
+    if worker_incarnation_id:
+        payload.update(
+            {
+                "apiVersion": WORKER_API_VERSION_V2,
+                "workerIncarnationId": worker_incarnation_id,
+            }
+        )
+    request = Request(
+        f"{control_plane_url.rstrip('/')}/api/workers/drain",
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -301,6 +326,7 @@ def run_worker(
     max_streams: int = 0,
     max_concurrent_checks: int = 1,
     stream_budget_seconds: float = 0,
+    drain_event: threading.Event | None = None,
 ) -> int:
     if heartbeat_seconds <= 0:
         raise ValueError("heartbeat_seconds must be greater than 0")
@@ -315,6 +341,12 @@ def run_worker(
     report_sequence = 0
     lease_sequences: dict[tuple[str, int, int], int] = {}
     worker_incarnation_id = str(uuid.uuid4())
+    drain_requested = drain_event or threading.Event()
+    previous_signal_handlers = {}
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_signal_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, lambda _signum, _frame: drain_requested.set())
     heartbeat_stop = threading.Event()
     heartbeat = threading.Thread(
         target=_heartbeat_loop,
@@ -333,6 +365,26 @@ def run_worker(
         name=f"videosim-heartbeat-{worker_id}",
     )
     heartbeat.start()
+    registered = False
+    drain_sent = False
+
+    def finish_drain():
+        nonlocal drain_sent
+        heartbeat_stop.set()
+        heartbeat.join(timeout=min(heartbeat_seconds, 1.0))
+        if registered and not drain_sent:
+            call_with_retry(
+                lambda: post_drain(
+                    control_plane_url,
+                    worker_id,
+                    ssl_context,
+                    worker_incarnation_id,
+                ),
+                attempts=retry_attempts,
+                base_seconds=retry_base_seconds,
+            )
+            drain_sent = True
+
     try:
         if max_streams or max_concurrent_checks > 1 or stream_budget_seconds:
             call_with_retry(
@@ -348,7 +400,11 @@ def run_worker(
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
             )
+            registered = True
         while True:
+            if drain_requested.is_set():
+                finish_drain()
+                return 0
             assignments = call_with_retry(
                 lambda: fetch_assignments(
                     control_plane_url,
@@ -359,6 +415,7 @@ def run_worker(
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
             )
+            registered = True
             streams = assignments.get("streams", [])
             if assignments.get("apiVersion") == WORKER_API_VERSION_V2:
                 try:
@@ -381,6 +438,9 @@ def run_worker(
                     if assignment_conflicts >= MAX_ASSIGNMENT_CONFLICT_REFETCHES:
                         raise
                     continue
+            if drain_requested.is_set():
+                finish_drain()
+                return 0
             stream_ids = {stream["id"] for stream in streams}
             state = monitor_state_for_stream_ids(state, stream_ids)
             monitor_kwargs = {}
@@ -429,9 +489,26 @@ def run_worker(
                     raise
                 continue
             assignment_conflicts = 0
+            if drain_requested.is_set():
+                finish_drain()
+                return 0
             if once:
                 return 0
-            time.sleep(poll_seconds)
+            if drain_requested.wait(poll_seconds):
+                finish_drain()
+                return 0
     finally:
         heartbeat_stop.set()
         heartbeat.join(timeout=min(heartbeat_seconds, 1.0))
+        if drain_requested.is_set() and registered and not drain_sent:
+            try:
+                post_drain(
+                    control_plane_url,
+                    worker_id,
+                    ssl_context,
+                    worker_incarnation_id,
+                )
+            except Exception:
+                pass
+        for signum, handler in previous_signal_handlers.items():
+            signal.signal(signum, handler)

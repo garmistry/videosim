@@ -966,6 +966,42 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             ).fetchone()["count"]
         self.assertEqual(result_count, 3)
 
+    def test_worker_drain_fences_old_owner_and_reassigns_immediately(self):
+        worker_id = "worker-v2-draining"
+        incarnation = uuid.uuid4()
+        assignment = self.assignment(worker_id, incarnation)
+        self.acknowledge(worker_id, incarnation, assignment)
+        self.post_json(
+            "/api/workers/report",
+            self.report_payload(worker_id, incarnation, assignment, 1),
+        )
+
+        drained = self.post_json(
+            "/api/workers/drain",
+            {
+                "apiVersion": "videosim.worker/v2",
+                "workerId": worker_id,
+                "workerIncarnationId": str(incarnation),
+            },
+        )
+
+        replacement_id = "worker-v2-drain-replacement"
+        replacement_incarnation = uuid.uuid4()
+        replacement = self.assignment(replacement_id, replacement_incarnation)
+        self.acknowledge(replacement_id, replacement_incarnation, replacement)
+        stale = self.post_json(
+            "/api/workers/report",
+            self.report_payload(worker_id, incarnation, assignment, 2),
+            expected_status=409,
+        )
+
+        self.assertEqual(drained["drainingStreamIds"], [self.stream_id])
+        self.assertGreater(
+            replacement["streams"][0]["lease"]["epoch"],
+            assignment["streams"][0]["lease"]["epoch"],
+        )
+        self.assertTrue(stale["retryAssignment"])
+
     def test_db_projection_is_independent_of_legacy_json_shadow(self):
         self.enable_feed_reachable_alert()
         worker_id = "worker-v2-direct-projection"

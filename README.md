@@ -53,6 +53,17 @@ Start the GUI with a worker node polling the master control plane:
 docker compose up --build app worker
 ```
 
+Run the isolated startup/API validation workflow:
+
+```sh
+scripts/startup-validation.py
+```
+
+It boots the Compose app and worker, creates and starts a normal SRT feed
+through HTTP, proves receiver-visible video/audio/captions, stops the feed, and
+writes Docker logs plus JSON evidence under `artifacts/startup-validation/`.
+This is a one-feed startup gate, not 1,000-stream capacity evidence.
+
 For PostgreSQL worker admission, pass `--max-streams N` to advertise a static
 per-worker limit. Streams over aggregate advertised capacity remain unassigned
 and are reported as a capacity shortfall; this is not media-capacity evidence.
@@ -107,6 +118,7 @@ Run the Linux/Docker gates:
 docker compose run --build --rm test
 docker compose run --build --rm live-srt
 docker compose run --build --rm monitor-fixtures
+VIDEOSIM_STARTUP_INTEGRATION=1 python3 -m unittest tests.test_startup_workflow
 ```
 
 The live SRT tests are skipped locally unless `VIDEOSIM_LIVE_SRT=1` is set.

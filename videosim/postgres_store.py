@@ -550,7 +550,12 @@ class PostgresControlPlaneStore:
                                         THEN workers.capacity
                                         ELSE EXCLUDED.capacity END,
                         software_version = EXCLUDED.software_version,
-                        state = 'active',
+                        state = CASE
+                            WHEN workers.state = 'draining'
+                             AND workers.incarnation_id = EXCLUDED.incarnation_id
+                            THEN 'draining'
+                            ELSE 'active'
+                        END,
                         last_heartbeat_at = clock_timestamp(),
                         updated_at = clock_timestamp()
                     """,
@@ -633,6 +638,36 @@ class PostgresControlPlaneStore:
                         ),
                     )
         return row is not None
+
+    def drain_worker(self, worker_id: str, incarnation_id: uuid.UUID) -> list[str]:
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                worker = connection.execute(
+                    """
+                    UPDATE workers
+                    SET state = 'draining', last_heartbeat_at = clock_timestamp(),
+                        updated_at = clock_timestamp()
+                    WHERE tenant_id = %s AND worker_id = %s AND incarnation_id = %s
+                      AND state IN ('active', 'draining')
+                    RETURNING worker_id
+                    """,
+                    (self.tenant_id, worker_id, incarnation_id),
+                ).fetchone()
+                if worker is None:
+                    raise LeaseConflict("worker drain fence did not match")
+                rows = connection.execute(
+                    """
+                    UPDATE leases
+                    SET state = 'draining'
+                    WHERE tenant_id = %s AND worker_id = %s
+                      AND worker_incarnation_id = %s
+                      AND state IN ('offered', 'active', 'draining')
+                      AND expires_at > clock_timestamp()
+                    RETURNING stream_id
+                    """,
+                    (self.tenant_id, worker_id, incarnation_id),
+                ).fetchall()
+        return sorted(row["stream_id"] for row in rows)
 
     def reconcile_lease(
         self,

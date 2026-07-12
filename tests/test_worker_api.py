@@ -48,6 +48,15 @@ class WorkerApiTest(unittest.TestCase):
         )
         return urlopen(request, timeout=2)
 
+    def post_path(self, path, payload):
+        request = Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        return urlopen(request, timeout=2)
+
     def report_payload(self, assignment):
         return {
             "workerId": "worker-a",
@@ -70,6 +79,18 @@ class WorkerApiTest(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["legacyContract"])
+
+    def test_worker_can_drain_after_registration(self):
+        self.assignment()
+
+        with self.post_path(
+            "/api/workers/drain", {"workerId": "worker-a"}
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertNotIn("worker-a", self.state.worker_seen)
 
     def test_stale_assignment_returns_409_without_mutation(self):
         assignment = self.assignment()

@@ -375,6 +375,35 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         self.assertEqual(renewed.state, "active")
         self.assertGreater(renewed.expires_at, active.expires_at)
 
+    def test_drain_is_incarnation_fenced_terminal_and_reassignable(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        lease = self.activate_lease(feed_id, worker_id, incarnation)
+
+        drained = self.store.drain_worker(worker_id, incarnation)
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+
+        self.assertEqual(drained, [feed_id])
+        self.assertNotIn(worker_id, self.store.active_worker_ids())
+        self.assertFalse(self.store.heartbeat(worker_id, incarnation))
+        with self.assertRaisesRegex(LeaseConflict, "drain fence"):
+            self.store.drain_worker(worker_id, uuid.uuid4())
+
+        replacement_id = f"worker-{uuid.uuid4()}"
+        replacement_incarnation = uuid.uuid4()
+        self.store.register_worker(
+            replacement_id, replacement_incarnation, f"CN={replacement_id}"
+        )
+        replacement = self.store.reconcile_lease(
+            feed_id, replacement_id, replacement_incarnation, ttl_seconds=60
+        )
+
+        self.assertEqual(replacement.state, "offered")
+        self.assertGreater(replacement.epoch, lease.epoch)
+
     def test_heartbeat_cannot_resurrect_expired_active_lease(self):
         feed_id = f"feed-{uuid.uuid4()}"
         version = self.store.upsert(feed(feed_id))

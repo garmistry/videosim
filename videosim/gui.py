@@ -1333,6 +1333,7 @@ class GuiHandler(BaseHTTPRequestHandler):
         operator_principal = None
         if path not in {
             "/api/workers/register",
+            "/api/workers/drain",
             "/api/workers/leases/ack",
             "/api/workers/report",
         }:
@@ -1509,6 +1510,37 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             except PostgresStoreError as exc:
                 self._send_json({"ok": False, "error": str(exc), "retryRegistration": True}, status=503)
+                return
+            self._send_json(response)
+            return
+        elif path == "/api/workers/drain":
+            payload = self._read_json()
+            if not isinstance(payload, dict):
+                self._send_json({"ok": False, "error": "worker drain must be an object"}, status=400)
+                return
+            worker_id = payload.get("workerId", "")
+            if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
+                self._send_json({"ok": False, "error": "workerId must be a bounded non-empty string"}, status=400)
+                return
+            if self._authorize_worker(worker_id) is None:
+                return
+            try:
+                incarnation = None
+                if durable_control_store(self.state) is not None:
+                    if payload.get("apiVersion") != WORKER_API_VERSION_V2:
+                        raise WorkerReportValidationError("worker drain requires worker API v2")
+                    incarnation = parse_uuid_field(
+                        payload.get("workerIncarnationId"), "workerIncarnationId"
+                    )
+                response = drain_registered_worker(self.state, worker_id, incarnation)
+            except WorkerReportValidationError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=422)
+                return
+            except (LeaseConflict, WorkerReportConflict) as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=409)
+                return
+            except PostgresStoreError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=503)
                 return
             self._send_json(response)
             return
@@ -2287,6 +2319,32 @@ def active_worker_ids(state: GuiState, now: float | None = None) -> list[str]:
     now = time.time() if now is None else now
     with state.control_plane_lock:
         return _expire_workers_locked(state, now)
+
+
+def drain_registered_worker(
+    state: GuiState,
+    worker_id: str,
+    worker_incarnation_id: uuid.UUID | None = None,
+) -> dict:
+    store = durable_control_store(state)
+    if store is not None:
+        if worker_incarnation_id is None:
+            raise WorkerReportValidationError("workerIncarnationId is required")
+        stream_ids = store.drain_worker(worker_id, worker_incarnation_id)
+    else:
+        with state.control_plane_lock:
+            if worker_id not in state.worker_seen:
+                raise WorkerReportConflict("worker is not registered")
+            state.worker_seen.pop(worker_id)
+            state.assignment_generation += 1
+            state.assignment_dirty = True
+        stream_ids = []
+    return {
+        "ok": True,
+        "workerId": worker_id,
+        "workerIncarnationId": str(worker_incarnation_id) if worker_incarnation_id else "",
+        "drainingStreamIds": stream_ids,
+    }
 
 
 def worker_status_payload(state: GuiState) -> list[dict]:

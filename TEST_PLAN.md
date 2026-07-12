@@ -110,6 +110,16 @@ The master/worker control-plane slice is additive to the local monitor service.
 | Concurrent stream allocation and assignment snapshots preserve unique IDs, ports, and ownership | P0 | implemented | `python3 -m unittest tests.test_gui` |
 | In-process control-plane benchmark enforces assignment/report invariants and disclaims media capacity | P1 | implemented | `python3 -m unittest tests.test_distributed_benchmark`; `python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterations 3` |
 | Compose exposes a sample worker node service | P1 | implemented | `docker compose config --quiet` |
+| Worker SIGINT/SIGTERM sends its final report before an incarnation-fenced drain and immediate reoffer | P0 | implemented; PostgreSQL integration gated | `python3 -m unittest tests.test_worker tests.test_worker_api`; `VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest tests.test_postgres_store tests.test_worker_v2` |
+
+## Startup Workflow Coverage
+
+| Test area | Priority | Status | Command |
+|---|---:|---|---|
+| Compose app becomes ready and worker registers through the HTTP API | P0 | implemented integration | `VIDEOSIM_STARTUP_INTEGRATION=1 python3 -m unittest tests.test_startup_workflow` |
+| API creates, starts, validates, and stops a normal SRT feed with video/audio/captions present | P0 | implemented integration | same startup command |
+| Docker process state and service logs are captured; Python traceback fails the gate | P1 | implemented integration | same startup command; `artifacts/startup-validation/` |
+| Google Chrome operator repeats start/validate/stop and checks endpoint/logs | P1 | documented manual check | `RUNBOOK.md` startup validation workflow |
 
 ## Durable Control-Plane Foundation Coverage
 

@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ from videosim.worker import (
     build_ssl_context,
     call_with_retry,
     post_lease_acknowledgement,
+    post_drain,
     post_heartbeat,
     post_report,
     run_worker,
@@ -62,6 +64,29 @@ def assignment(stream_ids=("stream-1",), generation=7):
 
 
 class WorkerTest(unittest.TestCase):
+    def test_worker_drain_payload_includes_incarnation_fence(self):
+        response = Mock()
+        response.read.return_value = b'{"ok": true}'
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with patch("videosim.worker.urlopen", return_value=response) as open_url:
+            post_drain(
+                "http://master:8080",
+                "worker-a",
+                worker_incarnation_id="00000000-0000-0000-0000-000000000001",
+            )
+
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "http://master:8080/api/workers/drain")
+        self.assertEqual(
+            json.loads(request.data),
+            {
+                "apiVersion": "videosim.worker/v2",
+                "workerId": "worker-a",
+                "workerIncarnationId": "00000000-0000-0000-0000-000000000001",
+            },
+        )
+
     def test_worker_capacity_registration_payload_is_bounded_to_admission_limit(self):
         response = Mock()
         response.read.return_value = b'{"ok": true}'
@@ -125,6 +150,39 @@ class WorkerTest(unittest.TestCase):
         self.assertTrue(post.call_args.kwargs["worker_incarnation_id"])
         self.assertEqual(post.call_args.kwargs["sequence"], 1)
         self.assertTrue(post.call_args.kwargs["report_id"])
+
+    def test_run_worker_posts_final_report_before_drain(self):
+        drain_requested = threading.Event()
+        order = []
+
+        def monitor(*_args, **_kwargs):
+            drain_requested.set()
+            return {"updatedAt": "now", "alarms": [], "events": [], "pending": []}
+
+        with patch(
+            "videosim.worker.fetch_assignments", return_value=assignment()
+        ), patch(
+            "videosim.worker.run_monitor_once", side_effect=monitor
+        ), patch(
+            "videosim.worker.post_report",
+            side_effect=lambda *_args, **_kwargs: order.append("report") or {"ok": True},
+        ), patch(
+            "videosim.worker.post_drain",
+            side_effect=lambda *_args, **_kwargs: order.append("drain") or {"ok": True},
+        ):
+            code = run_worker(
+                "http://master:8080",
+                "worker-a",
+                5,
+                7,
+                20,
+                "app",
+                once=True,
+                drain_event=drain_requested,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(order, ["report", "drain"])
 
     def test_run_worker_passes_bounded_probe_controls(self):
         assignments = assignment(("stream-1", "stream-2"))

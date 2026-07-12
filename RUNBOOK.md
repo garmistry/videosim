@@ -210,6 +210,56 @@ and it can crash the listener.
 Generated DASH feeds are served by the same GUI HTTP server at
 `http://127.0.0.1:8080/dash/<stream-id>/manifest.mpd`.
 
+### Startup validation workflow
+
+Run the environment-gated deployment smoke before a demo or release candidate:
+
+```sh
+scripts/startup-validation.py
+```
+
+The workflow uses the isolated Compose project `videosim-startup-validation`
+on HTTP port 18080 and feed port 19000 by default. It builds the app and worker,
+waits for `/readyz`, verifies worker registration through `/state.json`, creates
+and starts a normal SRT feed through the operator HTTP forms, invokes the real
+validator, requires reachable video/audio/captions, and stops the feed. It
+always writes:
+
+- `artifacts/startup-validation/result.json`
+- `artifacts/startup-validation/compose-ps.txt`
+- `artifacts/startup-validation/docker.log`
+
+Run the marked integration test with:
+
+```sh
+VIDEOSIM_STARTUP_INTEGRATION=1 python3 -m unittest tests.test_startup_workflow -v
+```
+
+Set `VIDEOSIM_STARTUP_NO_BUILD=1` to reuse previously built images. Override
+the isolated endpoints with `VIDEOSIM_STARTUP_HTTP_PORT` and
+`VIDEOSIM_STARTUP_FEED_PORT`, and the artifact location with
+`VIDEOSIM_STARTUP_ARTIFACT_DIR`.
+
+For a Google Chrome operator check, retain the validated stack and open the GUI:
+
+```sh
+VIDEOSIM_STARTUP_KEEP=1 scripts/startup-validation.py
+```
+
+Open `http://127.0.0.1:18080` in Chrome. Confirm the startup-validation feed
+shows a copyable SRT endpoint and `Validation PASS`, then run Start, Validate,
+and Stop once more from the feed detail page. Inspect the same container output
+used by the automated gate and tear down the isolated stack:
+
+```sh
+docker compose -p videosim-startup-validation logs --no-color app worker
+docker compose -p videosim-startup-validation down --volumes --remove-orphans
+```
+
+This smoke proves a single normal feed and one worker on the local Docker host.
+It does not certify PostgreSQL/NATS production startup, failure recovery, soak
+duration, or 1,000-stream capacity.
+
 ### Production Compose/VM security boundary
 
 The default Compose file remains a trusted-lab path. For the selected production
@@ -405,6 +455,13 @@ backpressure, or capacity certification.
 When `--max-concurrent-checks` is greater than one, the worker validates every
 assigned stream before starting TR-101, frame-rate, and loudness checks. This
 protects core validation freshness but is not protocol- or tenant-cost fairness.
+
+On SIGINT or SIGTERM, a worker finishes the current monitor/report cycle, stops
+heartbeats, and posts `/api/workers/drain`. PostgreSQL atomically marks that
+incarnation and its live leases `draining`; the same incarnation cannot be
+reactivated by a late heartbeat, and another worker receives a higher lease
+epoch immediately. A hard-killed worker still relies on lease expiry, and
+durable encrypted report spooling remains unimplemented.
 
 Strict versioned reports are the default. During a controlled same-host upgrade,
 the GUI can temporarily accept old unversioned reporters with

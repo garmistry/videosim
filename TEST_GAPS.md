@@ -82,6 +82,13 @@ implementation and must pass before those milestones advance.
   starting TR-101/frame-rate/loudness work, with deterministic phase-order unit
   coverage. Black/frozen validation cost, protocol/tenant token fairness, and
   slow-stream-storm freshness evidence remain open.
+- The environment-gated Compose startup workflow proves one worker plus one
+  normal SRT feed through the real HTTP API, captures Docker state/logs, and has
+  a documented Chrome path. It does not exercise the production PostgreSQL/NATS
+  overlay, worker-loss recovery, soak duration, or 1,000-stream media load.
+- Graceful worker drain is final-report ordered and incarnation/lease fenced.
+  Hard-kill recovery still depends on lease expiry, and encrypted durable
+  report spooling plus backpressure behavior remain open F3 gates.
 
 ## Monitoring
 

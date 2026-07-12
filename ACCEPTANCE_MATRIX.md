@@ -66,6 +66,7 @@
 | Separate create from detail. | `/` exposes the create/list workflow; selected feed detail pages omit the create-feed form. |
 | Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
 | Start empty. | Fresh GUI state has no configured streams, no endpoint, and no running feed until the user creates one. |
+| Boot and validate the stack. | The environment-gated startup workflow boots app/worker services, drives create/start/validate/stop through HTTP, proves normal-feed video/audio/captions, and captures Docker logs; the runbook also defines a Chrome check. |
 | Show per-feed metrics. | GUI state and React UI expose per-stream estimated bit rate, outbound total data, uptime, and generated frame count with polling updates, plus five-minute detail-page traffic graphs. |
 | Monitor running feeds. | A separate monitor process/container polls GUI state, validates running feeds, writes alarm/event history, and repeats active alarm events every 5 seconds. |
 | Review alarms in UI. | GUI state and React UI expose monitor alarms plus per-stream event audit history. |

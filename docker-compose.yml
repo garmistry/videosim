@@ -7,7 +7,7 @@ services:
     ports:
       - "${VIDEOSIM_HTTP_PORT:-8080}:8080"
       - "${VIDEOSIM_FEED_PORT:-9000}:${VIDEOSIM_FEED_PORT:-9000}/udp"
-      - "9001-9010:9001-9010/udp"
+      - "${VIDEOSIM_FEED_PORT_RANGE:-9001-9010}:${VIDEOSIM_FEED_PORT_RANGE:-9001-9010}/udp"
     volumes:
       - monitor-state:/tmp/videosim-monitor
       - dash-data:/tmp/videosim-dash

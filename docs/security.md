@@ -121,9 +121,11 @@ Workers accept:
 
 Transient connection failures and HTTP 429/500/502/503/504 responses use bounded
 exponential jittered retries. HTTP 409 is not transport-retried; it invokes the
-assignment refetch/fencing path. Certificates and keys must be rotated by the
-VM secret/certificate manager; a durable worker incarnation and revocation
-registry remain future gates.
+assignment refetch/fencing path. On PostgreSQL, worker v2 binds the verified
+worker ID to a process-incarnation UUID and durable offered/acknowledged leases;
+a different incarnation is rejected while the current one is heartbeat-fresh,
+and a post-expiry replacement revokes prior leases. Certificates and
+keys must still be rotated by the VM secret/certificate manager.
 
 ## Known boundaries
 
@@ -131,7 +133,8 @@ This slice authenticates the deployed proxy boundary but does not yet provide:
 
 - Durable tenant records or resource-level multi-tenant authorization.
 - Database-backed immutable audit history.
-- Durable worker incarnations, leases, or revocation state.
+- Managed worker certificate revocation/rotation evidence and multi-node lease
+  failover (durable incarnations/leases exist in PostgreSQL worker v2).
 - Automated certificate issuance/rotation.
 - OIDC-provider integration tests against a real organization tenant.
 - A network firewall implementation; deployment operators must enforce egress.

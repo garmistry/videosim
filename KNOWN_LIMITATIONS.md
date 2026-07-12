@@ -47,9 +47,9 @@
   process-instance/generation/token
   fencing, server-derived report scope, retained-state pruning, and independent
   heartbeat prevent known stale-report and long-batch TTL failures in this
-  single-process HTTP path. A durable PostgreSQL lease/report repository is now
-  implemented and integration-tested, but the worker HTTP contract has not yet
-  cut over to it.
+  single-process HTTP path. PostgreSQL-backed deployments now use worker v2
+  durable incarnation/offer/ack/epoch/config/sequence fencing and store scoped
+  probe results before updating the transitional JSON projection.
 - Strict versioned worker reports are the default. The explicit
   `--allow-legacy-worker-reports` compatibility mode cannot fence stale
   generations and is unsuitable for production.
@@ -72,23 +72,26 @@
 
 ## Monitoring
 
-- The separate monitor and HTTP worker paths still use a shared JSON state file.
-  PostgreSQL alarm/result authority and a JetStream outbox exist as unwired F2
-  repository primitives, not yet as the operator read path.
+- The separate local monitor still uses a shared JSON state file. Worker v2
+  durably stores `probe.*` results and then updates that JSON projection, but
+  actual monitor-alarm snapshots and operator reads have not moved to the
+  PostgreSQL projection yet.
 - Outbox delivery is at least once. JetStream's duplicate window cannot replace
   a durable consumer inbox; no consumer/projection is deployed yet. Coordinated
   DB/broker recovery, PITR, and measured RPO/RTO remain unproven.
 - Feed definitions and alert profiles are persisted by the GUI, but monitor
   alarm/event history still lives in the shared JSON monitor state file.
-- Worker registration and assignment fencing are in-memory with a 60-second
-  TTL. Independent heartbeats keep long probe batches registered, but worker
-  assignments remain simple round-robin and are not capacity-aware.
-- Worker report aggregation still writes the shared JSON monitor state file,
-  not a database-backed alarm/event history.
-- The default direct-app/trusted-lab path has no worker authentication or TLS;
-  the production Compose/VM proxy overlay adds mTLS. The HTTP path does not yet
-  use the durable lease fencing primitive, and there is no HA master/storage
-  failover.
+- SQLite worker v1 registration/fencing is in-memory with a 60-second TTL.
+  PostgreSQL worker v2 membership/leases are durable and heartbeat-renewed, but
+  scheduling remains deterministic round-robin rather than capacity-aware.
+- Worker v2 report aggregation writes durable probe results and then the shared
+  JSON monitor state through a durable no-regression fence. The JSON write is
+  retryable but not independently replayed: if a worker dies after DB commit
+  and before retrying its shadow write, operator JSON can lag until a later
+  report. It is not a durable alarm/event read model.
+- The default direct-app/trusted-lab path has no worker authentication or TLS
+  and retains worker v1. The production Compose/VM proxy path adds mTLS and
+  worker v2 durable lease fencing, but there is no HA scheduler/storage failover.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

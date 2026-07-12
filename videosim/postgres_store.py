@@ -70,6 +70,7 @@ class FencedReport:
     worker_id: str
     worker_incarnation_id: uuid.UUID
     results: tuple[CheckResult, ...]
+    projection_sha256: str = ""
 
     def payload(self) -> dict:
         return {
@@ -77,6 +78,7 @@ class FencedReport:
             "tenantId": self.tenant_id,
             "workerId": self.worker_id,
             "workerIncarnationId": str(self.worker_incarnation_id),
+            "projectionSha256": self.projection_sha256,
             "results": [result.payload() for result in self.results],
         }
 
@@ -277,13 +279,20 @@ class PostgresControlPlaneStore:
             with connection.transaction():
                 existing = connection.execute(
                     """
-                    SELECT incarnation_id FROM workers
+                    SELECT incarnation_id, state,
+                           last_heartbeat_at > clock_timestamp()
+                               - (%s * interval '1 second') AS heartbeat_fresh
+                    FROM workers
                     WHERE tenant_id = %s AND worker_id = %s
                     FOR UPDATE
                     """,
-                    (self.tenant_id, worker_id),
+                    (self.worker_freshness_seconds, self.tenant_id, worker_id),
                 ).fetchone()
                 if existing is not None and existing["incarnation_id"] != incarnation_id:
+                    if existing["state"] == "active" and existing["heartbeat_fresh"]:
+                        raise LeaseConflict(
+                            "a different worker incarnation is still heartbeat-fresh"
+                        )
                     connection.execute(
                         """
                         UPDATE leases
@@ -319,6 +328,36 @@ class PostgresControlPlaneStore:
                         software_version,
                     ),
                 )
+                connection.execute(
+                    """
+                    UPDATE leases
+                    SET expires_at = clock_timestamp()
+                        + (%s * interval '1 second')
+                    WHERE tenant_id = %s AND worker_id = %s
+                      AND worker_incarnation_id = %s AND state = 'active'
+                      AND expires_at > clock_timestamp()
+                    """,
+                    (
+                        self.worker_freshness_seconds,
+                        self.tenant_id,
+                        worker_id,
+                        incarnation_id,
+                    ),
+                )
+
+    def active_worker_ids(self) -> list[str]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT worker_id FROM workers
+                WHERE tenant_id = %s AND state = 'active'
+                  AND last_heartbeat_at > clock_timestamp()
+                      - (%s * interval '1 second')
+                ORDER BY worker_id
+                """,
+                (self.tenant_id, self.worker_freshness_seconds),
+            ).fetchall()
+        return [row["worker_id"] for row in rows]
 
     def heartbeat(self, worker_id: str, incarnation_id: uuid.UUID) -> bool:
         with self._pool.connection() as connection:
@@ -332,6 +371,23 @@ class PostgresControlPlaneStore:
                     """,
                     (self.tenant_id, worker_id, incarnation_id),
                 ).fetchone()
+                if row is not None:
+                    connection.execute(
+                        """
+                        UPDATE leases
+                        SET expires_at = clock_timestamp()
+                            + (%s * interval '1 second')
+                        WHERE tenant_id = %s AND worker_id = %s
+                          AND worker_incarnation_id = %s AND state = 'active'
+                          AND expires_at > clock_timestamp()
+                        """,
+                        (
+                            self.worker_freshness_seconds,
+                            self.tenant_id,
+                            worker_id,
+                            incarnation_id,
+                        ),
+                    )
         return row is not None
 
     def reconcile_lease(
@@ -489,6 +545,29 @@ class PostgresControlPlaneStore:
                     raise LeaseConflict("lease acknowledgement fence did not match")
         return _lease(row)
 
+    def revoke_unassigned_leases(
+        self,
+        worker_id: str,
+        incarnation_id: uuid.UUID,
+        assigned_stream_ids: Iterable[str],
+    ) -> list[str]:
+        assigned = list(assigned_stream_ids)
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                rows = connection.execute(
+                    """
+                    UPDATE leases
+                    SET state = 'revoked', expires_at = clock_timestamp()
+                    WHERE tenant_id = %s AND worker_id = %s
+                      AND worker_incarnation_id = %s
+                      AND state IN ('offered', 'active', 'draining')
+                      AND NOT (stream_id = ANY(%s::text[]))
+                    RETURNING stream_id
+                    """,
+                    (self.tenant_id, worker_id, incarnation_id, assigned),
+                ).fetchall()
+        return sorted(row["stream_id"] for row in rows)
+
     def leases_for_worker(self, worker_id: str, incarnation_id: uuid.UUID) -> list[DurableLease]:
         with self._pool.connection() as connection:
             rows = connection.execute(
@@ -507,6 +586,11 @@ class PostgresControlPlaneStore:
     def ingest_report(self, report: FencedReport) -> IngestDisposition:
         if report.tenant_id != self.tenant_id:
             raise ReportConflict("report tenant does not match repository tenant")
+        if report.projection_sha256 and (
+            len(report.projection_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in report.projection_sha256)
+        ):
+            raise ReportConflict("projection_sha256 must be a lowercase SHA-256 digest")
         payload = report.payload()
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         payload_hash = hashlib.sha256(encoded).hexdigest()
@@ -572,6 +656,7 @@ class PostgresControlPlaneStore:
                 duplicate_results: list[str] = []
                 rejected: list[dict] = []
                 max_sequences: dict[str, int] = {}
+                projection_fences: dict[str, tuple[int, int, int]] = {}
                 for result in sorted(report.results, key=lambda item: (item.stream_id, item.sequence, item.check_id)):
                     if worker_reason:
                         rejected.append({"resultId": str(result.result_id), "reason": worker_reason})
@@ -731,6 +816,17 @@ class PostgresControlPlaneStore:
                     self._apply_alarm_transition(connection, report, result)
                     accepted.append(str(result.result_id))
                     max_sequences[result.stream_id] = max(max_sequences.get(result.stream_id, prior_sequence), result.sequence)
+                    projection_fences[result.stream_id] = (
+                        result.lease_epoch,
+                        result.config_version,
+                        max(
+                            projection_fences.get(
+                                result.stream_id,
+                                (result.lease_epoch, result.config_version, 0),
+                            )[2],
+                            result.sequence,
+                        ),
+                    )
 
                 for stream_id, sequence in max_sequences.items():
                     connection.execute(
@@ -740,6 +836,52 @@ class PostgresControlPlaneStore:
                         """,
                         (sequence, report.tenant_id, stream_id),
                     )
+
+                if report.projection_sha256:
+                    for stream_id, (
+                        lease_epoch,
+                        config_version,
+                        sequence,
+                    ) in sorted(projection_fences.items()):
+                        connection.execute(
+                            """
+                            INSERT INTO worker_projection_state (
+                                tenant_id, stream_id, report_id, worker_id,
+                                worker_incarnation_id, lease_epoch, config_version,
+                                sequence, payload_sha256, state
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                            ON CONFLICT (tenant_id, stream_id) DO UPDATE SET
+                                report_id = EXCLUDED.report_id,
+                                worker_id = EXCLUDED.worker_id,
+                                worker_incarnation_id = EXCLUDED.worker_incarnation_id,
+                                lease_epoch = EXCLUDED.lease_epoch,
+                                config_version = EXCLUDED.config_version,
+                                sequence = EXCLUDED.sequence,
+                                payload_sha256 = EXCLUDED.payload_sha256,
+                                state = 'pending',
+                                updated_at = clock_timestamp()
+                            WHERE (
+                                worker_projection_state.lease_epoch,
+                                worker_projection_state.config_version,
+                                worker_projection_state.sequence
+                            ) < (
+                                EXCLUDED.lease_epoch,
+                                EXCLUDED.config_version,
+                                EXCLUDED.sequence
+                            )
+                            """,
+                            (
+                                report.tenant_id,
+                                stream_id,
+                                report.report_id,
+                                report.worker_id,
+                                report.worker_incarnation_id,
+                                lease_epoch,
+                                config_version,
+                                sequence,
+                                report.projection_sha256,
+                            ),
+                        )
 
                 disposition = IngestDisposition(
                     report.report_id,
@@ -763,9 +905,175 @@ class PostgresControlPlaneStore:
                         connection,
                         event_id,
                         "videosim.results.accepted.v1",
-                        disposition_payload,
+                        {
+                            **disposition_payload,
+                            "tenantId": report.tenant_id,
+                            "workerId": report.worker_id,
+                            "workerIncarnationId": str(report.worker_incarnation_id),
+                        },
                     )
                 return disposition
+
+    def apply_projection_if_current(
+        self,
+        report_id: uuid.UUID,
+        projection_sha256: str,
+        fences: Mapping[str, tuple[int, int, int]],
+        apply,
+    ) -> set[str]:
+        if not fences:
+            return set()
+        stream_ids = sorted(fences)
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                # Keep the live-authority lock order worker -> lease ->
+                # projection. Ingestion/reconciliation takes the same order;
+                # locking projection first would deadlock with a newer report
+                # that already owns worker/lease locks and needs this marker.
+                preliminary_rows = connection.execute(
+                    """
+                    SELECT stream_id, report_id, worker_id, worker_incarnation_id,
+                           lease_epoch, config_version, sequence, payload_sha256, state
+                    FROM worker_projection_state
+                    WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
+                    ORDER BY stream_id
+                    """,
+                    (self.tenant_id, stream_ids),
+                ).fetchall()
+                preliminary = [
+                    row
+                    for row in preliminary_rows
+                    if row["report_id"] == report_id
+                    and row["payload_sha256"] == projection_sha256
+                    and row["state"] == "pending"
+                    and (
+                        int(row["lease_epoch"]),
+                        int(row["config_version"]),
+                        int(row["sequence"]),
+                    )
+                    == fences[row["stream_id"]]
+                ]
+                if not preliminary:
+                    return set()
+                candidate_stream_ids = sorted(
+                    row["stream_id"] for row in preliminary
+                )
+                worker_ids = sorted({row["worker_id"] for row in preliminary})
+                workers = {
+                    row["worker_id"]: row
+                    for row in connection.execute(
+                        """
+                        SELECT worker_id, incarnation_id, state,
+                               last_heartbeat_at > clock_timestamp()
+                                   - (%s * interval '1 second') AS heartbeat_fresh
+                        FROM workers
+                        WHERE tenant_id = %s AND worker_id = ANY(%s::text[])
+                        ORDER BY worker_id
+                        FOR SHARE
+                        """,
+                        (self.worker_freshness_seconds, self.tenant_id, worker_ids),
+                    ).fetchall()
+                }
+                leases = {
+                    row["stream_id"]: row
+                    for row in connection.execute(
+                        """
+                        SELECT stream_id, worker_id, worker_incarnation_id,
+                               epoch, config_version, state,
+                               expires_at > clock_timestamp() AS unexpired
+                        FROM leases
+                        WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
+                        ORDER BY stream_id
+                        FOR SHARE
+                        """,
+                        (self.tenant_id, candidate_stream_ids),
+                    ).fetchall()
+                }
+                rows = connection.execute(
+                    """
+                    SELECT stream_id, report_id, worker_id, worker_incarnation_id,
+                           lease_epoch, config_version, sequence, payload_sha256, state
+                    FROM worker_projection_state
+                    WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
+                    ORDER BY stream_id
+                    FOR UPDATE
+                    """,
+                    (self.tenant_id, candidate_stream_ids),
+                ).fetchall()
+                candidates = [
+                    row
+                    for row in rows
+                    if row["report_id"] == report_id
+                    and row["payload_sha256"] == projection_sha256
+                    and row["state"] == "pending"
+                    and (
+                        int(row["lease_epoch"]),
+                        int(row["config_version"]),
+                        int(row["sequence"]),
+                    )
+                    == fences[row["stream_id"]]
+                ]
+                if not candidates:
+                    return set()
+                current = set()
+                superseded = set()
+                for row in candidates:
+                    worker = workers.get(row["worker_id"])
+                    lease = leases.get(row["stream_id"])
+                    valid = (
+                        worker is not None
+                        and worker["state"] == "active"
+                        and worker["incarnation_id"] == row["worker_incarnation_id"]
+                        and bool(worker["heartbeat_fresh"])
+                        and lease is not None
+                        and lease["state"] == "active"
+                        and bool(lease["unexpired"])
+                        and lease["worker_id"] == row["worker_id"]
+                        and lease["worker_incarnation_id"]
+                        == row["worker_incarnation_id"]
+                        and int(lease["epoch"]) == int(row["lease_epoch"])
+                        and int(lease["config_version"])
+                        == int(row["config_version"])
+                    )
+                    if valid:
+                        current.add(row["stream_id"])
+                    else:
+                        superseded.add(row["stream_id"])
+                if superseded:
+                    connection.execute(
+                        """
+                        UPDATE worker_projection_state
+                        SET state = 'superseded', updated_at = clock_timestamp()
+                        WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
+                          AND report_id = %s AND payload_sha256 = %s
+                          AND state = 'pending'
+                        """,
+                        (
+                            self.tenant_id,
+                            sorted(superseded),
+                            report_id,
+                            projection_sha256,
+                        ),
+                    )
+                if not current:
+                    return set()
+                apply(current)
+                connection.execute(
+                    """
+                    UPDATE worker_projection_state
+                    SET state = 'applied', updated_at = clock_timestamp()
+                    WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
+                      AND report_id = %s AND payload_sha256 = %s
+                      AND state = 'pending'
+                    """,
+                    (
+                        self.tenant_id,
+                        sorted(current),
+                        report_id,
+                        projection_sha256,
+                    ),
+                )
+                return current
 
     def _insert_outbox(
         self,

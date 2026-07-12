@@ -38,6 +38,12 @@ SEMANTIC_QUERIES = {
                config_version, sequence, status, observed_at, evidence
         FROM current_check_state ORDER BY tenant_id, stream_id, check_id
     """,
+    "worker_projection_state": """
+        SELECT tenant_id, stream_id, report_id, worker_id,
+               worker_incarnation_id, lease_epoch, config_version, sequence,
+               payload_sha256, state
+        FROM worker_projection_state ORDER BY tenant_id, stream_id
+    """,
     "current_alarms": """
         SELECT tenant_id, stream_id, monitor_id, active, severity, message,
                source_result_id, lease_epoch, config_version, sequence,

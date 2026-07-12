@@ -1,10 +1,11 @@
 # Durable Control-Plane Foundation
 
-This document describes the first F2 implementation unit. It adds a
-PostgreSQL authority model, checksum-verified migrations, fenced transaction
-primitives, a transactional outbox, and a durable NATS JetStream event stream.
-It does **not** claim that the existing HTTP worker v1 path has completed its
-cutover to those primitives.
+This document describes the F2 durable foundation and its first HTTP cutover
+slice. It adds a PostgreSQL authority model, checksum-verified migrations,
+fenced transactions, a transactional outbox, a durable NATS JetStream event
+stream, and a `videosim.worker/v2` lease/report path. It does **not** claim that
+operator alarm reads, security audit writes, or event consumers have completed
+their cutover.
 
 ## Evidence status
 
@@ -43,13 +44,17 @@ Confirmed in this unit:
 
 Not yet confirmed or implemented:
 
-- The HTTP worker v1 assignment/report handlers still use their process-local
-  generation/token contract and JSON monitor projection. They do not yet issue
-  or consume the PostgreSQL lease epoch/config version/result-ID contract.
+- PostgreSQL-backed deployments now negotiate `videosim.worker/v2`: durable
+  worker incarnation, offered/acknowledged lease epoch/config, per-lease
+  epoch/config sequence, immutable report ID, bounded observation time, and deterministic
+  result IDs. SQLite trusted-lab deployments retain worker v1 compatibility.
+  V2 stores probe-check results durably first, then updates the legacy JSON
+  monitor projection; that projection remains the operator alarm read path.
 - Security audit events still go to structured stdout; the durable audit
   repository primitive is not yet connected to every HTTP authorization path.
 - Operator alarm/event reads have not yet moved to a disposable PostgreSQL
-  projection, and no JetStream consumer is deployed.
+  projection, actual per-monitor alarm snapshots are not yet projected from v2
+  reports, and no JetStream consumer is deployed.
 - PostgreSQL and NATS are single instances in Compose. There is no HA, PITR,
   multi-zone, or production RPO/RTO evidence.
 - NATS credentials protect the private Compose network, but cross-VM broker TLS
@@ -81,6 +86,41 @@ an alternative source of truth.
 
 A stale or mismatched result is recorded only in the report disposition. It
 cannot update result, current-state, alarm/event, or outbox rows.
+
+## Worker API v2 transition
+
+When `VIDEOSIM_DATABASE_URL` selects PostgreSQL, worker endpoints require v2:
+
+1. One worker process generates a UUID incarnation and sends it on assignment,
+   heartbeat, acknowledgement, and report calls. A different incarnation cannot
+   take over the same worker ID while the current one is heartbeat-fresh; crash
+   replacement waits for freshness expiry, preventing old-process ABA revival.
+2. Assignment reads use DB-fresh worker membership and deterministic
+   round-robin placement. The scheduler revokes dropped leases and returns each
+   stream's offered/active epoch, config version, and expiry.
+3. The worker acknowledges the exact lease tuple before probing. Authenticated
+   independent heartbeats extend only active leases for the same incarnation.
+4. Each lease tuple maintains its own positive sequence, resetting to one when
+   epoch/config changes and advancing only while that tuple persists. The worker
+   also sends an immutable batch report UUID. The server deterministically
+   derives result UUIDs for scoped probe checks, maps
+   success/issue/error/timeout/skipped to explicit statuses, and lets PostgreSQL
+   revalidate every fence.
+5. PostgreSQL commits accepted results/outbox and a durable per-stream shadow
+   projection fence first. The legacy JSON projection applies only a pending
+   fence matching its report/epoch/config/sequence/payload hash; a newer report
+   or reassignment makes an old duplicate retry a no-op. A JSON-write failure
+   returns 503; retrying the same report ID can safely complete only its still
+   current pending projection. A fence rejection returns 409 and causes a
+   bounded assignment refetch.
+
+SQLite keeps `videosim.worker/v1` for trusted-lab compatibility. V1 is not a
+production fallback and cannot submit to the durable result path. V2 currently
+stores `probe.*` checks as shadow durability evidence; actual monitor alarm
+snapshot projection and PostgreSQL operator reads remain the next F2 gate. A
+pending shadow write is no-regression fenced but has no independent replay
+worker yet, so a crashed worker can leave `/state.json` temporarily behind the
+committed result state.
 
 ## Migrations
 
@@ -192,15 +232,18 @@ certification.
 
 ## Rollback
 
-Before HTTP worker cutover, rollback is operationally simple: stop the new app
-and publisher, restore the prior Compose file/app image, and point it at the
-retained SQLite data. Preserve PostgreSQL/NATS volumes for investigation; do
-not execute the down migration.
+Before enabling PostgreSQL worker v2 in an environment, rollback is
+operationally simple: stop the new app and publisher, restore the prior
+Compose file/app image, and point it at the retained SQLite data. Preserve
+PostgreSQL/NATS volumes for investigation; do not execute a down migration.
 
-After any future worker-v2 cutover, rollback must be a planned compatibility
-operation with dual-read/shadow evidence and a new durable lease epoch. It
-must never allow old process-local tokens or restored leases to regain
-authority. Those gates remain open in F2.
+After the implemented worker-v2 cutover, rollback is a planned compatibility
+operation: quiesce workers, preserve/inspect the durable report and shadow
+fence state, route only a controlled lab population to retained SQLite v1, and
+start replacement workers with new durable lease epochs. Never allow old
+process-local tokens, pending shadow callbacks, or restored leases to regain
+authority. Dual-read alarm projection, consumer replay, and HA rollback drills
+remain open F2/F4 gates.
 
 ## Verification
 
@@ -209,7 +252,8 @@ The integration suite is opt-in because it requires real services:
 ```sh
 VIDEOSIM_TEST_POSTGRES_URL='postgresql://.../videosim' \
 VIDEOSIM_TEST_NATS_URL='nats://...:4222' \
-python3 -m unittest tests.test_postgres_store tests.test_nats_publisher -v
+python3 -m unittest \
+  tests.test_postgres_store tests.test_nats_publisher tests.test_worker_v2 -v
 ```
 
 It proves migration idempotence/checksum/unknown-version rejection and
@@ -217,5 +261,7 @@ transactional reversal; feed import/versioning; offered/acknowledged leases,
 heartbeat/incarnation/config/epoch/clock fencing; duplicate report/result
 semantics; no false alarm clear on inconclusive evidence; immutable
 audit/outbox IDs; simultaneous report and outbox-claim serialization;
-JetStream persistence/configuration/deduplication; and publish acknowledgement.
+JetStream persistence/configuration/deduplication; publish acknowledgement; and
+real HTTP worker-v2 offer/ack/report/retry/config-fence/incarnation-restart
+behavior including one complete `run_worker --once` flow.
 See `docs/work-log.md` for the exact most recent run and restore evidence.

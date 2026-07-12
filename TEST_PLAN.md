@@ -126,9 +126,10 @@ because the unit suite is green.
 | Durable audit IDs are immutable and enqueue exactly one event | P1 | implemented integration | same PostgreSQL command |
 | Concurrent outbox claims are disjoint/publisher-fenced; failed rows retry with bounded backoff/dead state; event-ID drift fails | P0 | implemented integration | same PostgreSQL command |
 | JetStream stream uses file storage/required subjects and stores publish acknowledgement sequence | P0 | implemented integration | `VIDEOSIM_TEST_POSTGRES_URL=... VIDEOSIM_TEST_NATS_URL=... python3 -m unittest tests.test_nats_publisher` |
-| Backup restores schema/data, advances generation, expires restored leases, and matches semantic hash | P0 | local functional evidence only | commands/evidence in `docs/work-log.md`; production PITR/RPO/RTO open |
-| HTTP worker v2 uses durable lease/result contract end-to-end | P0 | not implemented | F2 cutover gate |
-| Operator reads and security audit use PostgreSQL authority; JetStream consumer atomically uses durable inbox and projection | P0 | not implemented | F2 cutover gate |
+| Backup restores schema/data, increments informational generation, expires restored leases, applies explicit broker mode, and matches semantic hash | P0 | local functional evidence only | commands/evidence in `docs/work-log.md`; production PITR/RPO/RTO open |
+| PostgreSQL HTTP worker v2 performs incarnation registration, offer/ack, non-resurrecting heartbeat renewal, immutable report ingestion, per-lease epoch sequence restart, config fence, DB-first shadow retry, delayed-retry/reassignment projection fencing, and two-worker handoff | P0 | implemented integration | `VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest tests.test_worker_v2`; `python3 -m unittest tests.test_worker` |
+| PostgreSQL rejects worker v1 downgrade; SQLite keeps v1 lab compatibility | P0 | implemented integration | same worker commands |
+| Operator reads and security audit use PostgreSQL authority; actual monitor alarms project durably; JetStream consumer atomically uses durable inbox and projection | P0 | not implemented | F2 cutover gate |
 
 ## Milestone Gates
 

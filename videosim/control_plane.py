@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 
-WORKER_API_VERSION = "videosim.worker/v1"
+WORKER_API_VERSION_V1 = "videosim.worker/v1"
+WORKER_API_VERSION_V2 = "videosim.worker/v2"
+# Backward-compatible name for the trusted-lab/process-local contract.
+WORKER_API_VERSION = WORKER_API_VERSION_V1
 MAX_REPORT_STREAMS = 10_000
 MAX_REPORT_ITEMS_PER_COLLECTION = 50_000
 MAX_IDENTIFIER_LENGTH = 512

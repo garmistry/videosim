@@ -8,7 +8,14 @@ from unittest.mock import Mock, patch
 
 from videosim.gui import GuiState, apply_worker_report, register_worker, worker_assignments_payload
 from videosim.monitor import monitor_state_for_stream_ids
-from videosim.worker import build_ssl_context, call_with_retry, post_report, run_worker
+from videosim.worker import (
+    advance_lease_sequences,
+    build_ssl_context,
+    call_with_retry,
+    post_lease_acknowledgement,
+    post_report,
+    run_worker,
+)
 
 
 class RetryableServiceError(HTTPError):
@@ -23,6 +30,26 @@ class AssignmentConflict(HTTPError):
         self.code = 409
 
 
+def durable_assignment(stream_ids=("stream-1",)):
+    return {
+        "apiVersion": "videosim.worker/v2",
+        "workerIncarnationId": "00000000-0000-0000-0000-000000000001",
+        "streams": [
+            {
+                "id": stream_id,
+                "status": "running",
+                "lease": {
+                    "epoch": 3,
+                    "configVersion": 2,
+                    "expiresAt": "2030-01-01T00:00:00+00:00",
+                    "state": "offered",
+                },
+            }
+            for stream_id in stream_ids
+        ],
+    }
+
+
 def assignment(stream_ids=("stream-1",), generation=7):
     return {
         "apiVersion": "videosim.worker/v1",
@@ -34,6 +61,18 @@ def assignment(stream_ids=("stream-1",), generation=7):
 
 
 class WorkerTest(unittest.TestCase):
+    def test_v2_sequences_increment_per_lease_and_reset_on_epoch_change(self):
+        streams = durable_assignment(("stream-1", "stream-2"))["streams"]
+        state, first = advance_lease_sequences(streams, {})
+        state, second = advance_lease_sequences(streams, state)
+        changed = json.loads(json.dumps(streams))
+        changed[0]["lease"]["epoch"] += 1
+        _, third = advance_lease_sequences(changed, state)
+
+        self.assertEqual(first, {"stream-1": 1, "stream-2": 1})
+        self.assertEqual(second, {"stream-1": 2, "stream-2": 2})
+        self.assertEqual(third, {"stream-1": 1, "stream-2": 3})
+
     def test_run_worker_once_monitors_assigned_streams_and_posts_report(self):
         assignments = assignment()
         monitor_state = {"updatedAt": "now", "alarms": [], "events": [], "pending": []}
@@ -46,14 +85,102 @@ class WorkerTest(unittest.TestCase):
             code = run_worker("http://master:8080", "worker-a", 5, 7, 20, "app", once=True)
 
         self.assertEqual(code, 0)
-        fetch.assert_called_once_with("http://master:8080", "worker-a", None)
+        self.assertEqual(fetch.call_args.args[:3], ("http://master:8080", "worker-a", None))
+        self.assertTrue(fetch.call_args.args[3])
         monitor.assert_called_once()
         self.assertEqual(monitor.call_args.args[0], {"streams": assignments["streams"]})
         self.assertEqual(monitor.call_args.args[2], 123.0)
         self.assertEqual(monitor.call_args.args[3], 7)
         self.assertEqual(monitor.call_args.args[4], 20)
         self.assertEqual(monitor.call_args.args[5], "app")
-        post.assert_called_once_with("http://master:8080", "worker-a", ["stream-1"], monitor_state, assignments, None)
+        self.assertEqual(
+            post.call_args.args,
+            ("http://master:8080", "worker-a", ["stream-1"], monitor_state, assignments, None),
+        )
+        self.assertTrue(post.call_args.kwargs["worker_incarnation_id"])
+        self.assertEqual(post.call_args.kwargs["sequence"], 1)
+        self.assertTrue(post.call_args.kwargs["report_id"])
+
+    def test_run_worker_v2_acknowledges_lease_and_posts_stable_report_identity(self):
+        assignments = durable_assignment()
+        monitor_state = {
+            "updatedAt": "2026-07-11T00:00:00Z",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+            "probeMetrics": {
+                "observedAt": "2026-07-11T00:00:00Z",
+                "streams": [
+                    {
+                        "streamId": "stream-1",
+                        "check": "validation",
+                        "outcome": "success",
+                    }
+                ],
+            },
+        }
+        with patch(
+            "videosim.worker.fetch_assignments", return_value=assignments
+        ), patch(
+            "videosim.worker.post_lease_acknowledgement",
+            return_value={"ok": True},
+        ) as acknowledge, patch(
+            "videosim.worker.run_monitor_once", return_value=monitor_state
+        ), patch(
+            "videosim.worker.post_report", return_value={"ok": True}
+        ) as report:
+            code = run_worker(
+                "http://master:8080", "worker-a", 5, 7, 20, "app", once=True
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(acknowledge.call_count, 1)
+        self.assertTrue(acknowledge.call_args.args[2])
+        self.assertEqual(report.call_args.kwargs["sequence"], 1)
+        self.assertTrue(report.call_args.kwargs["report_id"])
+        self.assertEqual(
+            report.call_args.kwargs["worker_incarnation_id"],
+            acknowledge.call_args.args[2],
+        )
+
+    def test_worker_v2_http_payloads_include_lease_and_result_fences(self):
+        response = Mock()
+        response.read.return_value = b'{"ok": true}'
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        assignments = durable_assignment()
+        with patch("videosim.worker.urlopen", return_value=response) as open_url:
+            post_lease_acknowledgement(
+                "http://master:8080",
+                "worker-a",
+                "00000000-0000-0000-0000-000000000001",
+                assignments,
+            )
+            ack_request = open_url.call_args.args[0]
+            ack_payload = json.loads(ack_request.data)
+            post_report(
+                "http://master:8080",
+                "worker-a",
+                ["stream-1"],
+                {"probeMetrics": {"observedAt": "2026-07-11T00:00:00Z", "streams": []}},
+                assignments,
+                worker_incarnation_id="00000000-0000-0000-0000-000000000001",
+                sequence=9,
+                report_id="00000000-0000-0000-0000-000000000009",
+            )
+            report_request = open_url.call_args.args[0]
+            report_payload = json.loads(report_request.data)
+
+        self.assertEqual(ack_payload["leases"][0]["epoch"], 3)
+        self.assertEqual(ack_payload["leases"][0]["configVersion"], 2)
+        self.assertEqual(report_payload["sequence"], 9)
+        self.assertEqual(report_payload["leases"][0]["epoch"], ack_payload["leases"][0]["epoch"])
+        self.assertEqual(
+            report_payload["leases"][0]["configVersion"],
+            ack_payload["leases"][0]["configVersion"],
+        )
+        self.assertEqual(report_payload["leases"][0]["sequence"], 9)
+        self.assertEqual(report_payload["reportId"], "00000000-0000-0000-0000-000000000009")
 
     def test_heartbeat_keeps_worker_active_during_probe_batch_longer_than_ttl(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -68,17 +195,25 @@ class WorkerTest(unittest.TestCase):
                 external_url="srt://camera-a.local:9000?mode=caller",
             )
 
-            def fetch(control_plane_url, worker_id, ssl_context):
+            def fetch(control_plane_url, worker_id, ssl_context, worker_incarnation_id=""):
                 return worker_assignments_payload(state, worker_id, "http://master:8080")
 
-            def heartbeat(control_plane_url, worker_id, ssl_context):
+            def heartbeat(control_plane_url, worker_id, ssl_context, worker_incarnation_id=""):
                 return register_worker(state, worker_id)
 
             def slow_monitor(gui_state, monitor_state, *args):
                 time.sleep(0.05)
                 return {"updatedAt": "now", "alarms": [], "events": [], "pending": []}
 
-            def report(control_plane_url, worker_id, stream_ids, monitor_state, assignments, ssl_context):
+            def report(
+                control_plane_url,
+                worker_id,
+                stream_ids,
+                monitor_state,
+                assignments,
+                ssl_context,
+                **kwargs,
+            ):
                 return apply_worker_report(state, worker_id, stream_ids, monitor_state, assignments)
 
             with patch("videosim.gui.WORKER_TTL_SECONDS", 0.02), patch(
@@ -125,6 +260,35 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(scoped["probeMetrics"]["checkCount"], 0)
         self.assertEqual(scoped["probeMetrics"]["outcomes"], {})
         self.assertEqual(scoped["monitors"], [{"id": "catalog"}])
+
+    def test_worker_refetches_v2_assignment_after_acknowledgement_conflict(self):
+        assignments = durable_assignment()
+        monitor_state = {
+            "updatedAt": "now",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+            "probeMetrics": {"observedAt": "2026-07-11T00:00:00Z", "streams": []},
+        }
+        with patch(
+            "videosim.worker.fetch_assignments", side_effect=[assignments, assignments]
+        ) as fetch, patch(
+            "videosim.worker.post_lease_acknowledgement",
+            side_effect=[AssignmentConflict(), {"ok": True}],
+        ) as acknowledge, patch(
+            "videosim.worker.run_monitor_once", return_value=monitor_state
+        ) as monitor, patch(
+            "videosim.worker.post_report", return_value={"ok": True}
+        ) as report:
+            code = run_worker(
+                "http://master:8080", "worker-a", 5, 7, 20, "app", once=True
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(acknowledge.call_count, 2)
+        self.assertEqual(monitor.call_count, 1)
+        self.assertEqual(report.call_count, 1)
 
     def test_worker_refetches_assignment_after_http_409(self):
         old_assignment = assignment(generation=7)

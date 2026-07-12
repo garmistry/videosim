@@ -265,9 +265,9 @@ $prod up -d app outbox-publisher oauth2-proxy proxy worker
 Compare feed IDs/counts in the retained SQLite snapshot and PostgreSQL-backed
 GUI before operator DNS/traffic cutover. On mismatch, stop new services and
 restart the retained old image/SQLite file; never run the down migration. The
-import excludes transient process and JSON alarm state. The worker HTTP
-path has not yet cut over to durable leases/results, so this foundation is not
-an HA or production-scale completion claim. See
+import excludes transient process and JSON alarm state. PostgreSQL deployments
+use worker v2 durable lease/probe-result fencing plus a fenced JSON shadow, but
+this remains neither an HA nor production-scale completion claim. See
 [`docs/durable-control-plane.md`](docs/durable-control-plane.md) for authority,
 rollback, integration evidence, and open gates.
 
@@ -345,9 +345,13 @@ For a local worker outside Compose:
 python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 --worker-id local-worker
 ```
 
-Workers use the `videosim.worker/v1` assignment/report contract and send an
-independent heartbeat every 20 seconds by default. Override it only with a
-positive interval safely below the current 60-second worker TTL:
+Workers auto-negotiate by storage mode. The default SQLite trusted-lab path uses
+`videosim.worker/v1`. PostgreSQL-backed deployments require
+`videosim.worker/v2`: one process-incarnation UUID, offered/acknowledged durable
+leases, immutable report IDs, per-epoch sequences, and DB-fenced probe results
+before the JSON shadow update. Workers send an independent heartbeat every 20
+seconds; in v2 it refreshes membership and extends only active leases for the
+same incarnation. Keep the interval safely below the current 60-second TTL:
 
 ```sh
 python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 \

@@ -6,6 +6,7 @@ import socket
 import ssl
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, TypeVar
 from urllib.error import HTTPError, URLError
@@ -18,6 +19,7 @@ from .monitor import empty_monitor_state, monitor_state_for_stream_ids, run_moni
 MAX_ASSIGNMENT_CONFLICT_REFETCHES = 3
 DEFAULT_RETRY_ATTEMPTS = 5
 DEFAULT_RETRY_BASE_SECONDS = 0.25
+WORKER_API_VERSION_V2 = "videosim.worker/v2"
 CONTRACT_FIELDS = (
     "apiVersion",
     "controlPlaneInstanceId",
@@ -58,8 +60,12 @@ def fetch_assignments(
     control_plane_url: str,
     worker_id: str,
     ssl_context: ssl.SSLContext | None = None,
+    worker_incarnation_id: str = "",
 ) -> dict:
-    query = urlencode({"worker_id": worker_id})
+    parameters = {"worker_id": worker_id}
+    if worker_incarnation_id:
+        parameters["worker_incarnation_id"] = worker_incarnation_id
+    query = urlencode(parameters)
     with _open(f"{control_plane_url.rstrip('/')}/api/workers/assignments?{query}", ssl_context) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -68,8 +74,18 @@ def post_heartbeat(
     control_plane_url: str,
     worker_id: str,
     ssl_context: ssl.SSLContext | None = None,
+    worker_incarnation_id: str = "",
 ) -> dict:
-    body = json.dumps({"workerId": worker_id}).encode("utf-8")
+    payload = {"workerId": worker_id}
+    if worker_incarnation_id:
+        payload.update(
+            {
+                "apiVersion": WORKER_API_VERSION_V2,
+                "workerIncarnationId": worker_incarnation_id,
+                "softwareVersion": "videosim",
+            }
+        )
+    body = json.dumps(payload).encode("utf-8")
     request = Request(
         f"{control_plane_url.rstrip('/')}/api/workers/register",
         data=body,
@@ -86,14 +102,53 @@ def _heartbeat_loop(
     interval_seconds: float,
     stop: threading.Event,
     ssl_context: ssl.SSLContext | None,
+    worker_incarnation_id: str,
 ):
     while not stop.wait(interval_seconds):
         try:
-            post_heartbeat(control_plane_url, worker_id, ssl_context)
+            post_heartbeat(
+                control_plane_url,
+                worker_id,
+                ssl_context,
+                worker_incarnation_id,
+            )
         except Exception:
             # A failed heartbeat is retried on the next independent interval.
             # Assignment and report calls still enforce current authority.
             continue
+
+
+def post_lease_acknowledgement(
+    control_plane_url: str,
+    worker_id: str,
+    worker_incarnation_id: str,
+    assignment: dict,
+    ssl_context: ssl.SSLContext | None = None,
+) -> dict:
+    leases = [
+        {
+            "streamId": stream["id"],
+            "epoch": stream["lease"]["epoch"],
+            "configVersion": stream["lease"]["configVersion"],
+        }
+        for stream in assignment.get("streams", [])
+    ]
+    body = json.dumps(
+        {
+            "apiVersion": WORKER_API_VERSION_V2,
+            "workerId": worker_id,
+            "workerIncarnationId": worker_incarnation_id,
+            "leases": leases,
+        }
+    ).encode("utf-8")
+    request = Request(
+        f"{control_plane_url.rstrip('/')}/api/workers/leases/ack",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with _open(request, ssl_context) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def post_report(
@@ -103,9 +158,51 @@ def post_report(
     state: dict,
     assignment: dict | None = None,
     ssl_context: ssl.SSLContext | None = None,
+    *,
+    worker_incarnation_id: str = "",
+    sequence: int = 0,
+    report_id: str = "",
+    lease_sequences: dict[str, int] | None = None,
 ) -> dict:
-    contract = {field: assignment[field] for field in CONTRACT_FIELDS if assignment and field in assignment}
-    body = json.dumps({"workerId": worker_id, "streamIds": stream_ids, "state": state, **contract}).encode("utf-8")
+    if assignment and assignment.get("apiVersion") == WORKER_API_VERSION_V2:
+        if not worker_incarnation_id or sequence < 1 or not report_id:
+            raise ValueError("worker API v2 report identity and sequence are required")
+        lease_sequences = lease_sequences or {
+            stream_id: sequence for stream_id in stream_ids
+        }
+        leases = [
+            {
+                "streamId": stream["id"],
+                "epoch": stream["lease"]["epoch"],
+                "configVersion": stream["lease"]["configVersion"],
+                "sequence": lease_sequences[stream["id"]],
+            }
+            for stream in assignment.get("streams", [])
+            if stream.get("id") in stream_ids
+        ]
+        payload = {
+            "apiVersion": WORKER_API_VERSION_V2,
+            "reportId": report_id,
+            "workerId": worker_id,
+            "workerIncarnationId": worker_incarnation_id,
+            "sequence": sequence,
+            "streamIds": stream_ids,
+            "leases": leases,
+            "state": state,
+        }
+    else:
+        contract = {
+            field: assignment[field]
+            for field in CONTRACT_FIELDS
+            if assignment and field in assignment
+        }
+        payload = {
+            "workerId": worker_id,
+            "streamIds": stream_ids,
+            "state": state,
+            **contract,
+        }
+    body = json.dumps(payload).encode("utf-8")
     request = Request(
         f"{control_plane_url.rstrip('/')}/api/workers/report",
         data=body,
@@ -145,6 +242,27 @@ def call_with_retry(
     raise RuntimeError("retry loop exited unexpectedly")
 
 
+def advance_lease_sequences(
+    streams: list[dict],
+    previous: dict[tuple[str, int, int], int],
+) -> tuple[dict[tuple[str, int, int], int], dict[str, int]]:
+    current = {}
+    report_sequences = {}
+    for stream in streams:
+        lease = stream.get("lease")
+        if not isinstance(lease, dict):
+            continue
+        key = (
+            stream["id"],
+            int(lease["epoch"]),
+            int(lease["configVersion"]),
+        )
+        next_sequence = previous.get(key, 0) + 1
+        current[key] = next_sequence
+        report_sequences[stream["id"]] = next_sequence
+    return current, report_sequences
+
+
 def run_worker(
     control_plane_url: str,
     worker_id: str,
@@ -162,10 +280,20 @@ def run_worker(
         raise ValueError("heartbeat_seconds must be greater than 0")
     state = empty_monitor_state()
     assignment_conflicts = 0
+    report_sequence = 0
+    lease_sequences: dict[tuple[str, int, int], int] = {}
+    worker_incarnation_id = str(uuid.uuid4())
     heartbeat_stop = threading.Event()
     heartbeat = threading.Thread(
         target=_heartbeat_loop,
-        args=(control_plane_url, worker_id, heartbeat_seconds, heartbeat_stop, ssl_context),
+        args=(
+            control_plane_url,
+            worker_id,
+            heartbeat_seconds,
+            heartbeat_stop,
+            ssl_context,
+            worker_incarnation_id,
+        ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
     )
@@ -173,11 +301,37 @@ def run_worker(
     try:
         while True:
             assignments = call_with_retry(
-                lambda: fetch_assignments(control_plane_url, worker_id, ssl_context),
+                lambda: fetch_assignments(
+                    control_plane_url,
+                    worker_id,
+                    ssl_context,
+                    worker_incarnation_id,
+                ),
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
             )
             streams = assignments.get("streams", [])
+            if assignments.get("apiVersion") == WORKER_API_VERSION_V2:
+                try:
+                    call_with_retry(
+                        lambda: post_lease_acknowledgement(
+                            control_plane_url,
+                            worker_id,
+                            worker_incarnation_id,
+                            assignments,
+                            ssl_context,
+                        ),
+                        attempts=retry_attempts,
+                        base_seconds=retry_base_seconds,
+                    )
+                except HTTPError as exc:
+                    if exc.code != 409:
+                        raise
+                    assignment_conflicts += 1
+                    state = empty_monitor_state()
+                    if assignment_conflicts >= MAX_ASSIGNMENT_CONFLICT_REFETCHES:
+                        raise
+                    continue
             stream_ids = {stream["id"] for stream in streams}
             state = monitor_state_for_stream_ids(state, stream_ids)
             state = run_monitor_once(
@@ -189,6 +343,11 @@ def run_worker(
                 srt_host,
             )
             state = monitor_state_for_stream_ids(state, stream_ids)
+            report_sequence += 1
+            lease_sequences, report_lease_sequences = advance_lease_sequences(
+                streams, lease_sequences
+            )
+            report_id = str(uuid.uuid4())
             try:
                 call_with_retry(
                     lambda: post_report(
@@ -198,6 +357,10 @@ def run_worker(
                         state,
                         assignments,
                         ssl_context,
+                        worker_incarnation_id=worker_incarnation_id,
+                        sequence=report_sequence,
+                        report_id=report_id,
+                        lease_sequences=report_lease_sequences,
                     ),
                     attempts=retry_attempts,
                     base_seconds=retry_base_seconds,

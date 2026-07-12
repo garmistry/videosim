@@ -16,7 +16,7 @@ linked evidence passes in a production-like environment.
 |---|---|---|---|
 | F0 — contract and measurement foundation | Versioned worker contract; assignment generation/token; strict report ownership; worker-state pruning; independent heartbeat; probe instrumentation; deterministic control-plane benchmark | Rebalance, empty-assignment, stale-instance/generation/token, malformed/out-of-scope report, heartbeat-over-TTL, persistence failure, and concurrency tests; benchmark invariant report | Implemented and locally verified; not a scale gate |
 | F1 — secure bounded APIs | Operator and worker authentication/authorization; mTLS workload identity; request schemas/limits; rate limits; SSRF controls; audit log; retry policy | Contract, abuse, replay, tenant-isolation, credential rotation, and SSRF tests | Core Compose/VM boundary implemented; external OIDC/rotation/tenant evidence pending |
-| F2 — durable control plane | Production repository adapters; migrations; workers, leases, assignments, results, alarms/events, audit records; idempotent ingestion; backup/restore | Migration/reversal checksums, fencing, stale-result rejection, idempotency, PITR/RPO/RTO evidence | In progress: PostgreSQL/JetStream repository foundation and local service/restore integration evidence implemented; HTTP worker/audit/read cutover and production PITR/RPO/RTO remain |
+| F2 — durable control plane | Production repository adapters; migrations; workers, leases, assignments, results, alarms/events, audit records; idempotent ingestion; backup/restore | Migration/reversal checksums, fencing, stale-result rejection, idempotency, PITR/RPO/RTO evidence | In progress: PostgreSQL/JetStream foundation plus HTTP worker-v2 lease/probe-result shadow cutover and local service/restore evidence implemented; monitor-alarm reads, security audit, consumers, and production PITR/RPO/RTO remain |
 | F3 — scalable workers | Independent heartbeat; bounded protocol-aware concurrency; deadlines/cancellation; capacity tokens; backpressure; encrypted spool; drain | Worker death/partition/ABA, slow-stream storm, spool recovery, fairness, and freshness evidence | Not started |
 | F4 — HA and data-plane split | Replicated stateless APIs; leader-elected scheduler; HA DB/broker; generated-feed service; dedicated DASH origin; SRT allocation; observability | API/scheduler/storage/zone failover, rolling upgrade/rollback, game-day, and operator runbook evidence | Not started |
 | F5 — 1,000-stream admission | Production-like workload manifest and immutable evidence bundle | 24-hour run, 30% headroom after one failure-domain loss, all audit Section 13.3 criteria | Not started |
@@ -67,8 +67,8 @@ linked evidence passes in a production-like environment.
 | Versioned schema | `migrations/001_durable_control_plane.sql` plus destructive test-only down migration | Implemented |
 | Migration safety | Advisory lock, applied checksum/name validation, unknown-version rejection | Implemented and integration-tested |
 | Feed cutover | PostgreSQL adapter and idempotent `import-sqlite-feeds` | Implemented and integration-tested |
-| Worker incarnation and lease epochs | DB-time heartbeat/expiry, offered→acknowledged active leases, monotonic epochs with per-epoch sequence reset | Repository primitive and authority races integration-tested; HTTP worker v1 not cut over |
-| Result ingestion | Immutable report/result IDs and hashes; worker/lease/config/sequence/observation-time fencing; stored duplicate dispositions | Repository primitive implemented and integration-tested; HTTP worker v1 not cut over |
+| Worker incarnation and lease epochs | DB-time heartbeat/expiry, offered→acknowledged active leases, monotonic epochs with per-epoch sequence reset | PostgreSQL-backed HTTP worker v2 implemented; SQLite v1 retained only for lab compatibility; real HTTP integration-tested |
+| Result ingestion | Immutable report/result IDs and hashes; worker/lease/config/per-lease-sequence/observation-time fencing; stored duplicate dispositions | HTTP v2 durably ingests scoped `probe.*` checks before a durable-fenced retryable JSON shadow; real worker/retry/rebalance integration-tested |
 | Alarm authority | Transactional current check/alarm projection, immutable edges, only explicit healthy clears; inconclusive states preserve | Repository primitive implemented and integration-tested; operator reads remain JSON-backed |
 | Durable audit | Immutable audit IDs plus transactional outbox | Repository primitive implemented; security stdout path not connected |
 | Event transport | Hash-immutable transactional outbox, concurrent `SKIP LOCKED`, retry/dead state, exact JetStream policy, at-least-once IDs, consumer-inbox schema | Producer implemented and local integration-tested; no consumer deployed, so consumer/read cutover remains blocked |
@@ -82,9 +82,10 @@ and remaining cutover work are in
 
 ## Constraints and deferred decisions
 
-- F0 itself added no production database, broker, orchestrator, or authentication system; the current F2 unit now adds PostgreSQL/JetStream foundations without completing worker cutover.
-- The in-process generation is a transition fence, not an HA lease. F2 replaces
-  it with durable epochs and transactional compare-and-set semantics.
+- F0 itself added no production database, broker, orchestrator, or authentication system. F2 now adds PostgreSQL/JetStream and uses durable epochs for PostgreSQL-backed worker v2, while the JSON operator projection remains transitional.
+- The v1 in-process generation remains a trusted-lab transition fence, not an
+  HA lease. Production-path v2 uses durable epochs and transactional fencing;
+  HA scheduling/leadership is still an F4 gate.
 - Legacy reports may be accepted only in an explicit compatibility mode, still
   constrained to current server-derived scope and visibly marked as legacy.
 - Control-plane benchmark numbers are not media-monitoring capacity and cannot

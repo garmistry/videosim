@@ -19,12 +19,24 @@ VideoSim should split into a master control plane and many worker nodes:
 
 1. Operators create or update feeds in the GUI.
 2. The master persists feed definitions and alert profiles through the feed-store boundary.
-3. Workers call `GET /api/workers/assignments?worker_id=<id>`.
-4. The master returns running streams assigned to that worker. Assignment is currently a deterministic round-robin over active workers. The response includes worker API version, control-plane process instance, monotonic assignment generation, and an opaque per-worker assignment token.
-5. An independent worker heartbeat refreshes membership while the worker reuses the existing monitor engine against its assigned streams.
-6. Workers prune retained state to the current assignment and post `POST /api/workers/report` with the assignment contract, claimed stream IDs, monitor state, and bounded latest-batch probe metrics.
-7. The master validates the instance/generation/token before mutation, derives authoritative scope from its current assignment, validates every alarm/event/pending/metric item, and reports rejected IDs explicitly.
-8. The master merges accepted worker state into the shared monitor payload and exposes it through `/state.json`.
+3. Workers call the assignment API with a process UUID incarnation.
+4. SQLite trusted-lab mode returns worker v1 process-instance/generation/token
+   fencing. PostgreSQL mode returns worker v2 deterministic round-robin
+   assignments with durable offered/active lease epoch, config version, and
+   expiry.
+5. V2 workers acknowledge exact offered lease tuples before probing. An
+   independent authenticated heartbeat refreshes worker membership and extends
+   only active leases for the same incarnation.
+6. Workers prune retained state, reuse the existing monitor engine, and post an
+   immutable report UUID, per-lease epoch/config sequence, claimed lease tuples,
+   monitor state, and bounded probe metrics.
+7. PostgreSQL revalidates worker/incarnation/heartbeat/lease/epoch/config/
+   expiry/sequence/observation time, commits accepted `probe.*` results and
+   outbox events, and returns explicit duplicate/rejection disposition.
+8. Fully accepted streams update the durable-fenced retryable shared-JSON shadow
+   projection exposed through `/state.json`; stale duplicates/reassigned reports
+   cannot overwrite a newer shadow. That projection remains transitional pending
+   per-monitor PostgreSQL projection and operator-read cutover.
 
 ## Implemented First Slice
 
@@ -70,26 +82,35 @@ VideoSim should split into a master control plane and many worker nodes:
   retain acknowledgement sequence, and retry before dead state. A consumer
   inbox schema exists, but no consumer is deployed.
 - The production Compose overlay gates app startup on migrations and publisher
-  startup on JetStream initialization. Backup/restore, restore generation
-  fencing, and SQLite feed import tools exist.
-- The integration evidence covers these repository primitives, not the current
-  HTTP worker path. See [Durable Control-Plane Foundation](durable-control-plane.md).
+  startup on JetStream initialization. Backup/restore, restored-lease expiry
+  fencing, explicit broker recovery mode, and SQLite feed import tools exist.
+- PostgreSQL-backed HTTP endpoints and `run_worker` now negotiate worker v2,
+  including offer/ack/report/retry and incarnation restart; SQLite preserves v1.
+  See [Durable Control-Plane Foundation](durable-control-plane.md).
 
 ## Current Limits
 
-- The HTTP worker v1 registry, assignment generation, and tokens remain process-local and expire inactive workers after 60 seconds. They are transition fences, not the implemented-but-not-yet-wired durable lease repository.
+- The SQLite worker v1 registry, assignment generation, and tokens remain
+  process-local transition fences. Production PostgreSQL uses v2 durable
+  leases, but its scheduler is still round-robin and not leader-elected.
 - Assignment is round-robin, not capacity-aware.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
-- HTTP report aggregation still writes the monitor JSON state file. Database-backed alarm/result methods exist but the handler and operator read projection have not cut over.
-- The independent heartbeat has authenticated identity on the production proxy path, but no durable lease renewal, health alarm, or retry/backoff telemetry yet.
+- V2 HTTP report aggregation durably commits scoped probe-check results before
+  writing the monitor JSON shadow. Actual monitor-alarm projection and operator
+  reads have not cut over from JSON.
+- The independent v2 heartbeat has authenticated identity and renews only
+  unexpired active leases for its incarnation. Worker-health alarms and
+  retry/backoff telemetry are not implemented yet.
 - Durable tenant keys exist, but authorization grants and tenant-isolation behavior are not implemented.
 - The app, PostgreSQL, and NATS deployments remain single instances. HA storage and leader election are not implemented.
 
 ## Next Upgrade Points
 
-- Cut worker assignments/reports from process-local v1 fencing to the durable incarnation/epoch/config/result contract.
-- Add worker health and capacity metadata to assignment decisions.
-- Move monitor report writes and operator reads from JSON to the PostgreSQL authority/projection, then deploy idempotent JetStream consumers.
+- Promote actual monitor alarm snapshots and operator reads from the JSON shadow
+  to a replayable PostgreSQL projection.
+- Add worker health/capacity metadata and capacity-aware assignment decisions.
+- Deploy JetStream consumers that atomically combine durable inbox deduplication
+  with projection mutation and prove replay parity.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

@@ -51,6 +51,18 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.store.close()
 
+    def make_worker_stale(self, worker_id):
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE workers
+                    SET last_heartbeat_at = clock_timestamp() - interval '2 minutes'
+                    WHERE tenant_id = 'default' AND worker_id = %s
+                    """,
+                    (worker_id,),
+                )
+
     def activate_lease(self, feed_id, worker_id, incarnation, ttl_seconds=60):
         offered = self.store.reconcile_lease(
             feed_id, worker_id, incarnation, ttl_seconds=ttl_seconds
@@ -79,7 +91,12 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
                 source.read_text(encoding="utf-8") + "\n-- altered\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(MigrationError):
+            for migration in Path(DEFAULT_MIGRATIONS_DIR).glob("*.sql"):
+                if migration.name != source.name and not migration.name.endswith(".down.sql"):
+                    Path(directory, migration.name).write_text(
+                        migration.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+            with self.assertRaisesRegex(MigrationError, "checksum or name changed"):
                 PostgresMigrator(DATABASE_URL, directory).apply()
             with self.assertRaises(MigrationError):
                 PostgresMigrator(DATABASE_URL, directory).status()
@@ -104,13 +121,24 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
                         "DELETE FROM schema_migrations WHERE version = 999999"
                     )
 
-    def test_documented_down_migration_reverses_schema_transactionally(self):
-        down_sql = Path(DEFAULT_MIGRATIONS_DIR, "001_durable_control_plane.down.sql").read_text(encoding="utf-8")
+    def test_documented_down_migrations_reverse_schema_transactionally(self):
+        down_sql = "\n".join(
+            Path(DEFAULT_MIGRATIONS_DIR, name).read_text(encoding="utf-8")
+            for name in (
+                "002_worker_projection_fence.down.sql",
+                "001_durable_control_plane.down.sql",
+            )
+        )
         with self.store._pool.connection() as connection:
             with connection.transaction(force_rollback=True):
                 connection.execute(down_sql)
                 self.assertIsNone(
                     connection.execute("SELECT to_regclass('public.feeds')").fetchone()["to_regclass"]
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT to_regclass('public.worker_projection_state')"
+                    ).fetchone()["to_regclass"]
                 )
         with self.store._pool.connection() as connection:
             self.assertIsNotNone(
@@ -169,6 +197,7 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
             feed_id, worker_id, first_incarnation, ttl_seconds=60
         )
         second_incarnation = uuid.uuid4()
+        self.make_worker_stale(worker_id)
         self.store.register_worker(worker_id, second_incarnation, f"CN={worker_id}")
         restarted = self.store.reconcile_lease(
             feed_id, worker_id, second_incarnation, ttl_seconds=60
@@ -217,6 +246,7 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         self.assertEqual(len(report(lease, 1).accepted_result_ids), 1)
 
         incarnation = uuid.uuid4()
+        self.make_worker_stale(worker_id)
         self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
         lease = self.activate_lease(feed_id, worker_id, incarnation)
         self.assertEqual(len(report(lease, 1).accepted_result_ids), 1)
@@ -290,6 +320,65 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         with self.assertRaisesRegex(LeaseConflict, "heartbeat is stale"):
             self.store.reconcile_lease(feed_id, worker_id, incarnation, ttl_seconds=60)
 
+    def test_authenticated_heartbeat_extends_only_current_active_incarnation_leases(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        active = self.activate_lease(
+            feed_id, worker_id, incarnation, ttl_seconds=1
+        )
+
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        renewed = self.store.leases_for_worker(worker_id, incarnation)[0]
+
+        self.assertEqual(renewed.epoch, active.epoch)
+        self.assertEqual(renewed.state, "active")
+        self.assertGreater(renewed.expires_at, active.expires_at)
+
+    def test_heartbeat_cannot_resurrect_expired_active_lease(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        version = self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        active = self.activate_lease(feed_id, worker_id, incarnation)
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE leases SET expires_at = clock_timestamp() - interval '1 second'
+                    WHERE tenant_id = 'default' AND stream_id = %s
+                    """,
+                    (feed_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE workers
+                    SET last_heartbeat_at = clock_timestamp() - interval '2 minutes'
+                    WHERE tenant_id = 'default' AND worker_id = %s
+                    """,
+                    (worker_id,),
+                )
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        stale_result = CheckResult(
+            uuid.uuid4(), feed_id, "feed_reachable", active.epoch, version, 1,
+            "healthy", datetime.now(timezone.utc), {},
+        )
+        rejected = self.store.ingest_report(
+            FencedReport(
+                uuid.uuid4(), "default", worker_id, incarnation, (stale_result,)
+            )
+        )
+        replacement = self.store.reconcile_lease(
+            feed_id, worker_id, incarnation, ttl_seconds=60
+        )
+
+        self.assertEqual(rejected.rejected[0]["reason"], "lease_expired")
+        self.assertGreater(replacement.epoch, active.epoch)
+        self.assertEqual(replacement.state, "offered")
+
     def test_unknown_worker_report_returns_typed_conflict(self):
         report = FencedReport(uuid.uuid4(), "default", "missing-worker", uuid.uuid4(), ())
 
@@ -304,6 +393,7 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         new_incarnation = uuid.uuid4()
         self.store.register_worker(worker_id, old_incarnation, f"CN={worker_id}")
         self.activate_lease(feed_id, worker_id, old_incarnation)
+        self.make_worker_stale(worker_id)
         barrier = threading.Barrier(2)
 
         def register_new():
@@ -415,7 +505,11 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         old_incarnation = uuid.uuid4()
         self.store.register_worker(worker_id, old_incarnation, f"CN={worker_id}")
         lease = self.activate_lease(feed_id, worker_id, old_incarnation)
-        self.store.register_worker(worker_id, uuid.uuid4(), f"CN={worker_id}")
+        replacement = uuid.uuid4()
+        with self.assertRaisesRegex(LeaseConflict, "still heartbeat-fresh"):
+            self.store.register_worker(worker_id, replacement, f"CN={worker_id}")
+        self.make_worker_stale(worker_id)
+        self.store.register_worker(worker_id, replacement, f"CN={worker_id}")
         result = CheckResult(
             uuid.uuid4(), feed_id, "feed_reachable", lease.epoch, version, 1,
             "unhealthy", datetime.now(timezone.utc), {},
@@ -695,6 +789,7 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         self.store.register_worker(worker_id, first_incarnation, f"CN={worker_id}")
         old_lease = self.activate_lease(feed_id, worker_id, first_incarnation)
         new_incarnation = uuid.uuid4()
+        self.make_worker_stale(worker_id)
         self.store.register_worker(worker_id, new_incarnation, f"CN={worker_id}")
         self.store.reconcile_lease(feed_id, worker_id, new_incarnation, ttl_seconds=60)
         result = CheckResult(

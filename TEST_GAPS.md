@@ -53,18 +53,21 @@ implementation and must pass before those milestones advance.
   result/alarm/audit/outbox transactions, simultaneous reports, concurrent
   outbox claims, and durable JetStream publish acknowledgements. A local custom-format
   backup/restore plus semantic comparison also passed.
-- The process-local HTTP generation/token path has not cut over to those durable
-  primitives and has no multi-replica or control-plane failover proof. Worker-v2
-  lease/result contracts, PostgreSQL operator reads, security-audit wiring,
-  consumer inbox/projection replay, ack-before-mark recovery beyond the broker
+- PostgreSQL HTTP worker v2 now uses durable incarnation/offer/ack/heartbeat/
+  epoch/config/per-lease-sequence/result fences and stores scoped probe checks
+  before a durable-fenced retryable JSON shadow update; stale duplicate,
+  reassigned, expired, and config-revoked reports cannot regress that shadow.
+  SQLite retains process-local v1 for lab use.
+  Actual monitor-alarm snapshot projection, PostgreSQL operator reads,
+  security-audit wiring, consumer inbox/projection replay, ack-before-mark recovery beyond the broker
   dedup window, DB/broker restore combinations, schema upgrade under load, PITR,
   measured RPO/RTO, and HA remain open F2/F4 P0 gates.
 - The control-plane benchmark runs no SRT/DASH probes. Representative media
   load, failure storms, 24-hour soak, security, restore, and 1,000/5,000/10,000
   admission evidence remain missing and must not be inferred from it.
-- The active HTTP heartbeat currently lacks retry/backoff metrics and does not
-  renew the durable worker incarnation/lease rows. Worker execution remains
-  serial and is not yet capacity-aware or backpressured.
+- The v2 heartbeat renews durable membership and matching active leases, but
+  still lacks retry/backoff metrics. Worker execution remains serial and is not
+  yet capacity-aware or backpressured.
 
 ## Monitoring
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import copy
+import hashlib
 import html
 import json
 import mimetypes
@@ -16,6 +17,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
@@ -23,6 +25,7 @@ from .control_plane import (
     MAX_IDENTIFIER_LENGTH,
     MAX_REPORT_STREAMS,
     WORKER_API_VERSION,
+    WORKER_API_VERSION_V2,
     AssignmentContract,
     WorkerReportConflict,
     WorkerReportPersistenceError,
@@ -36,6 +39,14 @@ from .feed_store import FeedRegistrationStore
 from .framerate import frame_rate_float, frame_rate_fraction, normalize_frame_rate, supported_frame_rate_options
 from .monitor_catalog import monitor_catalog_payload
 from .profile import load_profile
+from .postgres_store import (
+    CheckResult,
+    FencedReport,
+    LeaseConflict,
+    PostgresControlPlaneStore,
+    PostgresStoreError,
+    ReportConflict,
+)
 from .security import AuthenticationError, AuthorizationError, EndpointPolicyError, Principal, SecurityConfig, audit_event
 from .validator import human_summary, validate_config
 
@@ -881,6 +892,15 @@ def next_stream_number(streams: dict[str, FeedRecord]) -> int:
     return highest + 1
 
 
+def parse_uuid_field(value, field_name: str) -> uuid.UUID:
+    if not isinstance(value, str) or not value:
+        raise WorkerReportValidationError(f"{field_name} must be a UUID string")
+    try:
+        return uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise WorkerReportValidationError(f"{field_name} must be a UUID string") from exc
+
+
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState
 
@@ -935,14 +955,34 @@ class GuiHandler(BaseHTTPRequestHandler):
             if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
                 self._send_json({"ok": False, "error": "worker_id must be a bounded non-empty string"}, status=400)
                 return
-            if self._authorize_worker(worker_id) is None:
+            principal = self._authorize_worker(worker_id)
+            if principal is None:
                 return
             try:
                 base_url = request_base_url(self, self.state)
+                incarnation = None
+                if durable_control_store(self.state) is not None:
+                    incarnation = parse_uuid_field(
+                        params.get("worker_incarnation_id", [""])[0],
+                        "worker_incarnation_id",
+                    )
+                payload = worker_assignments_payload(
+                    self.state,
+                    worker_id,
+                    base_url,
+                    incarnation,
+                    principal.subject,
+                )
             except WorkerReportValidationError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
                 return
-            self._send_json(worker_assignments_payload(self.state, worker_id, base_url))
+            except (LeaseConflict, ReportConflict, WorkerReportConflict) as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryAssignment": True}, status=409)
+                return
+            except PostgresStoreError as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryAssignment": True}, status=503)
+                return
+            self._send_json(payload)
             return
         if path.startswith("/dash/"):
             if not self._authorize_proxy():
@@ -999,7 +1039,11 @@ class GuiHandler(BaseHTTPRequestHandler):
         if not self._request_body_allowed():
             return
         redirect_stream_id = self.state.selected_stream_id
-        if self.path not in {"/api/workers/register", "/api/workers/report"}:
+        if self.path not in {
+            "/api/workers/register",
+            "/api/workers/leases/ack",
+            "/api/workers/report",
+        }:
             if self._authorize_operator(write=True) is None:
                 return
         if self.path == "/start":
@@ -1092,9 +1136,77 @@ class GuiHandler(BaseHTTPRequestHandler):
             if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
                 self._send_json({"ok": False, "error": "workerId must be a bounded non-empty string"}, status=400)
                 return
+            principal = self._authorize_worker(worker_id)
+            if principal is None:
+                return
+            if any(
+                field in payload and not isinstance(payload[field], dict)
+                for field in ("capabilities", "capacity")
+            ) or not isinstance(payload.get("softwareVersion", ""), str):
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": "capabilities/capacity must be objects and softwareVersion must be a string",
+                    },
+                    status=422,
+                )
+                return
+            try:
+                incarnation = None
+                if durable_control_store(self.state) is not None:
+                    incarnation = parse_uuid_field(
+                        payload.get("workerIncarnationId"), "workerIncarnationId"
+                    )
+                response = register_worker(
+                    self.state,
+                    worker_id,
+                    worker_incarnation_id=incarnation,
+                    certificate_subject=principal.subject,
+                    capabilities=payload.get("capabilities")
+                    if isinstance(payload.get("capabilities"), dict)
+                    else {},
+                    capacity=payload.get("capacity")
+                    if isinstance(payload.get("capacity"), dict)
+                    else {},
+                    software_version=str(payload.get("softwareVersion", ""))[:128],
+                )
+            except WorkerReportValidationError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=422)
+                return
+            except LeaseConflict as exc:
+                self._send_json(
+                    {"ok": False, "error": str(exc), "retryRegistration": True},
+                    status=409,
+                )
+                return
+            except PostgresStoreError as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryRegistration": True}, status=503)
+                return
+            self._send_json(response)
+            return
+        elif self.path == "/api/workers/leases/ack":
+            payload = self._read_json()
+            if not isinstance(payload, dict):
+                self._send_json({"ok": False, "error": "lease acknowledgement must be an object"}, status=400)
+                return
+            worker_id = payload.get("workerId", "")
+            if not isinstance(worker_id, str) or not worker_id or len(worker_id) > MAX_IDENTIFIER_LENGTH:
+                self._send_json({"ok": False, "error": "workerId must be a bounded non-empty string"}, status=400)
+                return
             if self._authorize_worker(worker_id) is None:
                 return
-            self._send_json(register_worker(self.state, worker_id))
+            try:
+                response = acknowledge_worker_leases(self.state, worker_id, payload)
+            except WorkerReportValidationError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=422)
+                return
+            except (LeaseConflict, ReportConflict) as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryAssignment": True}, status=409)
+                return
+            except PostgresStoreError as exc:
+                self._send_json({"ok": False, "error": str(exc), "retryAssignment": True}, status=503)
+                return
+            self._send_json(response)
             return
         elif self.path == "/api/workers/report":
             payload = self._read_json()
@@ -1108,23 +1220,31 @@ class GuiHandler(BaseHTTPRequestHandler):
             if self._authorize_worker(worker_id) is None:
                 return
             try:
-                response = apply_worker_report(
-                    self.state,
-                    worker_id,
-                    payload.get("streamIds", []),
-                    payload.get("state", {}),
-                    payload,
-                )
-            except WorkerReportConflict as exc:
+                if durable_control_store(self.state) is not None:
+                    if payload.get("apiVersion") != WORKER_API_VERSION_V2:
+                        raise WorkerReportConflict(
+                            "PostgreSQL-backed workers must use worker API v2"
+                        )
+                    response = apply_durable_worker_report(self.state, worker_id, payload)
+                else:
+                    response = apply_worker_report(
+                        self.state,
+                        worker_id,
+                        payload.get("streamIds", []),
+                        payload.get("state", {}),
+                        payload,
+                    )
+            except (ReportConflict, WorkerReportConflict) as exc:
                 self._send_json({"ok": False, "error": str(exc), "retryAssignment": True}, status=409)
                 return
             except WorkerReportValidationError as exc:
                 self._send_json({"ok": False, "error": str(exc)}, status=422)
                 return
-            except WorkerReportPersistenceError as exc:
+            except (PostgresStoreError, WorkerReportPersistenceError) as exc:
                 self._send_json({"ok": False, "error": str(exc), "retryReport": True}, status=503)
                 return
-            self._send_json(response)
+            status = 409 if response.get("retryAssignment") else 200
+            self._send_json(response, status=status)
             return
         elif self.path == "/streams/delete":
             params = self._read_form()
@@ -1641,7 +1761,70 @@ def current_assignment_contract(state: GuiState, worker_id: str, now: float | No
         return contract, assigned_streams
 
 
-def worker_assignments_payload(state: GuiState, worker_id: str, base_url: str) -> dict:
+def durable_control_store(state: GuiState) -> PostgresControlPlaneStore | None:
+    return state.feed_store if isinstance(state.feed_store, PostgresControlPlaneStore) else None
+
+
+def worker_assignments_payload(
+    state: GuiState,
+    worker_id: str,
+    base_url: str,
+    worker_incarnation_id: uuid.UUID | None = None,
+    certificate_subject: str = "",
+) -> dict:
+    store = durable_control_store(state)
+    if store is not None:
+        if worker_incarnation_id is None:
+            raise WorkerReportValidationError("worker_incarnation_id is required for worker API v2")
+        worker = register_worker(
+            state,
+            worker_id,
+            worker_incarnation_id=worker_incarnation_id,
+            certificate_subject=certificate_subject or worker_id,
+        )
+        with state.control_plane_lock:
+            worker_ids = store.active_worker_ids()
+            if worker_id not in worker_ids:
+                raise WorkerReportConflict("worker is not fresh and active")
+            running_streams = sorted(
+                (stream for stream in state.streams.values() if stream.status == "running"),
+                key=lambda item: item.id,
+            )
+            worker_index = worker_ids.index(worker_id)
+            assigned_streams = [
+                stream
+                for index, stream in enumerate(running_streams)
+                if index % len(worker_ids) == worker_index
+            ]
+            store.revoke_unassigned_leases(
+                worker_id,
+                worker_incarnation_id,
+                (stream.id for stream in assigned_streams),
+            )
+            streams = []
+            for stream in assigned_streams:
+                lease = store.reconcile_lease(
+                    stream.id,
+                    worker_id,
+                    worker_incarnation_id,
+                    ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
+                )
+                stream_contract = control_plane_stream_payload(stream, base_url, worker_id)
+                stream_contract["lease"] = {
+                    "epoch": lease.epoch,
+                    "configVersion": lease.config_version,
+                    "expiresAt": lease.expires_at.astimezone(timezone.utc).isoformat(),
+                    "state": lease.state,
+                }
+                streams.append(stream_contract)
+            return {
+                "apiVersion": WORKER_API_VERSION_V2,
+                "workerId": worker["id"],
+                "workerIncarnationId": str(worker_incarnation_id),
+                "workers": [{"id": item} for item in worker_ids],
+                "streams": streams,
+            }
+
     worker = register_worker(state, worker_id)
     with state.control_plane_lock:
         contract, assigned_streams = current_assignment_contract(state, worker["id"])
@@ -1664,10 +1847,31 @@ def control_plane_stream_payload(stream: FeedRecord, base_url: str, worker_id: s
     return payload
 
 
-def register_worker(state: GuiState, worker_id: str) -> dict:
+def register_worker(
+    state: GuiState,
+    worker_id: str,
+    *,
+    worker_incarnation_id: uuid.UUID | None = None,
+    certificate_subject: str = "",
+    capabilities: dict | None = None,
+    capacity: dict | None = None,
+    software_version: str = "",
+) -> dict:
     worker_id = worker_id.strip()
     if not worker_id:
         raise ValueError("worker_id is required")
+    store = durable_control_store(state)
+    if store is not None:
+        if worker_incarnation_id is None:
+            raise WorkerReportValidationError("workerIncarnationId is required for worker API v2")
+        store.register_worker(
+            worker_id,
+            worker_incarnation_id,
+            certificate_subject or worker_id,
+            capabilities=capabilities,
+            capacity=capacity,
+            software_version=software_version,
+        )
     with state.control_plane_lock:
         now = time.time()
         active = _expire_workers_locked(state, now)
@@ -1678,7 +1882,8 @@ def register_worker(state: GuiState, worker_id: str) -> dict:
         return {
             "id": worker_id,
             "lastSeenAt": round(now, 3),
-            "apiVersion": WORKER_API_VERSION,
+            "apiVersion": WORKER_API_VERSION_V2 if store is not None else WORKER_API_VERSION,
+            "workerIncarnationId": str(worker_incarnation_id) if worker_incarnation_id else "",
             "controlPlaneInstanceId": state.control_plane_instance_id,
         }
 
@@ -1908,6 +2113,349 @@ def clear_monitor_events(state: GuiState, stream_id: str) -> bool:
         return write_monitor_payload(path, payload)
 
 
+def acknowledge_worker_leases(state: GuiState, worker_id: str, payload: dict) -> dict:
+    store = durable_control_store(state)
+    if store is None:
+        raise WorkerReportValidationError("lease acknowledgement requires durable control store")
+    if payload.get("apiVersion") != WORKER_API_VERSION_V2:
+        raise WorkerReportValidationError("lease acknowledgement requires worker API v2")
+    incarnation = parse_uuid_field(
+        payload.get("workerIncarnationId"), "workerIncarnationId"
+    )
+    leases = payload.get("leases")
+    if not isinstance(leases, list) or len(leases) > MAX_REPORT_STREAMS:
+        raise WorkerReportValidationError(
+            f"leases must be an array of at most {MAX_REPORT_STREAMS} items"
+        )
+    acknowledged = []
+    seen_streams = set()
+    for index, item in enumerate(leases):
+        if not isinstance(item, dict):
+            raise WorkerReportValidationError(f"leases[{index}] must be an object")
+        stream_id = item.get("streamId")
+        epoch = item.get("epoch")
+        config_version = item.get("configVersion")
+        if (
+            not isinstance(stream_id, str)
+            or not stream_id
+            or len(stream_id) > MAX_IDENTIFIER_LENGTH
+            or stream_id in seen_streams
+        ):
+            raise WorkerReportValidationError(
+                f"leases[{index}].streamId must be unique and bounded"
+            )
+        if type(epoch) is not int or epoch < 1:
+            raise WorkerReportValidationError(f"leases[{index}].epoch must be a positive integer")
+        if type(config_version) is not int or config_version < 1:
+            raise WorkerReportValidationError(
+                f"leases[{index}].configVersion must be a positive integer"
+            )
+        seen_streams.add(stream_id)
+        lease = store.acknowledge_lease(
+            stream_id,
+            worker_id,
+            incarnation,
+            epoch=epoch,
+            config_version=config_version,
+            ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
+        )
+        acknowledged.append(
+            {
+                "streamId": stream_id,
+                "epoch": lease.epoch,
+                "configVersion": lease.config_version,
+                "expiresAt": lease.expires_at.astimezone(timezone.utc).isoformat(),
+                "state": lease.state,
+            }
+        )
+    return {
+        "ok": True,
+        "apiVersion": WORKER_API_VERSION_V2,
+        "workerId": worker_id,
+        "workerIncarnationId": str(incarnation),
+        "leases": acknowledged,
+    }
+
+
+def parse_observed_at(value) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise WorkerReportValidationError("state.probeMetrics.observedAt is required")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise WorkerReportValidationError(
+            "state.probeMetrics.observedAt must be an ISO-8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise WorkerReportValidationError(
+            "state.probeMetrics.observedAt must include a timezone"
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def apply_durable_worker_report(
+    state: GuiState,
+    worker_id: str,
+    payload: dict,
+) -> dict:
+    store = durable_control_store(state)
+    if store is None:
+        raise WorkerReportConflict("worker API v2 requires durable control store")
+    incarnation = parse_uuid_field(
+        payload.get("workerIncarnationId"), "workerIncarnationId"
+    )
+    report_id = parse_uuid_field(payload.get("reportId"), "reportId")
+    sequence = payload.get("sequence")
+    if type(sequence) is not int or sequence < 1:
+        raise WorkerReportValidationError("sequence must be a positive JSON integer")
+    stream_ids = payload.get("streamIds")
+    if (
+        not isinstance(stream_ids, list)
+        or len(stream_ids) > MAX_REPORT_STREAMS
+        or any(
+            not isinstance(stream_id, str)
+            or not stream_id
+            or len(stream_id) > MAX_IDENTIFIER_LENGTH
+            for stream_id in stream_ids
+        )
+        or len(stream_ids) != len(set(stream_ids))
+    ):
+        raise WorkerReportValidationError(
+            f"streamIds must contain at most {MAX_REPORT_STREAMS} unique bounded strings"
+        )
+    claimed_stream_ids = set(stream_ids)
+    leases = payload.get("leases")
+    if not isinstance(leases, list) or len(leases) != len(stream_ids):
+        raise WorkerReportValidationError("leases must contain exactly one item per streamId")
+    lease_by_stream = {}
+    for index, item in enumerate(leases):
+        if not isinstance(item, dict):
+            raise WorkerReportValidationError(f"leases[{index}] must be an object")
+        stream_id = item.get("streamId")
+        epoch = item.get("epoch")
+        config_version = item.get("configVersion")
+        lease_sequence = item.get("sequence")
+        if stream_id not in claimed_stream_ids or stream_id in lease_by_stream:
+            raise WorkerReportValidationError(
+                f"leases[{index}].streamId must match one unique claimed stream"
+            )
+        if type(epoch) is not int or epoch < 1:
+            raise WorkerReportValidationError(f"leases[{index}].epoch must be a positive integer")
+        if type(config_version) is not int or config_version < 1:
+            raise WorkerReportValidationError(
+                f"leases[{index}].configVersion must be a positive integer"
+            )
+        if type(lease_sequence) is not int or lease_sequence < 1:
+            raise WorkerReportValidationError(
+                f"leases[{index}].sequence must be a positive integer"
+            )
+        lease_by_stream[stream_id] = (
+            epoch,
+            config_version,
+            lease_sequence,
+        )
+
+    worker_state = payload.get("state")
+    scoped_claimed, dropped_claimed = validate_monitor_items(
+        worker_state, claimed_stream_ids
+    )
+    projection_sha256 = hashlib.sha256(
+        json.dumps(
+            scoped_claimed, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    metrics = scoped_claimed.get("probeMetrics")
+    if not isinstance(metrics, dict):
+        raise WorkerReportValidationError("worker API v2 requires state.probeMetrics")
+    observed_at = parse_observed_at(metrics.get("observedAt"))
+    metric_items = metrics.get("streams", [])
+    metrics_by_stream: dict[str, list[dict]] = {
+        stream_id: [] for stream_id in stream_ids
+    }
+    for item in metric_items:
+        metrics_by_stream[item["streamId"]].append(item)
+
+    status_by_outcome = {
+        "success": "healthy",
+        "issue": "unhealthy",
+        "error": "error",
+        "timeout": "timeout",
+        "skipped": "skipped",
+    }
+    results = []
+    result_streams = {}
+    for stream_id in sorted(stream_ids):
+        stream_metrics = metrics_by_stream[stream_id]
+        if not stream_metrics:
+            stream_metrics = [
+                {
+                    "check": "batch",
+                    "outcome": "unknown",
+                    "detail": "worker returned no probe metrics for assigned stream",
+                    "durationMs": 0,
+                }
+            ]
+        seen_checks = set()
+        for metric in sorted(stream_metrics, key=lambda item: str(item.get("check", ""))):
+            check = str(metric.get("check", ""))
+            if not check or len(check) > MAX_IDENTIFIER_LENGTH or check in seen_checks:
+                raise WorkerReportValidationError(
+                    f"probe metric checks for {stream_id} must be unique and bounded"
+                )
+            seen_checks.add(check)
+            outcome = str(metric.get("outcome", "unknown"))
+            status = status_by_outcome.get(outcome, "unknown")
+            result_id = uuid.uuid5(report_id, f"{stream_id}:probe.{check}")
+            epoch, config_version, lease_sequence = lease_by_stream[stream_id]
+            result = CheckResult(
+                result_id=result_id,
+                stream_id=stream_id,
+                check_id=f"probe.{check}",
+                lease_epoch=epoch,
+                config_version=config_version,
+                sequence=lease_sequence,
+                status=status,
+                observed_at=observed_at,
+                evidence={
+                    "outcome": outcome,
+                    "durationMs": metric.get("durationMs", 0),
+                    "message": str(metric.get("detail", outcome))[:200],
+                    "protocol": metric.get("protocol", "unknown"),
+                    "source": metric.get("source", "unknown"),
+                },
+            )
+            results.append(result)
+            result_streams[str(result_id)] = stream_id
+
+    disposition = store.ingest_report(
+        FencedReport(
+            report_id=report_id,
+            tenant_id=store.tenant_id,
+            worker_id=worker_id,
+            worker_incarnation_id=incarnation,
+            results=tuple(results),
+            projection_sha256=projection_sha256,
+        )
+    )
+    rejected_stream_ids = {
+        result_streams[item["resultId"]]
+        for item in disposition.rejected
+        if item.get("resultId") in result_streams
+    }
+    accepted_result_ids = set(disposition.accepted_result_ids) | set(
+        disposition.duplicate_result_ids
+    )
+    accepted_stream_ids = {
+        result_streams[result_id]
+        for result_id in accepted_result_ids
+        if result_id in result_streams
+    } - rejected_stream_ids
+    projection_fences = {
+        stream_id: (
+            lease_by_stream[stream_id][0],
+            lease_by_stream[stream_id][1],
+            lease_by_stream[stream_id][2],
+        )
+        for stream_id in accepted_stream_ids
+    }
+    dropped_items = dropped_claimed
+    projected_stream_ids: set[str] = set()
+    if projection_fences:
+        with state.control_plane_lock:
+            def apply_current_projection(current_stream_ids: set[str]):
+                nonlocal dropped_items
+                scoped_state, dropped_items = validate_monitor_items(
+                    worker_state, current_stream_ids
+                )
+                persist_worker_projection(
+                    state, worker_id, current_stream_ids, scoped_state
+                )
+
+            projected_stream_ids = store.apply_projection_if_current(
+                report_id,
+                projection_sha256,
+                projection_fences,
+                apply_current_projection,
+            )
+    conflict = bool(disposition.rejected)
+    return {
+        "ok": not conflict,
+        "apiVersion": WORKER_API_VERSION_V2,
+        "workerId": worker_id,
+        "workerIncarnationId": str(incarnation),
+        "reportId": str(report_id),
+        "streamIds": sorted(accepted_stream_ids),
+        "projectedStreamIds": sorted(projected_stream_ids),
+        "rejectedStreamIds": sorted(claimed_stream_ids - accepted_stream_ids),
+        "droppedItems": {
+            key: sorted(
+                set(dropped_claimed.get(key, []))
+                | set(dropped_items.get(key, []))
+            )
+            for key in dropped_items
+        },
+        "disposition": disposition.payload(),
+        "retryAssignment": conflict,
+    }
+
+
+def persist_worker_projection(
+    state: GuiState,
+    worker_id: str,
+    accepted_stream_ids: set[str],
+    scoped_state: dict,
+):
+    with state.control_plane_lock:
+        with state.monitor_state_lock:
+            path = monitor_state_path(state)
+            payload = load_monitor_payload(path)
+            if accepted_stream_ids:
+                payload["alarms"] = [
+                    alarm
+                    for alarm in payload.get("alarms", [])
+                    if alarm.get("streamId") not in accepted_stream_ids
+                ]
+                payload["events"] = [
+                    event
+                    for event in payload.get("events", [])
+                    if event.get("streamId") not in accepted_stream_ids
+                ]
+                payload["pending"] = [
+                    item
+                    for item in payload.get("pending", [])
+                    if item.get("streamId") not in accepted_stream_ids
+                ]
+            payload["alarms"].extend(
+                with_worker(item, worker_id) for item in scoped_state["alarms"]
+            )
+            payload["events"].extend(
+                with_worker(item, worker_id) for item in scoped_state["events"]
+            )
+            payload["pending"].extend(
+                with_worker(item, worker_id) for item in scoped_state["pending"]
+            )
+            payload["updatedAt"] = scoped_state.get(
+                "updatedAt", payload.get("updatedAt", "")
+            )
+            payload["monitors"] = monitor_catalog_payload()
+            payload["workers"] = worker_status_payload(state)
+            active_worker_ids_set = set(state.worker_seen)
+            payload["workerProbeMetrics"] = {
+                metric_worker_id: metrics
+                for metric_worker_id, metrics in payload.get(
+                    "workerProbeMetrics", {}
+                ).items()
+                if metric_worker_id in active_worker_ids_set
+            }
+            if "probeMetrics" in scoped_state:
+                payload["workerProbeMetrics"][worker_id] = scoped_state[
+                    "probeMetrics"
+                ]
+            if not write_monitor_payload(path, payload):
+                raise WorkerReportPersistenceError("monitor state persistence failed")
+        state.worker_seen[worker_id] = time.time()
+
+
 def apply_worker_report(
     state: GuiState,
     worker_id: str,
@@ -1936,36 +2484,12 @@ def apply_worker_report(
         rejected_stream_ids = claimed_stream_ids - authoritative_stream_ids
         scoped_state, dropped_items = validate_monitor_items(worker_state, accepted_stream_ids)
 
-        with state.monitor_state_lock:
-            path = monitor_state_path(state)
-            payload = load_monitor_payload(path)
-            if accepted_stream_ids:
-                payload["alarms"] = [
-                    alarm for alarm in payload.get("alarms", []) if alarm.get("streamId") not in accepted_stream_ids
-                ]
-                payload["events"] = [
-                    event for event in payload.get("events", []) if event.get("streamId") not in accepted_stream_ids
-                ]
-                payload["pending"] = [
-                    item for item in payload.get("pending", []) if item.get("streamId") not in accepted_stream_ids
-                ]
-            payload["alarms"].extend(with_worker(item, worker_id) for item in scoped_state["alarms"])
-            payload["events"].extend(with_worker(item, worker_id) for item in scoped_state["events"])
-            payload["pending"].extend(with_worker(item, worker_id) for item in scoped_state["pending"])
-            payload["updatedAt"] = scoped_state.get("updatedAt", payload.get("updatedAt", ""))
-            payload["monitors"] = monitor_catalog_payload()
-            payload["workers"] = worker_status_payload(state)
-            active_worker_ids_set = set(state.worker_seen)
-            payload["workerProbeMetrics"] = {
-                metric_worker_id: metrics
-                for metric_worker_id, metrics in payload.get("workerProbeMetrics", {}).items()
-                if metric_worker_id in active_worker_ids_set
-            }
-            if "probeMetrics" in scoped_state:
-                payload["workerProbeMetrics"][worker_id] = scoped_state["probeMetrics"]
-            if not write_monitor_payload(path, payload):
-                raise WorkerReportPersistenceError("monitor state persistence failed")
-        state.worker_seen[worker_id] = time.time()
+        persist_worker_projection(
+            state,
+            worker_id,
+            accepted_stream_ids,
+            scoped_state,
+        )
 
     return {
         "ok": True,

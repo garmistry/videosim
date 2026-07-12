@@ -58,6 +58,7 @@ PROFILE_OPTIONS = {
     "black_video": ("Black video", "profiles/srt-black-video.yaml"),
     "frozen_video": ("Frozen video", "profiles/srt-frozen-video.yaml"),
 }
+MAX_WORKER_STREAMS = 100_000
 
 PROTOCOL_OPTIONS = {"srt": "SRT", "dash": "DASH"}
 SOURCE_OPTIONS = {"generated": "Generated", "external": "External URL"}
@@ -1489,11 +1490,12 @@ class GuiHandler(BaseHTTPRequestHandler):
                     worker_incarnation_id=incarnation,
                     certificate_subject=principal.subject,
                     capabilities=payload.get("capabilities")
-                    if isinstance(payload.get("capabilities"), dict)
-                    else {},
+                    if "capabilities" in payload
+                    and isinstance(payload.get("capabilities"), dict)
+                    else None,
                     capacity=payload.get("capacity")
-                    if isinstance(payload.get("capacity"), dict)
-                    else {},
+                    if "capacity" in payload and isinstance(payload.get("capacity"), dict)
+                    else None,
                     software_version=str(payload.get("softwareVersion", ""))[:128],
                 )
             except WorkerReportValidationError as exc:
@@ -2118,19 +2120,18 @@ def worker_assignments_payload(
             certificate_subject=certificate_subject or worker_id,
         )
         with state.control_plane_lock:
-            worker_ids = store.active_worker_ids()
+            worker_records = store.active_worker_records()
+            worker_ids = [item["id"] for item in worker_records]
             if worker_id not in worker_ids:
                 raise WorkerReportConflict("worker is not fresh and active")
             running_streams = sorted(
                 (stream for stream in state.streams.values() if stream.status == "running"),
                 key=lambda item: item.id,
             )
-            worker_index = worker_ids.index(worker_id)
-            assigned_streams = [
-                stream
-                for index, stream in enumerate(running_streams)
-                if index % len(worker_ids) == worker_index
-            ]
+            assignments, capacity_shortfall = capacity_aware_assignments(
+                worker_records, running_streams
+            )
+            assigned_streams = assignments[worker_id]
             store.revoke_unassigned_leases(
                 worker_id,
                 worker_incarnation_id,
@@ -2156,8 +2157,9 @@ def worker_assignments_payload(
                 "apiVersion": WORKER_API_VERSION_V2,
                 "workerId": worker["id"],
                 "workerIncarnationId": str(worker_incarnation_id),
-                "workers": [{"id": item} for item in worker_ids],
+                "workers": worker_records,
                 "streams": streams,
+                "capacityShortfall": capacity_shortfall,
             }
 
     worker = register_worker(state, worker_id)
@@ -2182,6 +2184,63 @@ def control_plane_stream_payload(stream: FeedRecord, base_url: str, worker_id: s
     return payload
 
 
+def capacity_aware_assignments(
+    worker_records: list[dict], streams: list[FeedRecord]
+) -> tuple[dict[str, list[FeedRecord]], int]:
+    """Assign streams without exceeding advertised durable-worker capacity."""
+    workers = sorted(worker_records, key=lambda item: item["id"])
+    assignments = {worker["id"]: [] for worker in workers}
+    if not workers:
+        return assignments, len(streams)
+    capacities = {}
+    for worker in workers:
+        normalized = normalize_worker_capacity(worker.get("capacity"))
+        capacities[worker["id"]] = normalized.get("maxStreams") if normalized else None
+    if not any(capacity is not None for capacity in capacities.values()):
+        for index, stream in enumerate(streams):
+            assignments[workers[index % len(workers)]["id"]].append(stream)
+        return assignments, 0
+
+    unassigned = 0
+    for stream in streams:
+        eligible = [
+            worker
+            for worker in workers
+            if capacities[worker["id"]] is None
+            or len(assignments[worker["id"]]) < capacities[worker["id"]]
+        ]
+        if not eligible:
+            unassigned += 1
+            continue
+        selected = min(
+            eligible,
+            key=lambda worker: (
+                len(assignments[worker["id"]]) / capacities[worker["id"]]
+                if capacities[worker["id"]]
+                else 1.0,
+                len(assignments[worker["id"]]),
+                worker["id"],
+            ),
+        )
+        assignments[selected["id"]].append(stream)
+    return assignments, unassigned
+
+
+def normalize_worker_capacity(capacity: dict | None) -> dict | None:
+    if capacity is None:
+        return None
+    max_streams = capacity.get("maxStreams")
+    if max_streams is not None and (
+        isinstance(max_streams, bool)
+        or not isinstance(max_streams, int)
+        or not 1 <= max_streams <= MAX_WORKER_STREAMS
+    ):
+        raise WorkerReportValidationError(
+            f"capacity.maxStreams must be an integer between 1 and {MAX_WORKER_STREAMS}"
+        )
+    return dict(capacity)
+
+
 def register_worker(
     state: GuiState,
     worker_id: str,
@@ -2195,6 +2254,7 @@ def register_worker(
     worker_id = worker_id.strip()
     if not worker_id:
         raise ValueError("worker_id is required")
+    capacity = normalize_worker_capacity(capacity)
     store = durable_control_store(state)
     if store is not None:
         if worker_incarnation_id is None:

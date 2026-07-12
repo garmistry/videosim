@@ -75,6 +75,7 @@ def post_heartbeat(
     worker_id: str,
     ssl_context: ssl.SSLContext | None = None,
     worker_incarnation_id: str = "",
+    max_streams: int = 0,
 ) -> dict:
     payload = {"workerId": worker_id}
     if worker_incarnation_id:
@@ -85,6 +86,8 @@ def post_heartbeat(
                 "softwareVersion": "videosim",
             }
         )
+    if max_streams:
+        payload["capacity"] = {"maxStreams": max_streams}
     body = json.dumps(payload).encode("utf-8")
     request = Request(
         f"{control_plane_url.rstrip('/')}/api/workers/register",
@@ -103,15 +106,22 @@ def _heartbeat_loop(
     stop: threading.Event,
     ssl_context: ssl.SSLContext | None,
     worker_incarnation_id: str,
+    max_streams: int,
 ):
     while not stop.wait(interval_seconds):
         try:
-            post_heartbeat(
-                control_plane_url,
-                worker_id,
-                ssl_context,
-                worker_incarnation_id,
-            )
+            if max_streams:
+                post_heartbeat(
+                    control_plane_url,
+                    worker_id,
+                    ssl_context,
+                    worker_incarnation_id,
+                    max_streams,
+                )
+            else:
+                post_heartbeat(
+                    control_plane_url, worker_id, ssl_context, worker_incarnation_id
+                )
         except Exception:
             # A failed heartbeat is retried on the next independent interval.
             # Assignment and report calls still enforce current authority.
@@ -275,9 +285,12 @@ def run_worker(
     ssl_context: ssl.SSLContext | None = None,
     retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
     retry_base_seconds: float = DEFAULT_RETRY_BASE_SECONDS,
+    max_streams: int = 0,
 ) -> int:
     if heartbeat_seconds <= 0:
         raise ValueError("heartbeat_seconds must be greater than 0")
+    if max_streams < 0:
+        raise ValueError("max_streams must be zero or greater")
     state = empty_monitor_state()
     assignment_conflicts = 0
     report_sequence = 0
@@ -293,12 +306,25 @@ def run_worker(
             heartbeat_stop,
             ssl_context,
             worker_incarnation_id,
+            max_streams,
         ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
     )
     heartbeat.start()
     try:
+        if max_streams:
+            call_with_retry(
+                lambda: post_heartbeat(
+                    control_plane_url,
+                    worker_id,
+                    ssl_context,
+                    worker_incarnation_id,
+                    max_streams,
+                ),
+                attempts=retry_attempts,
+                base_seconds=retry_base_seconds,
+            )
         while True:
             assignments = call_with_retry(
                 lambda: fetch_assignments(

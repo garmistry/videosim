@@ -21,9 +21,10 @@ VideoSim should split into a master control plane and many worker nodes:
 2. The master persists feed definitions and alert profiles through the feed-store boundary.
 3. Workers call the assignment API with a process UUID incarnation.
 4. SQLite trusted-lab mode returns worker v1 process-instance/generation/token
-   fencing. PostgreSQL mode returns worker v2 deterministic round-robin
-   assignments with durable offered/active lease epoch, config version, and
-   expiry.
+   fencing. PostgreSQL mode returns worker v2 durable offered/active lease
+   assignments with lease epoch, config version, and expiry. Workers that
+   advertise `capacity.maxStreams` receive capacity-aware assignments;
+   unconfigured workers retain deterministic round-robin compatibility.
 5. V2 workers acknowledge exact offered lease tuples before probing. An
    independent authenticated heartbeat refreshes worker membership and extends
    only active leases for the same incarnation.
@@ -93,8 +94,10 @@ VideoSim should split into a master control plane and many worker nodes:
 
 - The SQLite worker v1 registry, assignment generation, and tokens remain
   process-local transition fences. Production PostgreSQL uses v2 durable
-  leases, but its scheduler is still round-robin and not leader-elected.
-- Assignment is round-robin, not capacity-aware.
+  leases, but its scheduler is not leader-elected.
+- PostgreSQL assignment is capacity-aware only for workers advertising
+  `capacity.maxStreams`; unconfigured workers use compatibility round-robin.
+  This is admission control, not measured media capacity.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
 - PostgreSQL v2 report aggregation commits scoped probe and catalog-monitor
   observations, pending/current alarm state, immutable alarm edges, and outbox
@@ -110,7 +113,8 @@ VideoSim should split into a master control plane and many worker nodes:
 
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
-- Add worker health/capacity metadata and capacity-aware assignment decisions.
+- Add worker health/utilization metadata, bounded concurrent execution,
+  backpressure, and scheduling beyond the current static capacity limit.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

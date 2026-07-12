@@ -53,6 +53,10 @@ Start the GUI with a worker node polling the master control plane:
 docker compose up --build app worker
 ```
 
+For PostgreSQL worker admission, pass `--max-streams N` to advertise a static
+per-worker limit. Streams over aggregate advertised capacity remain unassigned
+and are reported as a capacity shortfall; this is not media-capacity evidence.
+
 Run a feed directly from the CLI:
 
 ```sh

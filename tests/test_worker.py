@@ -13,6 +13,7 @@ from videosim.worker import (
     build_ssl_context,
     call_with_retry,
     post_lease_acknowledgement,
+    post_heartbeat,
     post_report,
     run_worker,
 )
@@ -61,6 +62,21 @@ def assignment(stream_ids=("stream-1",), generation=7):
 
 
 class WorkerTest(unittest.TestCase):
+    def test_worker_capacity_registration_payload_is_bounded_to_admission_limit(self):
+        response = Mock()
+        response.read.return_value = b'{"ok": true}'
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with patch("videosim.worker.urlopen", return_value=response) as open_url:
+            post_heartbeat(
+                "http://master:8080",
+                "worker-a",
+                worker_incarnation_id="00000000-0000-0000-0000-000000000001",
+                max_streams=100,
+            )
+        payload = json.loads(open_url.call_args.args[0].data)
+        self.assertEqual(payload["capacity"], {"maxStreams": 100})
+
     def test_v2_sequences_increment_per_lease_and_reset_on_epoch_change(self):
         streams = durable_assignment(("stream-1", "stream-2"))["streams"]
         state, first = advance_lease_sequences(streams, {})

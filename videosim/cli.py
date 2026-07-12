@@ -121,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument("--tls-key-file", default="")
     worker.add_argument("--retry-attempts", type=int, default=5)
     worker.add_argument("--retry-base-seconds", type=float, default=0.25)
+    worker.add_argument(
+        "--max-streams",
+        type=int,
+        default=0,
+        help="durable scheduler admission limit; zero keeps legacy unlimited assignment",
+    )
     worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     control_plane_benchmark = subparsers.add_parser(
@@ -403,9 +409,26 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("retry_attempts must be at least 1")
             if args.retry_base_seconds < 0:
                 raise ValueError("retry_base_seconds must be zero or greater")
+            if args.max_streams < 0:
+                raise ValueError("max_streams must be zero or greater")
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
             ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
+            if args.max_streams:
+                return run_worker(
+                    args.control_plane_url,
+                    args.worker_id.strip(),
+                    args.poll_interval_seconds,
+                    args.repeat_interval_seconds,
+                    args.history_limit,
+                    args.srt_host,
+                    args.once,
+                    args.heartbeat_interval_seconds,
+                    ssl_context,
+                    args.retry_attempts,
+                    args.retry_base_seconds,
+                    max_streams=args.max_streams,
+                )
             return run_worker(
                 args.control_plane_url,
                 args.worker_id.strip(),

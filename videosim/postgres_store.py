@@ -525,17 +525,30 @@ class PostgresControlPlaneStore:
                         """,
                         (self.tenant_id, worker_id),
                     )
+                capabilities_json = (
+                    None
+                    if capabilities is None
+                    else json.dumps(dict(capabilities), sort_keys=True)
+                )
+                capacity_json = (
+                    None if capacity is None else json.dumps(dict(capacity), sort_keys=True)
+                )
                 connection.execute(
                     """
                     INSERT INTO workers (
                         tenant_id, worker_id, incarnation_id, certificate_subject,
                         capabilities, capacity, software_version, state
-                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, 'active')
+                    ) VALUES (%s, %s, %s, %s, COALESCE(%s::jsonb, '{}'::jsonb),
+                              COALESCE(%s::jsonb, '{}'::jsonb), %s, 'active')
                     ON CONFLICT (tenant_id, worker_id) DO UPDATE SET
                         incarnation_id = EXCLUDED.incarnation_id,
                         certificate_subject = EXCLUDED.certificate_subject,
-                        capabilities = EXCLUDED.capabilities,
-                        capacity = EXCLUDED.capacity,
+                        capabilities = CASE WHEN %s::jsonb IS NULL
+                                            THEN workers.capabilities
+                                            ELSE EXCLUDED.capabilities END,
+                        capacity = CASE WHEN %s::jsonb IS NULL
+                                        THEN workers.capacity
+                                        ELSE EXCLUDED.capacity END,
                         software_version = EXCLUDED.software_version,
                         state = 'active',
                         last_heartbeat_at = clock_timestamp(),
@@ -546,9 +559,11 @@ class PostgresControlPlaneStore:
                         worker_id,
                         incarnation_id,
                         certificate_subject,
-                        json.dumps(dict(capabilities or {}), sort_keys=True),
-                        json.dumps(dict(capacity or {}), sort_keys=True),
+                        capabilities_json,
+                        capacity_json,
                         software_version,
+                        capabilities_json,
+                        capacity_json,
                     ),
                 )
                 connection.execute(
@@ -569,10 +584,13 @@ class PostgresControlPlaneStore:
                 )
 
     def active_worker_ids(self) -> list[str]:
+        return [worker["id"] for worker in self.active_worker_records()]
+
+    def active_worker_records(self) -> list[dict]:
         with self._pool.connection() as connection:
             rows = connection.execute(
                 """
-                SELECT worker_id FROM workers
+                SELECT worker_id, capacity FROM workers
                 WHERE tenant_id = %s AND state = 'active'
                   AND last_heartbeat_at > clock_timestamp()
                       - (%s * interval '1 second')
@@ -580,7 +598,10 @@ class PostgresControlPlaneStore:
                 """,
                 (self.tenant_id, self.worker_freshness_seconds),
             ).fetchall()
-        return [row["worker_id"] for row in rows]
+        return [
+            {"id": row["worker_id"], "capacity": dict(row["capacity"])}
+            for row in rows
+        ]
 
     def heartbeat(self, worker_id: str, incarnation_id: uuid.UUID) -> bool:
         with self._pool.connection() as connection:

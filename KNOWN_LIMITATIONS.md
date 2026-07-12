@@ -86,8 +86,10 @@
   seven days by default) plus current pending/alarm state. It is not yet a
   replayed consumer read model, and SQLite retains file-backed history.
 - SQLite worker v1 registration/fencing is in-memory with a 60-second TTL.
-  PostgreSQL worker v2 membership/leases are durable and heartbeat-renewed, but
-  scheduling remains deterministic round-robin rather than capacity-aware.
+  PostgreSQL worker v2 membership/leases are durable and heartbeat-renewed.
+  Workers can advertise a static `capacity.maxStreams` limit, but unconfigured
+  workers still use compatibility round-robin scheduling and execution remains
+  serial; this is admission control, not measured media capacity.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The
   future JetStream consumer must still use `consumer_inbox` atomically and prove

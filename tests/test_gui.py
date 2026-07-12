@@ -17,6 +17,7 @@ from videosim.gui import (
     PROFILE_OPTIONS,
     PROTOCOL_OPTIONS,
     apply_worker_report,
+    capacity_aware_assignments,
     clear_monitor_events,
     diagnostics_text,
     mode_from_controls,
@@ -35,6 +36,30 @@ def empty_worker_state():
 
 
 class GuiTest(unittest.TestCase):
+    def test_capacity_aware_assignments_leave_over_capacity_streams_unassigned(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Capacity stream {index}",
+                source="external",
+                external_url=f"srt://example.test:{9000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(5)
+        ]
+        assignments, shortfall = capacity_aware_assignments(
+            [
+                {"id": "worker-a", "capacity": {"maxStreams": 2}},
+                {"id": "worker-b", "capacity": {"maxStreams": 1}},
+            ],
+            streams,
+        )
+        self.assertEqual(
+            [len(assignments[worker]) for worker in ("worker-a", "worker-b")],
+            [2, 1],
+        )
+        self.assertEqual(shortfall, 2)
+
     def create_feed(self, state: GuiState, name: str = "Primary feed"):
         return state.create_stream(
             name=name,

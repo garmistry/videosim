@@ -391,6 +391,12 @@ python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 \
   --worker-id local-worker --heartbeat-interval-seconds 15
 ```
 
+In PostgreSQL mode, `--max-streams N` advertises a static admission limit for
+that worker. The scheduler will not assign beyond aggregate advertised
+capacity; `capacityShortfall` in the assignment response shows unassigned
+running streams. This controls admission only; probe execution is still serial
+and requires separate measured capacity testing.
+
 Strict versioned reports are the default. During a controlled same-host upgrade,
 the GUI can temporarily accept old unversioned reporters with
 `--allow-legacy-worker-reports`; this mode still scopes reports to current

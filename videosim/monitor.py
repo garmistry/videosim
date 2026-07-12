@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import time
 from dataclasses import dataclass, replace
@@ -435,6 +436,108 @@ def iso(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _run_monitor_concurrent(
+    gui_state: dict,
+    state: dict,
+    now: float,
+    repeat_seconds: float,
+    history_limit: int,
+    srt_host: str,
+    max_concurrency: int,
+    validator: Callable[[VideoFeedConfig], ValidationReport],
+    tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    frame_rate_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    monotonic: Callable[[], float],
+) -> dict:
+    streams = [
+        stream
+        for stream in gui_state.get("streams", [])
+        if stream.get("status") == "running"
+    ]
+    started = monotonic()
+
+    def monitor_stream(stream: dict) -> dict:
+        return run_monitor_once(
+            {"streams": [stream]},
+            monitor_state_for_stream_ids(state, {stream["id"]}),
+            now,
+            repeat_seconds,
+            history_limit,
+            srt_host,
+            validator=validator,
+            tr101_checker=tr101_checker,
+            loudness_checker=loudness_checker,
+            frame_rate_checker=frame_rate_checker,
+            monotonic=monotonic,
+        )
+
+    # ponytail: one bounded pool for all stream checks; split cost tiers only
+    # when measurements show a single pool causes starvation.
+    with ThreadPoolExecutor(max_workers=min(max_concurrency, len(streams))) as pool:
+        results = list(pool.map(monitor_stream, streams))
+
+    stream_ids = {stream["id"] for stream in streams}
+    combined = dict(state)
+    for collection in ("alarms", "pending", "monitorObservations"):
+        retained = [
+            item
+            for item in state.get(collection, [])
+            if item.get("streamId") not in stream_ids
+        ]
+        combined[collection] = retained + [
+            item for result in results for item in result.get(collection, [])
+        ]
+    combined["alarms"] = sorted(
+        combined["alarms"],
+        key=lambda alarm: (
+            not alarm.get("active"),
+            alarm.get("streamName", ""),
+            alarm.get("monitorName", ""),
+        ),
+    )
+    combined["pending"] = sorted(
+        combined["pending"], key=lambda item: item.get("id", "")
+    )
+    combined["events"] = (
+        [
+            item
+            for item in state.get("events", [])
+            if item.get("streamId") not in stream_ids
+        ]
+        + [item for result in results for item in result.get("events", [])]
+    )[-history_limit:]
+
+    old_metrics = state.get("probeMetrics", {})
+    old_stream_metrics = (
+        old_metrics.get("streams", []) if isinstance(old_metrics, dict) else []
+    )
+    stream_metrics = [
+        item
+        for item in old_stream_metrics
+        if item.get("streamId") not in stream_ids
+    ] + [
+        item
+        for result in results
+        for item in result.get("probeMetrics", {}).get("streams", [])
+    ]
+    outcomes: dict[str, int] = {}
+    for item in stream_metrics:
+        outcome = item.get("outcome", "unknown")
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+    combined["updatedAt"] = iso(now)
+    combined["monitors"] = monitor_catalog_payload()
+    combined["probeMetrics"] = {
+        "observedAt": iso(now),
+        "batchDurationMs": round(max(0.0, (monotonic() - started) * 1000), 3),
+        "streamCount": len({item.get("streamId") for item in stream_metrics}),
+        "checkCount": len(stream_metrics),
+        "outcomes": outcomes,
+        "streams": stream_metrics,
+    }
+    return combined
+
+
 def run_monitor_once(
     gui_state: dict,
     state: dict,
@@ -447,7 +550,28 @@ def run_monitor_once(
     loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = loudness_issues_for_stream,
     frame_rate_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]] = frame_rate_issues_for_stream,
     monotonic: Callable[[], float] = time.monotonic,
+    *,
+    max_concurrency: int = 1,
 ) -> dict:
+    if max_concurrency < 1:
+        raise ValueError("max_concurrency must be at least 1")
+    if max_concurrency > 1 and any(
+        stream.get("status") == "running" for stream in gui_state.get("streams", [])
+    ):
+        return _run_monitor_concurrent(
+            gui_state,
+            state,
+            now,
+            repeat_seconds,
+            history_limit,
+            srt_host,
+            max_concurrency,
+            validator,
+            tr101_checker,
+            loudness_checker,
+            frame_rate_checker,
+            monotonic,
+        )
     issues = []
     probe_metrics = []
     monitor_observations: dict[tuple[str, str], dict] = {}

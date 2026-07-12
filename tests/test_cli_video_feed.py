@@ -230,6 +230,26 @@ class VideoFeedCliTest(unittest.TestCase):
             0.25,
         )
 
+    def test_worker_command_accepts_bounded_probe_concurrency(self):
+        with patch("videosim.cli.run_worker", return_value=0) as worker:
+            code = main(
+                [
+                    "worker",
+                    "--worker-id",
+                    "worker-a",
+                    "--max-streams",
+                    "100",
+                    "--max-concurrent-checks",
+                    "4",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(worker.call_args.kwargs, {
+            "max_streams": 100,
+            "max_concurrent_checks": 4,
+        })
+
     def test_verbose_feed_logs_pipeline_command_and_pid(self):
         class FakeProcess:
             pid = 1234

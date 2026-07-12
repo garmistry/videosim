@@ -73,8 +73,9 @@ implementation and must pass before those milestones advance.
   admission evidence remain missing and must not be inferred from it.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
-  covered, but worker execution remains serial and is not yet backpressured;
-  measured media capacity and 1,000-stream failure/soak evidence remain open.
+  covered, and bounded stream-level concurrency has unit coverage, but worker
+  execution still lacks deadlines/backpressure; measured media capacity and
+  1,000-stream failure/soak evidence remain open.
 
 ## Monitoring
 

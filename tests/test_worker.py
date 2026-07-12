@@ -73,9 +73,13 @@ class WorkerTest(unittest.TestCase):
                 "worker-a",
                 worker_incarnation_id="00000000-0000-0000-0000-000000000001",
                 max_streams=100,
+                max_concurrent_checks=4,
             )
         payload = json.loads(open_url.call_args.args[0].data)
-        self.assertEqual(payload["capacity"], {"maxStreams": 100})
+        self.assertEqual(
+            payload["capacity"],
+            {"maxStreams": 100, "maxConcurrentChecks": 4},
+        )
 
     def test_v2_sequences_increment_per_lease_and_reset_on_epoch_change(self):
         streams = durable_assignment(("stream-1", "stream-2"))["streams"]
@@ -116,6 +120,30 @@ class WorkerTest(unittest.TestCase):
         self.assertTrue(post.call_args.kwargs["worker_incarnation_id"])
         self.assertEqual(post.call_args.kwargs["sequence"], 1)
         self.assertTrue(post.call_args.kwargs["report_id"])
+
+    def test_run_worker_passes_bounded_probe_concurrency(self):
+        assignments = assignment(("stream-1", "stream-2"))
+        monitor_state = {"updatedAt": "now", "alarms": [], "events": [], "pending": []}
+        with patch("videosim.worker.fetch_assignments", return_value=assignments), patch(
+            "videosim.worker.post_heartbeat", return_value={"ok": True}
+        ), patch(
+            "videosim.worker.run_monitor_once", return_value=monitor_state
+        ) as monitor, patch("videosim.worker.post_report", return_value={"ok": True}):
+            self.assertEqual(
+                run_worker(
+                    "http://master:8080",
+                    "worker-a",
+                    5,
+                    7,
+                    20,
+                    "app",
+                    once=True,
+                    max_concurrent_checks=2,
+                ),
+                0,
+            )
+
+        self.assertEqual(monitor.call_args.kwargs, {"max_concurrency": 2})
 
     def test_run_worker_v2_acknowledges_lease_and_posts_stable_report_identity(self):
         assignments = durable_assignment()

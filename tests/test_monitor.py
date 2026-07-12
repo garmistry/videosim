@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -63,6 +64,47 @@ def repeated_with_nulls(*packets):
 
 
 class MonitorTest(unittest.TestCase):
+    def test_monitor_once_runs_streams_concurrently_when_bounded_pool_is_enabled(self):
+        entered = 0
+        entered_lock = threading.Lock()
+        both_entered = threading.Event()
+
+        def validator(config):
+            nonlocal entered
+            with entered_lock:
+                entered += 1
+                if entered == 2:
+                    both_entered.set()
+            if not both_entered.wait(timeout=2):
+                raise AssertionError("stream checks did not overlap")
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=False,
+                audio_present=False,
+                captions_present=True,
+            )
+
+        streams = [stream() | {"id": f"stream-{index}"} for index in (1, 2)]
+        result = run_monitor_once(
+            {"streams": streams},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=lambda current, config: [],
+            max_concurrency=2,
+        )
+
+        self.assertEqual(entered, 2)
+        self.assertEqual(result["probeMetrics"]["streamCount"], 2)
+        self.assertEqual(
+            {item["streamId"] for item in result["monitorObservations"]},
+            {"stream-1", "stream-2"},
+        )
+
     def test_monitor_catalogue_exposes_tr101_priority_3_status(self):
         monitors = {item["id"]: item for item in empty_monitor_state()["monitors"]}
 

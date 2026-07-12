@@ -54,6 +54,12 @@ VideoSim should split into a master control plane and many worker nodes:
 - Worker contract `videosim.worker/v1` adds process-restart, generation, and assignment-token fencing. HTTP 409 causes a bounded assignment refetch instead of silently applying stale state.
 - Reports are server-scoped: caller-supplied stream IDs cannot grant ownership, retained state is pruned on workers, and malformed/out-of-scope state cannot replace another worker's alarms.
 - Workers heartbeat independently of serial probe batches; the default interval is 20 seconds versus the current 60-second registry TTL.
+- Durable workers may advertise `capacity.maxStreams` with `--max-streams`; the
+  scheduler refuses new assignments beyond aggregate advertised capacity and
+  reports the shortfall instead of silently over-admitting a worker.
+- Workers can run assigned streams through a bounded pool with
+  `--max-concurrent-checks`; checks within one stream remain ordered and
+  serial.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -98,6 +104,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - PostgreSQL assignment is capacity-aware only for workers advertising
   `capacity.maxStreams`; unconfigured workers use compatibility round-robin.
   This is admission control, not measured media capacity.
+- Worker concurrency is bounded when configured, but there is no cancellation,
+  cost-tier fairness, durable spool, or backpressure signal yet.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
 - PostgreSQL v2 report aggregation commits scoped probe and catalog-monitor
   observations, pending/current alarm state, immutable alarm edges, and outbox
@@ -114,7 +122,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/utilization metadata, bounded concurrent execution,
-  backpressure, and scheduling beyond the current static capacity limit.
+  cancellation, backpressure, and scheduling beyond the current static
+  capacity limit.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

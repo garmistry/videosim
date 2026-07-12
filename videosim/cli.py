@@ -127,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="durable scheduler admission limit; zero keeps legacy unlimited assignment",
     )
+    worker.add_argument(
+        "--max-concurrent-checks",
+        type=int,
+        default=1,
+        help="bounded per-worker stream probe concurrency",
+    )
     worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     control_plane_benchmark = subparsers.add_parser(
@@ -411,10 +417,12 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("retry_base_seconds must be zero or greater")
             if args.max_streams < 0:
                 raise ValueError("max_streams must be zero or greater")
+            if args.max_concurrent_checks < 1:
+                raise ValueError("max_concurrent_checks must be at least 1")
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
             ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
-            if args.max_streams:
+            if args.max_streams or args.max_concurrent_checks > 1:
                 return run_worker(
                     args.control_plane_url,
                     args.worker_id.strip(),

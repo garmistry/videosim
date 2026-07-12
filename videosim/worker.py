@@ -76,6 +76,7 @@ def post_heartbeat(
     ssl_context: ssl.SSLContext | None = None,
     worker_incarnation_id: str = "",
     max_streams: int = 0,
+    max_concurrent_checks: int = 0,
 ) -> dict:
     payload = {"workerId": worker_id}
     if worker_incarnation_id:
@@ -86,8 +87,13 @@ def post_heartbeat(
                 "softwareVersion": "videosim",
             }
         )
+    capacity = {}
     if max_streams:
-        payload["capacity"] = {"maxStreams": max_streams}
+        capacity["maxStreams"] = max_streams
+    if max_concurrent_checks:
+        capacity["maxConcurrentChecks"] = max_concurrent_checks
+    if capacity:
+        payload["capacity"] = capacity
     body = json.dumps(payload).encode("utf-8")
     request = Request(
         f"{control_plane_url.rstrip('/')}/api/workers/register",
@@ -107,16 +113,18 @@ def _heartbeat_loop(
     ssl_context: ssl.SSLContext | None,
     worker_incarnation_id: str,
     max_streams: int,
+    max_concurrent_checks: int,
 ):
     while not stop.wait(interval_seconds):
         try:
-            if max_streams:
+            if max_streams or max_concurrent_checks:
                 post_heartbeat(
                     control_plane_url,
                     worker_id,
                     ssl_context,
                     worker_incarnation_id,
                     max_streams,
+                    max_concurrent_checks,
                 )
             else:
                 post_heartbeat(
@@ -286,11 +294,14 @@ def run_worker(
     retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
     retry_base_seconds: float = DEFAULT_RETRY_BASE_SECONDS,
     max_streams: int = 0,
+    max_concurrent_checks: int = 1,
 ) -> int:
     if heartbeat_seconds <= 0:
         raise ValueError("heartbeat_seconds must be greater than 0")
     if max_streams < 0:
         raise ValueError("max_streams must be zero or greater")
+    if max_concurrent_checks < 1:
+        raise ValueError("max_concurrent_checks must be at least 1")
     state = empty_monitor_state()
     assignment_conflicts = 0
     report_sequence = 0
@@ -307,13 +318,14 @@ def run_worker(
             ssl_context,
             worker_incarnation_id,
             max_streams,
+            max_concurrent_checks if max_concurrent_checks > 1 else 0,
         ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
     )
     heartbeat.start()
     try:
-        if max_streams:
+        if max_streams or max_concurrent_checks > 1:
             call_with_retry(
                 lambda: post_heartbeat(
                     control_plane_url,
@@ -321,6 +333,7 @@ def run_worker(
                     ssl_context,
                     worker_incarnation_id,
                     max_streams,
+                    max_concurrent_checks if max_concurrent_checks > 1 else 0,
                 ),
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
@@ -360,6 +373,9 @@ def run_worker(
                     continue
             stream_ids = {stream["id"] for stream in streams}
             state = monitor_state_for_stream_ids(state, stream_ids)
+            monitor_kwargs = {}
+            if max_concurrent_checks > 1:
+                monitor_kwargs["max_concurrency"] = max_concurrent_checks
             state = run_monitor_once(
                 {"streams": streams},
                 state,
@@ -367,6 +383,7 @@ def run_worker(
                 repeat_seconds,
                 history_limit,
                 srt_host,
+                **monitor_kwargs,
             )
             state = monitor_state_for_stream_ids(state, stream_ids)
             report_sequence += 1

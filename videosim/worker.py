@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import signal
 import socket
@@ -79,6 +80,7 @@ def post_heartbeat(
     max_streams: int = 0,
     max_concurrent_checks: int = 0,
     stream_budget_seconds: float = 0,
+    deep_check_interval_seconds: float = 0,
 ) -> dict:
     payload = {"workerId": worker_id}
     if worker_incarnation_id:
@@ -96,6 +98,8 @@ def post_heartbeat(
         capacity["maxConcurrentChecks"] = max_concurrent_checks
     if stream_budget_seconds:
         capacity["streamBudgetSeconds"] = stream_budget_seconds
+    if deep_check_interval_seconds:
+        capacity["deepCheckIntervalSeconds"] = deep_check_interval_seconds
     if capacity:
         payload["capacity"] = capacity
     body = json.dumps(payload).encode("utf-8")
@@ -143,10 +147,16 @@ def _heartbeat_loop(
     max_streams: int,
     max_concurrent_checks: int,
     stream_budget_seconds: float,
+    deep_check_interval_seconds: float,
 ):
     while not stop.wait(interval_seconds):
         try:
-            if max_streams or max_concurrent_checks or stream_budget_seconds:
+            if (
+                max_streams
+                or max_concurrent_checks
+                or stream_budget_seconds
+                or deep_check_interval_seconds
+            ):
                 post_heartbeat(
                     control_plane_url,
                     worker_id,
@@ -155,6 +165,7 @@ def _heartbeat_loop(
                     max_streams,
                     max_concurrent_checks,
                     stream_budget_seconds,
+                    deep_check_interval_seconds,
                 )
             else:
                 post_heartbeat(
@@ -212,6 +223,7 @@ def post_report(
     report_id: str = "",
     lease_sequences: dict[str, int] | None = None,
 ) -> dict:
+    state = {key: value for key, value in state.items() if key != "deepCheckSchedule"}
     if assignment and assignment.get("apiVersion") == WORKER_API_VERSION_V2:
         if not worker_incarnation_id or sequence < 1 or not report_id:
             raise ValueError("worker API v2 report identity and sequence are required")
@@ -326,6 +338,7 @@ def run_worker(
     max_streams: int = 0,
     max_concurrent_checks: int = 1,
     stream_budget_seconds: float = 0,
+    deep_check_interval_seconds: float = 0,
     drain_event: threading.Event | None = None,
 ) -> int:
     if heartbeat_seconds <= 0:
@@ -336,6 +349,8 @@ def run_worker(
         raise ValueError("max_concurrent_checks must be at least 1")
     if stream_budget_seconds < 0:
         raise ValueError("stream_budget_seconds must be zero or greater")
+    if not math.isfinite(deep_check_interval_seconds) or deep_check_interval_seconds < 0:
+        raise ValueError("deep_check_interval_seconds must be zero or greater")
     state = empty_monitor_state()
     assignment_conflicts = 0
     report_sequence = 0
@@ -360,6 +375,7 @@ def run_worker(
             max_streams,
             max_concurrent_checks if max_concurrent_checks > 1 else 0,
             stream_budget_seconds,
+            deep_check_interval_seconds,
         ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
@@ -386,7 +402,12 @@ def run_worker(
             drain_sent = True
 
     try:
-        if max_streams or max_concurrent_checks > 1 or stream_budget_seconds:
+        if (
+            max_streams
+            or max_concurrent_checks > 1
+            or stream_budget_seconds
+            or deep_check_interval_seconds
+        ):
             call_with_retry(
                 lambda: post_heartbeat(
                     control_plane_url,
@@ -396,6 +417,7 @@ def run_worker(
                     max_streams,
                     max_concurrent_checks if max_concurrent_checks > 1 else 0,
                     stream_budget_seconds,
+                    deep_check_interval_seconds,
                 ),
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
@@ -448,6 +470,10 @@ def run_worker(
                 monitor_kwargs["max_concurrency"] = max_concurrent_checks
             if stream_budget_seconds:
                 monitor_kwargs["stream_budget_seconds"] = stream_budget_seconds
+            if deep_check_interval_seconds:
+                monitor_kwargs["deep_check_interval_seconds"] = (
+                    deep_check_interval_seconds
+                )
             state = run_monitor_once(
                 {"streams": streams},
                 state,

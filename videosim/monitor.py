@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import time
+import zlib
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +78,7 @@ def empty_monitor_state() -> dict:
         "pending": [],
         "monitorObservations": [],
         "monitors": monitor_catalog_payload(),
+        "deepCheckSchedule": {},
     }
 
 
@@ -111,6 +114,13 @@ def monitor_state_for_stream_ids(state: dict, stream_ids: set[str]) -> dict:
             metrics["checkCount"] = len(filtered)
             metrics["outcomes"] = outcomes
         scoped["probeMetrics"] = metrics
+    schedule = state.get("deepCheckSchedule")
+    if isinstance(schedule, dict):
+        scoped["deepCheckSchedule"] = {
+            stream_id: due_at
+            for stream_id, due_at in schedule.items()
+            if stream_id in stream_ids
+        }
     return scoped
 
 
@@ -126,6 +136,7 @@ def load_monitor_state(path: str | Path) -> dict:
     payload.setdefault("events", [])
     payload.setdefault("pending", [])
     payload.setdefault("monitorObservations", [])
+    payload.setdefault("deepCheckSchedule", {})
     payload["monitors"] = monitor_catalog_payload()
     return payload
 
@@ -462,6 +473,12 @@ def iso(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def next_deep_check_at(stream_id: str, now: float, interval_seconds: float) -> float:
+    offset = zlib.crc32(stream_id.encode("utf-8")) / (2**32) * interval_seconds
+    due_at = (now // interval_seconds) * interval_seconds + offset
+    return due_at + interval_seconds if due_at <= now else due_at
+
+
 def _merge_monitor_results(
     state: dict,
     streams: list[dict],
@@ -541,6 +558,17 @@ def _merge_monitor_results(
         "outcomes": outcomes,
         "streams": stream_metrics,
     }
+    state_schedule = state.get("deepCheckSchedule", {})
+    if not isinstance(state_schedule, dict):
+        state_schedule = {}
+    schedule = {
+        stream_id: due_at
+        for stream_id, due_at in state_schedule.items()
+        if stream_id not in stream_ids
+    }
+    for result in results:
+        schedule.update(result.get("deepCheckSchedule", {}))
+    combined["deepCheckSchedule"] = schedule
     return combined
 
 
@@ -553,6 +581,7 @@ def _run_monitor_concurrent(
     srt_host: str,
     max_concurrency: int,
     stream_budget_seconds: float,
+    deep_check_interval_seconds: float,
     validator: Callable[[VideoFeedConfig], ValidationReport],
     tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
     loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
@@ -586,6 +615,7 @@ def _run_monitor_concurrent(
             frame_rate_checker=frame_rate_checker,
             monotonic=monotonic,
             stream_budget_seconds=stream_budget_seconds,
+            deep_check_interval_seconds=deep_check_interval_seconds,
             _validation_only=validation_only,
             _probe_contexts=probe_contexts,
         )
@@ -649,6 +679,7 @@ def run_monitor_once(
     *,
     max_concurrency: int = 1,
     stream_budget_seconds: float = 0,
+    deep_check_interval_seconds: float = 0,
     _validation_only: bool = False,
     _probe_contexts: dict | None = None,
 ) -> dict:
@@ -656,6 +687,8 @@ def run_monitor_once(
         raise ValueError("max_concurrency must be at least 1")
     if stream_budget_seconds < 0:
         raise ValueError("stream_budget_seconds must be zero or greater")
+    if not math.isfinite(deep_check_interval_seconds) or deep_check_interval_seconds < 0:
+        raise ValueError("deep_check_interval_seconds must be zero or greater")
     if max_concurrency > 1 and any(
         stream.get("status") == "running" for stream in gui_state.get("streams", [])
     ):
@@ -668,6 +701,7 @@ def run_monitor_once(
             srt_host,
             max_concurrency,
             stream_budget_seconds,
+            deep_check_interval_seconds,
             validator,
             tr101_checker,
             loudness_checker,
@@ -678,6 +712,19 @@ def run_monitor_once(
     probe_metrics = []
     monitor_observations: dict[tuple[str, str], dict] = {}
     next_probe_contexts = {}
+    running_stream_ids = {
+        stream["id"]
+        for stream in gui_state.get("streams", [])
+        if stream.get("status") == "running"
+    }
+    state_schedule = state.get("deepCheckSchedule", {})
+    if not isinstance(state_schedule, dict):
+        state_schedule = {}
+    deep_check_schedule = {
+        stream_id: float(due_at)
+        for stream_id, due_at in state_schedule.items()
+        if stream_id in running_stream_ids and isinstance(due_at, (int, float))
+    }
     batch_started = monotonic()
 
     def record(stream: dict, check: str, outcome: str, started: float | None = None, detail: str = ""):
@@ -783,6 +830,18 @@ def run_monitor_once(
                 media_deadline,
             )
             continue
+        if deep_check_interval_seconds:
+            due_at = deep_check_schedule.get(stream["id"])
+            if due_at is not None and now < due_at:
+                record(
+                    stream,
+                    "deep_checks",
+                    "skipped",
+                    detail=f"deferred until {iso(due_at)}",
+                )
+                continue
+        else:
+            deep_check_schedule.pop(stream["id"], None)
         if config is None:
             record(stream, "tr101", "skipped", detail="validation configuration unavailable")
             record(stream, "frame_rate", "skipped", detail="validation configuration unavailable")
@@ -862,6 +921,11 @@ def run_monitor_once(
                     observe(stream, monitor_id, outcome, str(exc))
                 record(stream, "loudness", outcome, loudness_started, str(exc))
 
+        if deep_check_interval_seconds:
+            deep_check_schedule[stream["id"]] = next_deep_check_at(
+                stream["id"], now, deep_check_interval_seconds
+            )
+
     clearable_alarm_ids = {
         f"{stream_id}:{monitor_id}"
         for (stream_id, monitor_id), observation in monitor_observations.items()
@@ -900,6 +964,7 @@ def run_monitor_once(
         "outcomes": outcomes,
         "streams": probe_metrics,
     }
+    result["deepCheckSchedule"] = deep_check_schedule
     if _validation_only:
         result["_probeContexts"] = next_probe_contexts
     return result

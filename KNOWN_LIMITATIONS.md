@@ -95,8 +95,11 @@
   now caps built-in media subprocess and DASH polling/socket waits. Arbitrary
   injected checker code and a trickling HTTP response are not preempted.
   Concurrent workers run validation for every stream before deep standards
-  checks, but black/frozen validation can still be expensive and there are no
-  protocol/tenant cost tokens.
+  checks. `--deep-check-interval-seconds` can stagger TR-101, frame-rate, and
+  loudness work while retaining every-cycle validation, but the interval is an
+  operator setting rather than dynamic pressure feedback. Black/frozen
+  validation can still be expensive and there are no protocol/tenant cost
+  tokens.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The
   future JetStream consumer must still use `consumer_inbox` atomically and prove

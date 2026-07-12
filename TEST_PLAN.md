@@ -111,6 +111,7 @@ The master/worker control-plane slice is additive to the local monitor service.
 | In-process control-plane benchmark enforces assignment/report invariants and disclaims media capacity | P1 | implemented | `python3 -m unittest tests.test_distributed_benchmark`; `python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterations 3` |
 | Compose exposes a sample worker node service | P1 | implemented | `docker compose config --quiet` |
 | Worker SIGINT/SIGTERM sends its final report before an incarnation-fenced drain and immediate reoffer | P0 | implemented; PostgreSQL integration gated | `python3 -m unittest tests.test_worker tests.test_worker_api`; `VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest tests.test_postgres_store tests.test_worker_v2` |
+| Critical validation runs every cycle while deep checks defer on stable per-stream cadence offsets without false alarm clears | P0 | implemented | `python3 -m unittest tests.test_monitor tests.test_worker tests.test_cli_video_feed tests.test_gui` |
 
 ## Startup Workflow Coverage
 

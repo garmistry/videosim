@@ -100,6 +100,7 @@ class WorkerTest(unittest.TestCase):
                 max_streams=100,
                 max_concurrent_checks=4,
                 stream_budget_seconds=30,
+                deep_check_interval_seconds=60,
             )
         payload = json.loads(open_url.call_args.args[0].data)
         self.assertEqual(
@@ -108,6 +109,7 @@ class WorkerTest(unittest.TestCase):
                 "maxStreams": 100,
                 "maxConcurrentChecks": 4,
                 "streamBudgetSeconds": 30,
+                "deepCheckIntervalSeconds": 60,
             },
         )
 
@@ -203,13 +205,18 @@ class WorkerTest(unittest.TestCase):
                     once=True,
                     max_concurrent_checks=2,
                     stream_budget_seconds=30,
+                    deep_check_interval_seconds=60,
                 ),
                 0,
             )
 
         self.assertEqual(
             monitor.call_args.kwargs,
-            {"max_concurrency": 2, "stream_budget_seconds": 30},
+            {
+                "max_concurrency": 2,
+                "stream_budget_seconds": 30,
+                "deep_check_interval_seconds": 60,
+            },
         )
 
     def test_run_worker_v2_acknowledges_lease_and_posts_stable_report_identity(self):
@@ -273,7 +280,13 @@ class WorkerTest(unittest.TestCase):
                 "http://master:8080",
                 "worker-a",
                 ["stream-1"],
-                {"probeMetrics": {"observedAt": "2026-07-11T00:00:00Z", "streams": []}},
+                {
+                    "probeMetrics": {
+                        "observedAt": "2026-07-11T00:00:00Z",
+                        "streams": [],
+                    },
+                    "deepCheckSchedule": {"stream-1": 200.0},
+                },
                 assignments,
                 worker_incarnation_id="00000000-0000-0000-0000-000000000001",
                 sequence=9,
@@ -285,6 +298,7 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(ack_payload["leases"][0]["epoch"], 3)
         self.assertEqual(ack_payload["leases"][0]["configVersion"], 2)
         self.assertEqual(report_payload["sequence"], 9)
+        self.assertNotIn("deepCheckSchedule", report_payload["state"])
         self.assertEqual(report_payload["leases"][0]["epoch"], ack_payload["leases"][0]["epoch"])
         self.assertEqual(
             report_payload["leases"][0]["configVersion"],
@@ -358,6 +372,7 @@ class WorkerTest(unittest.TestCase):
                 "outcomes": {"success": 1},
                 "streams": [{"streamId": "stream-1", "check": "validation", "outcome": "success"}],
             },
+            "deepCheckSchedule": {"stream-1": 200.0},
             "monitors": [{"id": "catalog"}],
         }
 
@@ -370,6 +385,7 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(scoped["probeMetrics"]["streamCount"], 0)
         self.assertEqual(scoped["probeMetrics"]["checkCount"], 0)
         self.assertEqual(scoped["probeMetrics"]["outcomes"], {})
+        self.assertEqual(scoped["deepCheckSchedule"], {})
         self.assertEqual(scoped["monitors"], [{"id": "catalog"}])
 
     def test_worker_refetches_v2_assignment_after_acknowledgement_conflict(self):

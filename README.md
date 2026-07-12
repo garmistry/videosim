@@ -72,6 +72,9 @@ checks within each stream remain ordered.
 Use `--stream-budget-seconds N` to stop starting lower-priority checks after a
 stream exhausts its budget. Built-in media subprocess and DASH polling waits
 are capped by the remaining budget.
+Use `--deep-check-interval-seconds N` to keep validation on every worker cycle
+while staggering TR-101, frame-rate, and loudness analysis across that cadence.
+Zero retains the every-cycle behavior.
 With concurrent checks enabled, every assigned stream finishes validation
 before the worker starts TR-101, frame-rate, or loudness checks.
 

@@ -1,3 +1,4 @@
+from collections import Counter
 import subprocess
 import tempfile
 import threading
@@ -16,6 +17,7 @@ from videosim.monitor import (
     frame_rate_issues_for_stream,
     issue,
     loudness_issues_for_stream,
+    next_deep_check_at,
     run_monitor_once,
     srt_ts_sample,
     tr101_issues_for_stream,
@@ -68,6 +70,15 @@ def repeated_with_nulls(*packets):
 
 
 class MonitorTest(unittest.TestCase):
+    def test_1000_stream_deep_check_offsets_cover_the_cadence(self):
+        bins = Counter(
+            int((next_deep_check_at(f"stream-{index}", 100, 60) - 100) // 5)
+            for index in range(1000)
+        )
+
+        self.assertEqual(set(bins), set(range(12)))
+        self.assertLessEqual(max(bins.values()), 125)
+
     def test_stream_budget_cancels_srt_transport_sample(self):
         process = Mock()
         process.communicate.side_effect = [
@@ -221,6 +232,77 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual([item["check"] for item in metrics[:3]], ["validation"] * 3)
         self.assertEqual(result["probeMetrics"]["streamCount"], 3)
         self.assertEqual(result["probeMetrics"]["checkCount"], 12)
+
+    def test_concurrent_deep_checks_use_staggered_cadence_without_false_clear(self):
+        streams = [
+            stream()
+            | {
+                "id": f"stream-{index}",
+                "endpoint": f"srt://127.0.0.1:{9000 + index}?mode=caller",
+            }
+            for index in (1, 2)
+        ]
+        validation_calls = []
+        tr101_calls = []
+
+        def validator(config):
+            validation_calls.append(config.port)
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            )
+
+        def tr101_checker(current, _config):
+            tr101_calls.append(current["id"])
+            return [issue(current, "tr101_1_1_ts_sync_loss", "sync lost")]
+
+        def monitor(state, now):
+            return run_monitor_once(
+                {"streams": streams},
+                state,
+                now=now,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                validator=validator,
+                tr101_checker=tr101_checker,
+                frame_rate_checker=lambda *_args: [],
+                loudness_checker=lambda *_args: [],
+                max_concurrency=2,
+                deep_check_interval_seconds=60,
+            )
+
+        first = monitor(empty_monitor_state(), 100)
+        due = first["deepCheckSchedule"]
+        second = monitor(first, min(due.values()) - 0.001)
+
+        self.assertEqual(len(set(due.values())), 2)
+        self.assertEqual(first["probeMetrics"]["checkCount"], 8)
+        self.assertEqual(len(validation_calls), 4)
+        self.assertEqual(len(tr101_calls), 2)
+        self.assertEqual(
+            second["probeMetrics"]["outcomes"], {"success": 2, "skipped": 2}
+        )
+        self.assertEqual(len(second["alarms"]), 2)
+        self.assertTrue(all(alarm["active"] for alarm in second["alarms"]))
+
+        monitor(second, min(due.values()))
+        self.assertEqual(len(tr101_calls), 3)
+
+    def test_deep_check_interval_rejects_negative_values(self):
+        with self.assertRaisesRegex(ValueError, "deep_check_interval_seconds"):
+            run_monitor_once(
+                {"streams": []},
+                empty_monitor_state(),
+                now=100,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                deep_check_interval_seconds=-1,
+            )
 
     def test_monitor_catalogue_exposes_tr101_priority_3_status(self):
         monitors = {item["id"]: item for item in empty_monitor_state()["monitors"]}

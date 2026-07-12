@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import copy
 import html
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -2270,6 +2271,26 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
         raise WorkerReportValidationError(
             f"capacity.maxStreams must be an integer between 1 and {MAX_WORKER_STREAMS}"
         )
+    max_concurrent_checks = capacity.get("maxConcurrentChecks")
+    if max_concurrent_checks is not None and (
+        isinstance(max_concurrent_checks, bool)
+        or not isinstance(max_concurrent_checks, int)
+        or not 1 <= max_concurrent_checks <= MAX_WORKER_STREAMS
+    ):
+        raise WorkerReportValidationError(
+            f"capacity.maxConcurrentChecks must be an integer between 1 and {MAX_WORKER_STREAMS}"
+        )
+    for field in ("streamBudgetSeconds", "deepCheckIntervalSeconds"):
+        value = capacity.get(field)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise WorkerReportValidationError(
+                f"capacity.{field} must be a finite number greater than zero"
+            )
     return dict(capacity)
 
 

@@ -452,6 +452,15 @@ Use `--stream-budget-seconds N` to classify an over-budget stream as timed out
 and defer its remaining checks. Built-in GStreamer, FFmpeg, FFprobe, and DASH
 polling waits use the remaining budget; this is not cost-tier fairness,
 backpressure, or capacity certification.
+Use `--deep-check-interval-seconds N` to validate every assigned stream on each
+worker cycle but run TR-101, frame-rate, and loudness checks once per configured
+cadence. The worker stores the next due time with its retained assignment state
+and derives a stable per-stream offset, so subsequent deep checks are spread
+across the interval. A deferred deep phase emits one `deep_checks=skipped`
+probe metric and no health observation, preserving existing deep-check alarms.
+Zero keeps the existing every-cycle deep checks. Select the interval from
+measured freshness and worker-capacity evidence; this control is deterministic
+load shedding, not dynamic backpressure or capacity certification.
 When `--max-concurrent-checks` is greater than one, the worker validates every
 assigned stream before starting TR-101, frame-rate, and loudness checks. This
 protects core validation freshness but is not protocol- or tenant-cost fairness.

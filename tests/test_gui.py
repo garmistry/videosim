@@ -22,6 +22,7 @@ from videosim.gui import (
     diagnostics_text,
     mode_from_controls,
     mode_from_form,
+    normalize_worker_capacity,
     profile_for,
     preview_image,
     render_page,
@@ -36,6 +37,17 @@ def empty_worker_state():
 
 
 class GuiTest(unittest.TestCase):
+    def test_worker_capacity_rejects_invalid_probe_controls(self):
+        for capacity in (
+            {"maxConcurrentChecks": 0},
+            {"streamBudgetSeconds": float("inf")},
+            {"deepCheckIntervalSeconds": "60"},
+        ):
+            with self.subTest(capacity=capacity), self.assertRaises(
+                WorkerReportValidationError
+            ):
+                normalize_worker_capacity(capacity)
+
     def test_capacity_aware_assignments_leave_over_capacity_streams_unassigned(self):
         state = GuiState()
         streams = [

@@ -243,6 +243,8 @@ class VideoFeedCliTest(unittest.TestCase):
                     "4",
                     "--stream-budget-seconds",
                     "30",
+                    "--deep-check-interval-seconds",
+                    "60",
                 ]
             )
 
@@ -251,6 +253,7 @@ class VideoFeedCliTest(unittest.TestCase):
             "max_streams": 100,
             "max_concurrent_checks": 4,
             "stream_budget_seconds": 30.0,
+            "deep_check_interval_seconds": 60.0,
         })
 
     def test_verbose_feed_logs_pipeline_command_and_pid(self):

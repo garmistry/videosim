@@ -336,7 +336,14 @@ def issue(stream: dict, monitor_id: str, message: str) -> MonitorIssue:
     )
 
 
-def apply_issues(state: dict, issues: list[MonitorIssue], now: float, repeat_seconds: float, history_limit: int) -> dict:
+def apply_issues(
+    state: dict,
+    issues: list[MonitorIssue],
+    now: float,
+    repeat_seconds: float,
+    history_limit: int,
+    clearable_alarm_ids: set[str] | None = None,
+) -> dict:
     state.setdefault("alarms", [])
     state.setdefault("events", [])
     alarms = {alarm["id"]: alarm for alarm in state["alarms"]}
@@ -353,7 +360,8 @@ def apply_issues(state: dict, issues: list[MonitorIssue], now: float, repeat_sec
             alarm.update({"lastEventAt": now, "message": item.message})
             append_event(state, "alarm_active", alarm, now)
 
-    for alarm_id in sorted(active_ids - issue_ids):
+    clearable_alarm_ids = active_ids if clearable_alarm_ids is None else clearable_alarm_ids
+    for alarm_id in sorted((active_ids - issue_ids) & clearable_alarm_ids):
         alarm = alarms[alarm_id]
         alarm.update({"active": False, "status": "steady", "clearedAt": iso(now), "lastEventAt": now})
         append_event(state, "alarm_cleared", alarm, now)
@@ -444,6 +452,7 @@ def _run_monitor_concurrent(
     history_limit: int,
     srt_host: str,
     max_concurrency: int,
+    stream_budget_seconds: float,
     validator: Callable[[VideoFeedConfig], ValidationReport],
     tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
     loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
@@ -470,6 +479,7 @@ def _run_monitor_concurrent(
             loudness_checker=loudness_checker,
             frame_rate_checker=frame_rate_checker,
             monotonic=monotonic,
+            stream_budget_seconds=stream_budget_seconds,
         )
 
     # ponytail: one bounded pool for all stream checks; split cost tiers only
@@ -552,9 +562,12 @@ def run_monitor_once(
     monotonic: Callable[[], float] = time.monotonic,
     *,
     max_concurrency: int = 1,
+    stream_budget_seconds: float = 0,
 ) -> dict:
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
+    if stream_budget_seconds < 0:
+        raise ValueError("stream_budget_seconds must be zero or greater")
     if max_concurrency > 1 and any(
         stream.get("status") == "running" for stream in gui_state.get("streams", [])
     ):
@@ -566,6 +579,7 @@ def run_monitor_once(
             history_limit,
             srt_host,
             max_concurrency,
+            stream_budget_seconds,
             validator,
             tr101_checker,
             loudness_checker,
@@ -630,21 +644,32 @@ def run_monitor_once(
     for stream in gui_state.get("streams", []):
         if stream.get("status") != "running":
             continue
+        stream_deadline = (
+            monotonic() + stream_budget_seconds
+            if stream_budget_seconds
+            else None
+        )
+
+        def check_budget():
+            if stream_deadline is not None and monotonic() >= stream_deadline:
+                raise TimeoutError("stream probe budget exhausted")
+
         config = None
         validation_started = monotonic()
         try:
             config = config_for_stream(stream, srt_host)
             report = validator(config)
+            check_budget()
             validation_issues = issues_for_report(stream, report)
             issues_by_id = {item.monitor_id: item for item in validation_issues}
             for monitor_id in validation_monitor_ids(stream):
                 item = issues_by_id.get(monitor_id)
                 observe(stream, monitor_id, "unhealthy" if item else "healthy", item.message if item else "")
             record(stream, "validation", "issue" if validation_issues else "success", validation_started)
-        except Exception as exc:  # ponytail: monitor stays alive; classify probe crashes as feed reachability alarms.
+        except Exception as exc:  # ponytail: keep the batch alive; probe crashes stay inconclusive instead of becoming feed alarms.
             report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
-            validation_issues = issues_for_report(stream, report)
             outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+            validation_issues = []
             for monitor_id in validation_monitor_ids(stream):
                 observe(stream, monitor_id, outcome, str(exc))
             record(stream, "validation", outcome, validation_started, str(exc))
@@ -657,7 +682,9 @@ def run_monitor_once(
 
         tr101_started = monotonic()
         try:
+            check_budget()
             tr101_issues = tr101_checker(stream, config)
+            check_budget()
             issues.extend(tr101_issues)
             observe_checker(stream, tr101_issues)
             record(stream, "tr101", "issue" if tr101_issues else "success", tr101_started)
@@ -667,7 +694,10 @@ def run_monitor_once(
                 observe(stream, monitor_id, outcome, str(exc))
             record(stream, "tr101", outcome, tr101_started, str(exc))
 
-        if stream.get("source") == "external":
+        if stream_deadline is not None and monotonic() >= stream_deadline:
+            observe(stream, "video_frame_rate_match", "timeout", "stream probe budget exhausted")
+            record(stream, "frame_rate", "timeout", detail="stream probe budget exhausted")
+        elif stream.get("source") == "external":
             observe(stream, "video_frame_rate_match", "skipped", "external feed has no configured frame-rate expectation")
             record(stream, "frame_rate", "skipped", detail="external feed has no configured frame-rate expectation")
         elif not report.video_present:
@@ -676,7 +706,9 @@ def run_monitor_once(
         else:
             frame_started = monotonic()
             try:
+                check_budget()
                 frame_issues = frame_rate_checker(stream, config)
+                check_budget()
                 issues.extend(frame_issues)
                 observe_checker(stream, frame_issues)
                 record(stream, "frame_rate", "issue" if frame_issues else "success", frame_started)
@@ -691,7 +723,11 @@ def run_monitor_once(
             "loudness_ebu_r128_true_peak",
             "loudness_atsc_a85_integrated",
         )
-        if stream.get("source") == "external":
+        if stream_deadline is not None and monotonic() >= stream_deadline:
+            for monitor_id in loudness_monitor_ids:
+                observe(stream, monitor_id, "timeout", "stream probe budget exhausted")
+            record(stream, "loudness", "timeout", detail="stream probe budget exhausted")
+        elif stream.get("source") == "external":
             for monitor_id in loudness_monitor_ids:
                 observe(stream, monitor_id, "skipped", "external feed has no configured loudness expectation")
             record(stream, "loudness", "skipped", detail="external feed has no configured loudness expectation")
@@ -702,7 +738,9 @@ def run_monitor_once(
         else:
             loudness_started = monotonic()
             try:
+                check_budget()
                 loudness_issues = loudness_checker(stream, config)
+                check_budget()
                 issues.extend(loudness_issues)
                 observe_checker(stream, loudness_issues)
                 record(stream, "loudness", "issue" if loudness_issues else "success", loudness_started)
@@ -713,7 +751,19 @@ def run_monitor_once(
                 record(stream, "loudness", outcome, loudness_started, str(exc))
 
     issues = apply_alert_profiles(state, gui_state.get("streams", []), issues, now)
-    result = apply_issues(state, issues, now, repeat_seconds, history_limit)
+    clearable_alarm_ids = {
+        f"{stream_id}:{monitor_id}"
+        for (stream_id, monitor_id), observation in monitor_observations.items()
+        if observation["status"] in {"healthy", "unhealthy"}
+    }
+    result = apply_issues(
+        state,
+        issues,
+        now,
+        repeat_seconds,
+        history_limit,
+        clearable_alarm_ids,
+    )
     outcomes: dict[str, int] = {}
     for item in probe_metrics:
         outcomes[item["outcome"]] = outcomes.get(item["outcome"], 0) + 1

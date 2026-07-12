@@ -64,6 +64,56 @@ def repeated_with_nulls(*packets):
 
 
 class MonitorTest(unittest.TestCase):
+    def test_stream_budget_defers_remaining_checks_without_clearing_alarm(self):
+        current_stream = stream()
+        previous = apply_issues(
+            empty_monitor_state(),
+            [issue(current_stream, "essence_video_present", "missing video")],
+            now=90,
+            repeat_seconds=5,
+            history_limit=20,
+        )
+        clock = [0.0]
+
+        def validator(config):
+            clock[0] = 2.0
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            )
+
+        def should_not_run(*_args):
+            raise AssertionError("lower-priority check ran after budget exhaustion")
+
+        result = run_monitor_once(
+            {"streams": [current_stream]},
+            previous,
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=should_not_run,
+            loudness_checker=should_not_run,
+            frame_rate_checker=should_not_run,
+            monotonic=lambda: clock[0],
+            stream_budget_seconds=1,
+        )
+
+        self.assertEqual(
+            [(alarm["id"], alarm["active"]) for alarm in result["alarms"]],
+            [("stream-1:essence_video_present", True)],
+        )
+        self.assertEqual([event["type"] for event in result["events"]], ["alarm_raised"])
+        self.assertEqual(result["probeMetrics"]["outcomes"], {"timeout": 4})
+        self.assertEqual(
+            {item["status"] for item in result["monitorObservations"]},
+            {"timeout"},
+        )
+
     def test_monitor_once_runs_streams_concurrently_when_bounded_pool_is_enabled(self):
         entered = 0
         entered_lock = threading.Lock()

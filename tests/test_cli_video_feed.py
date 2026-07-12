@@ -241,6 +241,8 @@ class VideoFeedCliTest(unittest.TestCase):
                     "100",
                     "--max-concurrent-checks",
                     "4",
+                    "--stream-budget-seconds",
+                    "30",
                 ]
             )
 
@@ -248,6 +250,7 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertEqual(worker.call_args.kwargs, {
             "max_streams": 100,
             "max_concurrent_checks": 4,
+            "stream_budget_seconds": 30.0,
         })
 
     def test_verbose_feed_logs_pipeline_command_and_pid(self):

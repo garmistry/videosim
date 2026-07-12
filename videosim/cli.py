@@ -133,6 +133,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="bounded per-worker stream probe concurrency",
     )
+    worker.add_argument(
+        "--stream-budget-seconds",
+        type=float,
+        default=0,
+        help="per-stream probe budget; zero disables budget-based deferral",
+    )
     worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     control_plane_benchmark = subparsers.add_parser(
@@ -419,10 +425,12 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("max_streams must be zero or greater")
             if args.max_concurrent_checks < 1:
                 raise ValueError("max_concurrent_checks must be at least 1")
+            if args.stream_budget_seconds < 0:
+                raise ValueError("stream_budget_seconds must be zero or greater")
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
             ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
-            if args.max_streams or args.max_concurrent_checks > 1:
+            if args.max_streams or args.max_concurrent_checks > 1 or args.stream_budget_seconds:
                 return run_worker(
                     args.control_plane_url,
                     args.worker_id.strip(),
@@ -436,6 +444,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.retry_attempts,
                     args.retry_base_seconds,
                     max_streams=args.max_streams,
+                    max_concurrent_checks=args.max_concurrent_checks,
+                    stream_budget_seconds=args.stream_budget_seconds,
                 )
             return run_worker(
                 args.control_plane_url,

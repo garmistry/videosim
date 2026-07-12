@@ -91,6 +91,8 @@
   workers still use compatibility round-robin scheduling and execution remains
   serial unless `--max-concurrent-checks` is configured. The pool is bounded
   stream-level concurrency, not measured media capacity or backpressure.
+  `--stream-budget-seconds` defers remaining checks after budget exhaustion but
+  does not interrupt an in-flight media tool.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The
   future JetStream consumer must still use `consumer_inbox` atomically and prove

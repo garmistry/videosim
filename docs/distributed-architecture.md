@@ -60,6 +60,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - Workers can run assigned streams through a bounded pool with
   `--max-concurrent-checks`; checks within one stream remain ordered and
   serial.
+- Workers can apply `--stream-budget-seconds` so an over-budget stream reports
+  timeout and does not start its remaining lower-priority checks. Existing
+  alarms remain active on inconclusive timeout/error observations.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -104,8 +107,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - PostgreSQL assignment is capacity-aware only for workers advertising
   `capacity.maxStreams`; unconfigured workers use compatibility round-robin.
   This is admission control, not measured media capacity.
-- Worker concurrency is bounded when configured, but there is no cancellation,
-  cost-tier fairness, durable spool, or backpressure signal yet.
+- Worker concurrency and per-stream work budgets are bounded when configured,
+  but there is no in-flight cancellation, cost-tier fairness, durable spool, or
+  backpressure signal yet.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
 - PostgreSQL v2 report aggregation commits scoped probe and catalog-monitor
   observations, pending/current alarm state, immutable alarm edges, and outbox

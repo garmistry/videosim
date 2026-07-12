@@ -58,6 +58,8 @@ per-worker limit. Streams over aggregate advertised capacity remain unassigned
 and are reported as a capacity shortfall; this is not media-capacity evidence.
 Use `--max-concurrent-checks N` to bound simultaneous stream checks on a worker;
 checks within each stream remain ordered.
+Use `--stream-budget-seconds N` to stop starting lower-priority checks after a
+stream exhausts its budget. In-flight tools retain their own timeouts.
 
 Run a feed directly from the CLI:
 

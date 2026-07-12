@@ -175,6 +175,53 @@ class MonitorTest(unittest.TestCase):
             {"stream-1", "stream-2"},
         )
 
+    def test_concurrent_monitor_validates_every_stream_before_deep_checks(self):
+        validated_ports = set()
+        lock = threading.Lock()
+
+        def validator(config):
+            with lock:
+                validated_ports.add(config.port)
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            )
+
+        def deep_checker(_stream, _config):
+            with lock:
+                self.assertEqual(validated_ports, {9001, 9002, 9003})
+            return []
+
+        streams = [
+            stream()
+            | {
+                "id": f"stream-{index}",
+                "endpoint": f"srt://127.0.0.1:{9000 + index}?mode=caller",
+            }
+            for index in (1, 2, 3)
+        ]
+        result = run_monitor_once(
+            {"streams": streams},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=deep_checker,
+            loudness_checker=deep_checker,
+            frame_rate_checker=deep_checker,
+            max_concurrency=2,
+        )
+
+        metrics = result["probeMetrics"]["streams"]
+        self.assertEqual([item["check"] for item in metrics[:3]], ["validation"] * 3)
+        self.assertEqual(result["probeMetrics"]["streamCount"], 3)
+        self.assertEqual(result["probeMetrics"]["checkCount"], 12)
+
     def test_monitor_catalogue_exposes_tr101_priority_3_status(self):
         monitors = {item["id"]: item for item in empty_monitor_state()["monitors"]}
 

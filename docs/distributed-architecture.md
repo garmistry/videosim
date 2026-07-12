@@ -64,6 +64,9 @@ VideoSim should split into a master control plane and many worker nodes:
   timeout and does not start its remaining lower-priority checks. Existing
   alarms remain active on inconclusive timeout/error observations. The same
   budget caps built-in GStreamer, FFmpeg, FFprobe, and DASH polling/socket waits.
+- Concurrent workers use one bounded two-phase pool: all assigned streams finish
+  validation before TR-101, frame-rate, or loudness checks start. Validation
+  results and original per-stream deadlines carry into the deep-check phase.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -109,8 +112,9 @@ VideoSim should split into a master control plane and many worker nodes:
   `capacity.maxStreams`; unconfigured workers use compatibility round-robin.
   This is admission control, not measured media capacity.
 - Worker concurrency and built-in probe waits are bounded when configured, but
-  arbitrary checker/trickling-HTTP preemption, cost-tier fairness, durable
-  spool, and backpressure signals remain open.
+  black/frozen validation can still be expensive. Arbitrary checker/trickling-
+  HTTP preemption, protocol/tenant cost tokens, durable spool, and backpressure
+  signals remain open.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
 - PostgreSQL v2 report aggregation commits scoped probe and catalog-monitor
   observations, pending/current alarm state, immutable alarm edges, and outbox

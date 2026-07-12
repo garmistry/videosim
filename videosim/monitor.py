@@ -462,52 +462,21 @@ def iso(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _run_monitor_concurrent(
-    gui_state: dict,
+def _merge_monitor_results(
     state: dict,
+    streams: list[dict],
+    results: list[dict],
     now: float,
-    repeat_seconds: float,
     history_limit: int,
-    srt_host: str,
-    max_concurrency: int,
-    stream_budget_seconds: float,
-    validator: Callable[[VideoFeedConfig], ValidationReport],
-    tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
-    loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
-    frame_rate_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    started: float,
     monotonic: Callable[[], float],
+    *,
+    preserve_observations: bool = False,
+    preserve_metrics: bool = False,
 ) -> dict:
-    streams = [
-        stream
-        for stream in gui_state.get("streams", [])
-        if stream.get("status") == "running"
-    ]
-    started = monotonic()
-
-    def monitor_stream(stream: dict) -> dict:
-        return run_monitor_once(
-            {"streams": [stream]},
-            monitor_state_for_stream_ids(state, {stream["id"]}),
-            now,
-            repeat_seconds,
-            history_limit,
-            srt_host,
-            validator=validator,
-            tr101_checker=tr101_checker,
-            loudness_checker=loudness_checker,
-            frame_rate_checker=frame_rate_checker,
-            monotonic=monotonic,
-            stream_budget_seconds=stream_budget_seconds,
-        )
-
-    # ponytail: one bounded pool for all stream checks; split cost tiers only
-    # when measurements show a single pool causes starvation.
-    with ThreadPoolExecutor(max_workers=min(max_concurrency, len(streams))) as pool:
-        results = list(pool.map(monitor_stream, streams))
-
     stream_ids = {stream["id"] for stream in streams}
     combined = dict(state)
-    for collection in ("alarms", "pending", "monitorObservations"):
+    for collection in ("alarms", "pending"):
         retained = [
             item
             for item in state.get(collection, [])
@@ -516,6 +485,16 @@ def _run_monitor_concurrent(
         combined[collection] = retained + [
             item for result in results for item in result.get(collection, [])
         ]
+    retained_observations = list(state.get("monitorObservations", [])) if preserve_observations else [
+        item
+        for item in state.get("monitorObservations", [])
+        if item.get("streamId") not in stream_ids
+    ]
+    combined["monitorObservations"] = retained_observations + [
+        item
+        for result in results
+        for item in result.get("monitorObservations", [])
+    ]
     combined["alarms"] = sorted(
         combined["alarms"],
         key=lambda alarm: (
@@ -540,11 +519,10 @@ def _run_monitor_concurrent(
     old_stream_metrics = (
         old_metrics.get("streams", []) if isinstance(old_metrics, dict) else []
     )
-    stream_metrics = [
-        item
-        for item in old_stream_metrics
-        if item.get("streamId") not in stream_ids
-    ] + [
+    retained_metrics = old_stream_metrics if preserve_metrics else [
+        item for item in old_stream_metrics if item.get("streamId") not in stream_ids
+    ]
+    stream_metrics = retained_metrics + [
         item
         for result in results
         for item in result.get("probeMetrics", {}).get("streams", [])
@@ -566,6 +544,96 @@ def _run_monitor_concurrent(
     return combined
 
 
+def _run_monitor_concurrent(
+    gui_state: dict,
+    state: dict,
+    now: float,
+    repeat_seconds: float,
+    history_limit: int,
+    srt_host: str,
+    max_concurrency: int,
+    stream_budget_seconds: float,
+    validator: Callable[[VideoFeedConfig], ValidationReport],
+    tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    frame_rate_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
+    monotonic: Callable[[], float],
+) -> dict:
+    streams = [
+        stream
+        for stream in gui_state.get("streams", [])
+        if stream.get("status") == "running"
+    ]
+    started = monotonic()
+
+    def monitor_stream(
+        stream: dict,
+        phase_state: dict,
+        *,
+        validation_only: bool = False,
+        probe_contexts: dict | None = None,
+    ) -> dict:
+        return run_monitor_once(
+            {"streams": [stream]},
+            monitor_state_for_stream_ids(phase_state, {stream["id"]}),
+            now,
+            repeat_seconds,
+            history_limit,
+            srt_host,
+            validator=validator,
+            tr101_checker=tr101_checker,
+            loudness_checker=loudness_checker,
+            frame_rate_checker=frame_rate_checker,
+            monotonic=monotonic,
+            stream_budget_seconds=stream_budget_seconds,
+            _validation_only=validation_only,
+            _probe_contexts=probe_contexts,
+        )
+
+    # ponytail: two bounded phases protect core validation freshness; add more cost
+    # tiers only when production measurements justify them.
+    with ThreadPoolExecutor(max_workers=min(max_concurrency, len(streams))) as pool:
+        validation_results = list(
+            pool.map(lambda stream: monitor_stream(stream, state, validation_only=True), streams)
+        )
+        validation_state = _merge_monitor_results(
+            state,
+            streams,
+            validation_results,
+            now,
+            history_limit,
+            started,
+            monotonic,
+        )
+        probe_contexts = {
+            stream_id: context
+            for result in validation_results
+            for stream_id, context in result.get("_probeContexts", {}).items()
+        }
+        deep_results = list(
+            pool.map(
+                lambda stream: monitor_stream(
+                    stream,
+                    validation_state,
+                    probe_contexts=probe_contexts,
+                ),
+                streams,
+            )
+        )
+
+    return _merge_monitor_results(
+        validation_state,
+        streams,
+        deep_results,
+        now,
+        history_limit,
+        started,
+        monotonic,
+        preserve_observations=True,
+        preserve_metrics=True,
+    )
+
+
 def run_monitor_once(
     gui_state: dict,
     state: dict,
@@ -581,6 +649,8 @@ def run_monitor_once(
     *,
     max_concurrency: int = 1,
     stream_budget_seconds: float = 0,
+    _validation_only: bool = False,
+    _probe_contexts: dict | None = None,
 ) -> dict:
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
@@ -607,6 +677,7 @@ def run_monitor_once(
     issues = []
     probe_metrics = []
     monitor_observations: dict[tuple[str, str], dict] = {}
+    next_probe_contexts = {}
     batch_started = monotonic()
 
     def record(stream: dict, check: str, outcome: str, started: float | None = None, detail: str = ""):
@@ -662,42 +733,56 @@ def run_monitor_once(
     for stream in gui_state.get("streams", []):
         if stream.get("status") != "running":
             continue
-        stream_deadline = (
-            monotonic() + stream_budget_seconds
-            if stream_budget_seconds
-            else None
-        )
-        media_deadline = (
-            time.monotonic() + stream_budget_seconds
-            if stream_budget_seconds
-            else None
-        )
+        probe_context = (_probe_contexts or {}).get(stream["id"])
+        if probe_context is None:
+            config = None
+            report = None
+            stream_deadline = (
+                monotonic() + stream_budget_seconds
+                if stream_budget_seconds
+                else None
+            )
+            media_deadline = (
+                time.monotonic() + stream_budget_seconds
+                if stream_budget_seconds
+                else None
+            )
+        else:
+            config, report, stream_deadline, media_deadline = probe_context
 
         def check_budget():
             if stream_deadline is not None and monotonic() >= stream_deadline:
                 raise TimeoutError("stream probe budget exhausted")
 
-        config = None
-        validation_started = monotonic()
-        try:
-            config = config_for_stream(stream, srt_host)
-            with use_probe_deadline(media_deadline):
-                report = validator(config)
-            check_budget()
-            validation_issues = issues_for_report(stream, report)
-            issues_by_id = {item.monitor_id: item for item in validation_issues}
-            for monitor_id in validation_monitor_ids(stream):
-                item = issues_by_id.get(monitor_id)
-                observe(stream, monitor_id, "unhealthy" if item else "healthy", item.message if item else "")
-            record(stream, "validation", "issue" if validation_issues else "success", validation_started)
-        except Exception as exc:  # ponytail: keep the batch alive; probe crashes stay inconclusive instead of becoming feed alarms.
-            report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
-            outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
-            validation_issues = []
-            for monitor_id in validation_monitor_ids(stream):
-                observe(stream, monitor_id, outcome, str(exc))
-            record(stream, "validation", outcome, validation_started, str(exc))
+        validation_issues = []
+        if probe_context is None:
+            validation_started = monotonic()
+            try:
+                config = config_for_stream(stream, srt_host)
+                with use_probe_deadline(media_deadline):
+                    report = validator(config)
+                check_budget()
+                validation_issues = issues_for_report(stream, report)
+                issues_by_id = {item.monitor_id: item for item in validation_issues}
+                for monitor_id in validation_monitor_ids(stream):
+                    item = issues_by_id.get(monitor_id)
+                    observe(stream, monitor_id, "unhealthy" if item else "healthy", item.message if item else "")
+                record(stream, "validation", "issue" if validation_issues else "success", validation_started)
+            except Exception as exc:  # ponytail: keep the batch alive; probe crashes stay inconclusive instead of becoming feed alarms.
+                report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
+                outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+                for monitor_id in validation_monitor_ids(stream):
+                    observe(stream, monitor_id, outcome, str(exc))
+                record(stream, "validation", outcome, validation_started, str(exc))
         issues.extend(validation_issues)
+        if _validation_only:
+            next_probe_contexts[stream["id"]] = (
+                config,
+                report,
+                stream_deadline,
+                media_deadline,
+            )
+            continue
         if config is None:
             record(stream, "tr101", "skipped", detail="validation configuration unavailable")
             record(stream, "frame_rate", "skipped", detail="validation configuration unavailable")
@@ -777,12 +862,21 @@ def run_monitor_once(
                     observe(stream, monitor_id, outcome, str(exc))
                 record(stream, "loudness", outcome, loudness_started, str(exc))
 
-    issues = apply_alert_profiles(state, gui_state.get("streams", []), issues, now)
     clearable_alarm_ids = {
         f"{stream_id}:{monitor_id}"
         for (stream_id, monitor_id), observation in monitor_observations.items()
         if observation["status"] in {"healthy", "unhealthy"}
     }
+    preserved_pending = {
+        item["id"]: item
+        for item in state.get("pending", [])
+        if item.get("id") not in clearable_alarm_ids
+    }
+    issues = apply_alert_profiles(state, gui_state.get("streams", []), issues, now)
+    state["pending"] = sorted(
+        {**preserved_pending, **{item["id"]: item for item in state["pending"]}}.values(),
+        key=lambda item: item["id"],
+    )
     result = apply_issues(
         state,
         issues,
@@ -806,6 +900,8 @@ def run_monitor_once(
         "outcomes": outcomes,
         "streams": probe_metrics,
     }
+    if _validation_only:
+        result["_probeContexts"] = next_probe_contexts
     return result
 
 

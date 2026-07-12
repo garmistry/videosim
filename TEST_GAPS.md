@@ -78,6 +78,10 @@ implementation and must pass before those milestones advance.
   built-in media subprocess/poll waits. Arbitrary-checker and trickle-resistant
   HTTP cancellation, cost-tier fairness, backpressure, measured media capacity,
   and 1,000-stream failure/soak evidence remain open.
+- Concurrent workers now complete validation for all assigned streams before
+  starting TR-101/frame-rate/loudness work, with deterministic phase-order unit
+  coverage. Black/frozen validation cost, protocol/tenant token fairness, and
+  slow-stream-storm freshness evidence remain open.
 
 ## Monitoring
 

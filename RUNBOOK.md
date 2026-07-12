@@ -402,6 +402,9 @@ Use `--stream-budget-seconds N` to classify an over-budget stream as timed out
 and defer its remaining checks. Built-in GStreamer, FFmpeg, FFprobe, and DASH
 polling waits use the remaining budget; this is not cost-tier fairness,
 backpressure, or capacity certification.
+When `--max-concurrent-checks` is greater than one, the worker validates every
+assigned stream before starting TR-101, frame-rate, and loudness checks. This
+protects core validation freshness but is not protocol- or tenant-cost fairness.
 
 Strict versioned reports are the default. During a controlled same-host upgrade,
 the GUI can temporarily accept old unversioned reporters with

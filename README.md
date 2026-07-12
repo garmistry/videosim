@@ -61,6 +61,8 @@ checks within each stream remain ordered.
 Use `--stream-budget-seconds N` to stop starting lower-priority checks after a
 stream exhausts its budget. Built-in media subprocess and DASH polling waits
 are capped by the remaining budget.
+With concurrent checks enabled, every assigned stream finishes validation
+before the worker starts TR-101, frame-rate, or loudness checks.
 
 Run a feed directly from the CLI:
 

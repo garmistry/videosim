@@ -352,6 +352,7 @@ class GuiState:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     operator_read_only: bool = False
     operator_runtime_known: bool = True
+    operator_runtime_observation: dict | None = None
     _next_stream_number: int = 1
 
     def __post_init__(self):
@@ -2150,6 +2151,7 @@ def request_state_view(
     *,
     operator_read_only: bool = False,
     operator_runtime_known: bool = True,
+    operator_runtime_observation: dict | None = None,
 ) -> GuiState:
     """Create a request-local shallow view without mutating shared selection."""
 
@@ -2163,6 +2165,7 @@ def request_state_view(
         )
     view.operator_read_only = operator_read_only
     view.operator_runtime_known = operator_runtime_known
+    view.operator_runtime_observation = operator_runtime_observation
     view._sync_from_active()
     return view
 
@@ -2184,12 +2187,20 @@ def operator_feed_detail_view(state: GuiState, stream_id: str) -> GuiState | Non
         and local.config_version == persisted.config_version
     ):
         return request_state_view(state, stream_id, local)
+    observation = (
+        store.generated_runtime_observation(
+            persisted.id, persisted.config_version
+        )
+        if persisted.source == "generated"
+        else None
+    )
     return request_state_view(
         state,
         stream_id,
         persisted,
         operator_read_only=False,
-        operator_runtime_known=False,
+        operator_runtime_known=observation is not None,
+        operator_runtime_observation=observation,
     )
 
 
@@ -2488,6 +2499,17 @@ def state_payload(
     if not state.operator_runtime_known:
         for stream in streams:
             stream["runtimeKnown"] = False
+    elif state.operator_runtime_observation is not None:
+        for stream in streams:
+            stream["runtimeKnown"] = True
+            stream["runtime"] = dict(state.operator_runtime_observation)
+            stream["status"] = state.operator_runtime_observation["status"]
+            stream["previewAvailable"] = False
+    status = (
+        state.operator_runtime_observation["status"]
+        if state.operator_runtime_observation is not None
+        else state.status
+    )
     return {
         "apiVersion": OPERATOR_API_VERSION,
         "selectedStreamId": state.selected_stream_id,
@@ -2495,7 +2517,7 @@ def state_payload(
         "streams": streams,
         "durableOperatorReads": durable_control_store(state) is not None,
         "operatorReadOnly": state.operator_read_only,
-        "status": state.status,
+        "status": status,
         "protocol": state.protocol,
         "protocols": [{"value": value, "label": label} for value, label in PROTOCOL_OPTIONS.items()],
         "sources": [{"value": value, "label": label} for value, label in SOURCE_OPTIONS.items()],

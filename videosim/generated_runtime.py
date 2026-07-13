@@ -15,6 +15,7 @@ from .control_plane import MAX_IDENTIFIER_LENGTH
 from .feed_store import configured_database_url
 from .framerate import normalize_frame_rate
 from .gui import PROFILE_OPTIONS, PROTOCOL_OPTIONS, profile_for
+from .postgres_store import generated_runtime_ready_lock_id
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class OwnedFeed:
     process: subprocess.Popen
     lock_id: int
     port_lock_id: int | None = None
+    ready_lock_id: int | None = None
 
 
 def runtime_lock_id(tenant_id: str, feed_id: str) -> int:
@@ -122,6 +124,12 @@ class GeneratedFeedRuntime:
         self.connection.autocommit = True
         self.tenant_id = tenant_id
         self.runtime_id = runtime_id or f"{socket.gethostname()}-{os.getpid()}"
+        if len(self.runtime_id) > 128 or not self.runtime_id.isprintable():
+            raise ValueError("runtime_id must be printable and at most 128 characters")
+        self.connection.execute(
+            "SELECT set_config('application_name', %s, false)",
+            (f"videosim-generated:{self.runtime_id}"[:63],),
+        )
         self.max_feeds = max_feeds
         self.srt_port_start = srt_port_start
         self.srt_port_end = srt_port_end
@@ -233,6 +241,8 @@ class GeneratedFeedRuntime:
                 self.log(f"feed={owned.feed.id} cleanup_failed={exc}")
                 return False
         if unlock:
+            if owned.ready_lock_id is not None:
+                self._unlock(owned.ready_lock_id)
             if owned.port_lock_id is not None:
                 self._unlock(owned.port_lock_id)
             self._unlock(owned.lock_id)
@@ -316,6 +326,15 @@ class GeneratedFeedRuntime:
             self.owned[feed_id] = OwnedFeed(
                 current, process, lock_id, port_lock_id
             )
+            ready_lock_id = generated_runtime_ready_lock_id(
+                self.tenant_id, current.id, current.config_version
+            )
+            ready = self.connection.execute(
+                "SELECT pg_try_advisory_lock(%s) AS locked", (ready_lock_id,)
+            ).fetchone()
+            if not ready["locked"]:
+                raise RuntimeError("generated runtime ready lock is already held")
+            self.owned[feed_id].ready_lock_id = ready_lock_id
             if current.protocol == "srt":
                 used_srt_ports.add(current.feed_port)
             self.log(

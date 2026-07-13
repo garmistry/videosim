@@ -518,6 +518,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
               <MetricStat label="Uptime" value={uptimeText(stream)} />
               <MetricStat label="Frames" value={stream.status === "running" ? stream.metrics.videoFramesLabel : "0"} />
               <MetricStat label="Outbound" value={stream.metrics.outboundLabel} />
+              {stream.runtime ? <MetricStat label="Runtime owner" value={stream.runtime.ownerId} /> : null}
             </div>
           </article>
 

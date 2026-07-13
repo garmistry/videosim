@@ -11,6 +11,7 @@ from videosim.generated_runtime import (
     runtime_lock_id,
     runtime_port_lock_id,
 )
+from videosim.gui import GuiState, operator_feed_detail_payload
 from videosim.migrations import PostgresMigrator
 from videosim.postgres_store import PostgresControlPlaneStore, ReportConflict
 
@@ -85,6 +86,8 @@ class FakeConnection:
                 self.database.locks[lock_id] = self
                 return FakeCursor([{"locked": True}])
             return FakeCursor([{"locked": False}])
+        if normalized.startswith("SELECT set_config"):
+            return FakeCursor([{}])
         if normalized.startswith("SELECT pg_advisory_unlock"):
             lock_id = params[0]
             held = self.database.locks.get(lock_id) is self
@@ -274,23 +277,57 @@ class GeneratedRuntimePostgresIntegrationTest(unittest.TestCase):
             first.reconcile()
             second.reconcile()
             self.assertEqual((len(first.owned), len(second.owned)), (1, 0))
+            observation = self.store.generated_runtime_observation(
+                "stream-a", self.version
+            )
+            self.assertEqual(
+                (observation["status"], observation["healthy"], observation["ownerId"]),
+                ("running", True, "first"),
+            )
+            detail = operator_feed_detail_payload(
+                GuiState(feed_store=self.store), "stream-a"
+            )
+            self.assertTrue(detail["streams"][0]["runtimeKnown"])
+            self.assertEqual(detail["streams"][0]["runtime"]["ownerId"], "first")
+            self.assertEqual(detail["streams"][0]["status"], "running")
 
             with patch("videosim.generated_runtime.os.killpg"):
                 first.close()
+            self.assertIsNone(
+                self.store.generated_runtime_observation("stream-a", self.version)
+            )
             second.reconcile()
             self.assertEqual(len(second.owned), 1)
+            self.assertEqual(
+                self.store.generated_runtime_observation("stream-a", self.version)[
+                    "ownerId"
+                ],
+                "second",
+            )
 
             updated = feed_row(version=self.version, mode="video_only")["config"]
             next_version = self.store.upsert_versioned(updated, self.version)
+            self.assertIsNone(
+                self.store.generated_runtime_observation("stream-a", next_version)
+            )
             with patch("videosim.generated_runtime.os.killpg"):
                 second.reconcile()
             self.assertEqual(second.owned["stream-a"].feed.config_version, next_version)
+            self.assertEqual(
+                self.store.generated_runtime_observation("stream-a", next_version)[
+                    "ownerId"
+                ],
+                "second",
+            )
 
             stopped = dict(updated, desired_state="stopped")
             self.store.upsert_versioned(stopped, next_version)
             with patch("videosim.generated_runtime.os.killpg"):
                 second.reconcile()
             self.assertFalse(second.owned)
+            self.assertIsNone(
+                self.store.generated_runtime_observation("stream-a", next_version)
+            )
         finally:
             if not first.connection.closed:
                 with patch("videosim.generated_runtime.os.killpg"):

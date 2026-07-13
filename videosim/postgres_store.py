@@ -42,6 +42,15 @@ class ReportConflict(PostgresStoreError):
     pass
 
 
+def generated_runtime_ready_lock_id(
+    tenant_id: str, feed_id: str, config_version: int
+) -> int:
+    value = hashlib.sha256(
+        f"videosim.generated-runtime-ready:{tenant_id}:{feed_id}:{config_version}".encode()
+    ).digest()[:8]
+    return int.from_bytes(value, "big", signed=True)
+
+
 @dataclass(frozen=True)
 class DurableLease:
     tenant_id: str
@@ -262,6 +271,47 @@ class PostgresControlPlaneStore:
         config["id"] = row["id"]
         config["config_version"] = int(row["config_version"])
         return config
+
+    def generated_runtime_observation(
+        self, feed_id: str, config_version: int
+    ) -> dict | None:
+        if not isinstance(feed_id, str) or not feed_id:
+            raise ValueError("feed ID must be a non-empty string")
+        if type(config_version) is not int or config_version < 1:
+            raise ValueError("feed configuration version must be positive")
+        lock_id = generated_runtime_ready_lock_id(
+            self.tenant_id, feed_id, config_version
+        ) & ((1 << 64) - 1)
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT activity.application_name, activity.backend_start
+                FROM pg_locks AS held
+                JOIN pg_stat_activity AS activity ON activity.pid = held.pid
+                WHERE held.locktype = 'advisory'
+                  AND held.classid = %s::oid
+                  AND held.objid = %s::oid
+                  AND held.objsubid = 1
+                  AND held.mode = 'ExclusiveLock'
+                  AND held.granted
+                  AND activity.datname = current_database()
+                  AND activity.application_name LIKE 'videosim-generated:%%'
+                LIMIT 2
+                """,
+                (lock_id >> 32, lock_id & 0xFFFFFFFF),
+            ).fetchall()
+        if not rows:
+            return None
+        if len(rows) != 1:  # pragma: no cover - exclusive-lock invariant.
+            raise PostgresStoreError("multiple generated runtimes hold one ready lock")
+        prefix = "videosim-generated:"
+        return {
+            "status": "running",
+            "healthy": True,
+            "ownerId": rows[0]["application_name"][len(prefix) :],
+            "configVersion": config_version,
+            "sessionStartedAt": rows[0]["backend_start"].isoformat(),
+        }
 
     def upsert(self, feed: Mapping) -> int:
         return self.import_feed_if_changed(feed)[1]

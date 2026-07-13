@@ -201,9 +201,17 @@ Follow `nextCursor` while `hasMore` is true. The maximum and default limits are
 200 and 100. Production requests use the same OIDC viewer authorization as the
 GUI. Catalog rows return persisted configuration/config versions only. Detail
 returns exactly one feed and stream-scoped monitor data. A replica without a
-matching local config version returns that feed with `operatorReadOnly=true`
-and `runtimeKnown=false`; route mutations to the owning process until the
-remaining mutation-routing work is complete.
+matching local config version returns `runtimeKnown=false`. External feeds stay
+configuration-writable on that replica; generated feeds return
+`operatorReadOnly=true` until generated runtime ownership is durable.
+
+Every PostgreSQL-backed update, alert-profile, expectation, or delete form must
+send the positive `config_version` returned by the detail/catalog read. Missing
+or malformed versions return HTTP 400. A stale version or a generated-feed
+request sent away from its runtime owner returns HTTP 409 and commits no feed or
+success-audit change. External-feed update, alert-profile, and delete requests
+may be sent to any healthy API replica; reload detail after a 409 before asking
+an operator to retry.
 
 Video-present modes include a running clock overlay in the encoded video so
 receivers can visually prove live motion and timing.

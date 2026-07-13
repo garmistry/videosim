@@ -443,10 +443,43 @@ captions validation, stop, Compose-state capture, and Docker-log review. Logs
 had no traceback, fatal error, or validation failure and retained the known
 non-fatal caption-framerate negotiation warning.
 
-This closes durable catalog preload and create-ID dependence on replica-local
-state. Client-supplied config-version preconditions, update/delete routing,
-generated runtime ownership, production load balancing/HA, independent media
-capacity, and the 24-hour F5 admission bundle remain open.
+That follow-up closed durable catalog preload and create-ID dependence on
+replica-local state. At that point, config-version preconditions and
+update/delete routing remained open; the next follow-up closes those for
+external feeds.
+
+## Version-Fenced Replica Mutation Follow-Up
+
+On 2026-07-13, 1,320 external rows (660 SRT and 660 DASH) were seeded before
+two API processes started. Both process caches remained empty. Detail for
+`stream-0660` was configuration-writable with runtime unknown on the non-owning
+replica, and its fallback HTML carried version 1.
+
+| Check | Result |
+|---|---:|
+| Current update through API A | version 1 to 2 |
+| Stale delete through API B | HTTP 409, row retained |
+| Alert-profile update through API B | version 2 to 3 |
+| Stale update through API A | HTTP 409, config retained |
+| Current delete through API A | generation advanced to 4 |
+| Remaining catalog | 1,319 unique rows; 660 SRT/659 DASH |
+| Pages and latency p50/max | 14; 0.003053/0.003269 seconds |
+| Final process caches | 0/0 rows |
+| Successful durable audits | one update, one alert update, one delete |
+
+The measured API window logged only the two expected conflict audits;
+PostgreSQL logged no runtime error. Exact combined app/worker image hashes then
+passed the marked startup workflow in 12.116 seconds. A retained 8.291-second
+run captured both containers up, API readiness, worker registration, feed
+create/start, normal-SRT video/audio/captions validation, stop, and clean EOS;
+the known non-fatal caption-framerate warning remained.
+
+The live mutation smoke used direct security-off loopback HTTP; trusted-proxy
+authorization is covered by the HTTP regression. It proves one external
+resource's routing/fencing in a 1,320-row catalog, not mutation throughput.
+Generated runtime ownership, idempotent create/retry, a production load
+balancer/HA database, independent media capacity, and the 24-hour F5 admission
+bundle remain open.
 
 ## Validation
 

@@ -210,10 +210,13 @@ implementation and must pass before those milestones advance.
   empty. A follow-up started both replicas after all 1,320 rows existed; both
   still cached zero feeds, and concurrent durable creates used distinct UUID-
   backed IDs while a forced collision failed closed. The cursor is not a
-  cross-request database snapshot, runtime is known only on a replica with a
-  matching local config version, and remote detail is deliberately read-only.
-  Client-supplied config-version mutation preconditions, update/delete routing,
-  generated runtime ownership, and HA remain open F4 gates.
+  cross-request database snapshot. Durable configuration forms now require the
+  displayed positive version; any replica can update/alert/delete an external
+  feed, stale update/delete fails with HTTP 409, and remote external detail is
+  writable with runtime unknown. A local two-API smoke retained zero caches
+  while mutating one of 1,320 rows and paging the remaining 1,319 exactly once.
+  Generated runtime ownership, idempotent create/retry, and HA remain open F4
+  gates.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A
   configured cadence staggers deep work; aggregate budget exhaustion stops new

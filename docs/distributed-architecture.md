@@ -116,12 +116,18 @@ VideoSim should split into a master control plane and many worker nodes:
   stream array. `GET /api/operator/overview` returns capped alarms/events/
   pending rows and worker summaries without per-stream probe metrics. `GET
   /api/operator/feeds/<id>` reads one current configuration directly, scopes
-  monitor rows to that feed, and marks runtime unknown/read-only when the
-  serving replica lacks a matching local config version.
+  monitor rows to that feed, and marks runtime unknown when the serving replica
+  lacks a matching local config version. External configuration remains
+  writable there; generated configuration is read-only without its runtime.
 - PostgreSQL API startup does not preload durable feed rows into process state.
   Durable creates use UUID-backed feed IDs; the PostgreSQL primary key plus
   expected-version-zero insert path rejects even a forced ID collision without
   overwriting the winner. SQLite retains sequential IDs and startup reloads.
+- Durable configuration forms carry the displayed positive config version.
+  Each API reconstructs only the requested nonlocal external feed and reuses
+  the existing PostgreSQL compare-and-swap/audit transaction, so update,
+  alert-profile, and delete do not require process-cache routing. Stale requests
+  return HTTP 409; generated-feed mutations remain runtime-owner-bound.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete

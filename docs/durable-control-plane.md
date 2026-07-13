@@ -195,8 +195,13 @@ handler returns HTTP 503 before changing in-memory configuration or starting,
 stopping, or deleting a local process if that transaction fails. A generated-feed
 configuration change is committed before its local restart; durable deletion is
 committed before best-effort detached-process cleanup. PostgreSQL mutations use
-the loaded feed `config_version` as an expected-version fence, so a stale process
-cannot recreate a feed deleted by another process. This boundary does not make
+the client-supplied positive `config_version` as an expected-version fence.
+Missing/malformed versions return HTTP 400; stale update/delete returns HTTP
+409 and commits neither the feed change nor its success audit. A replica loads
+only the requested external registration, then reuses the existing atomic
+compare-and-swap/audit transaction for update, alert-profile, or delete without
+retaining that row in process state. Generated-feed mutations still require the
+replica holding the matching local runtime. This boundary does not make
 transient runtime start/stop/validate behavior durable.
 
 PostgreSQL-backed API processes do not preload the durable feed catalog into

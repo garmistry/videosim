@@ -42,6 +42,7 @@ class GuiTest(unittest.TestCase):
             {"maxConcurrentChecks": 0},
             {"streamBudgetSeconds": float("inf")},
             {"deepCheckIntervalSeconds": "60"},
+            {"batchBudgetSeconds": 0},
         ):
             with self.subTest(capacity=capacity), self.assertRaises(
                 WorkerReportValidationError

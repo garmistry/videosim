@@ -582,6 +582,7 @@ def _run_monitor_concurrent(
     max_concurrency: int,
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
+    batch_budget_seconds: float,
     validator: Callable[[VideoFeedConfig], ValidationReport],
     tr101_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
     loudness_checker: Callable[[dict, VideoFeedConfig], list[MonitorIssue]],
@@ -601,6 +602,7 @@ def _run_monitor_concurrent(
         *,
         validation_only: bool = False,
         probe_contexts: dict | None = None,
+        defer_deep_reason: str = "",
     ) -> dict:
         return run_monitor_once(
             {"streams": [stream]},
@@ -618,6 +620,7 @@ def _run_monitor_concurrent(
             deep_check_interval_seconds=deep_check_interval_seconds,
             _validation_only=validation_only,
             _probe_contexts=probe_contexts,
+            _defer_deep_reason=defer_deep_reason,
         )
 
     # ponytail: two bounded phases protect core validation freshness; add more cost
@@ -640,12 +643,18 @@ def _run_monitor_concurrent(
             for result in validation_results
             for stream_id, context in result.get("_probeContexts", {}).items()
         }
+        defer_deep_reason = (
+            "validation phase exhausted batch budget"
+            if batch_budget_seconds and monotonic() - started >= batch_budget_seconds
+            else ""
+        )
         deep_results = list(
             pool.map(
                 lambda stream: monitor_stream(
                     stream,
                     validation_state,
                     probe_contexts=probe_contexts,
+                    defer_deep_reason=defer_deep_reason,
                 ),
                 streams,
             )
@@ -680,8 +689,10 @@ def run_monitor_once(
     max_concurrency: int = 1,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
+    batch_budget_seconds: float = 0,
     _validation_only: bool = False,
     _probe_contexts: dict | None = None,
+    _defer_deep_reason: str = "",
 ) -> dict:
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
@@ -689,7 +700,9 @@ def run_monitor_once(
         raise ValueError("stream_budget_seconds must be zero or greater")
     if not math.isfinite(deep_check_interval_seconds) or deep_check_interval_seconds < 0:
         raise ValueError("deep_check_interval_seconds must be zero or greater")
-    if max_concurrency > 1 and any(
+    if not math.isfinite(batch_budget_seconds) or batch_budget_seconds < 0:
+        raise ValueError("batch_budget_seconds must be zero or greater")
+    if (max_concurrency > 1 or batch_budget_seconds) and any(
         stream.get("status") == "running" for stream in gui_state.get("streams", [])
     ):
         return _run_monitor_concurrent(
@@ -702,6 +715,7 @@ def run_monitor_once(
             max_concurrency,
             stream_budget_seconds,
             deep_check_interval_seconds,
+            batch_budget_seconds,
             validator,
             tr101_checker,
             loudness_checker,
@@ -842,6 +856,18 @@ def run_monitor_once(
                 continue
         else:
             deep_check_schedule.pop(stream["id"], None)
+        if _defer_deep_reason:
+            if deep_check_interval_seconds:
+                deep_check_schedule[stream["id"]] = next_deep_check_at(
+                    stream["id"], now, deep_check_interval_seconds
+                )
+            record(
+                stream,
+                "deep_checks",
+                "skipped",
+                detail=_defer_deep_reason,
+            )
+            continue
         if config is None:
             record(stream, "tr101", "skipped", detail="validation configuration unavailable")
             record(stream, "frame_rate", "skipped", detail="validation configuration unavailable")

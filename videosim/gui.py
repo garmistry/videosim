@@ -2280,7 +2280,11 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
         raise WorkerReportValidationError(
             f"capacity.maxConcurrentChecks must be an integer between 1 and {MAX_WORKER_STREAMS}"
         )
-    for field in ("streamBudgetSeconds", "deepCheckIntervalSeconds"):
+    for field in (
+        "streamBudgetSeconds",
+        "deepCheckIntervalSeconds",
+        "batchBudgetSeconds",
+    ):
         value = capacity.get(field)
         if value is not None and (
             isinstance(value, bool)

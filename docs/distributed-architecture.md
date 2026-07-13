@@ -67,6 +67,10 @@ VideoSim should split into a master control plane and many worker nodes:
 - Concurrent workers use one bounded two-phase pool: all assigned streams finish
   validation before TR-101, frame-rate, or loudness checks start. Validation
   results and original per-stream deadlines carry into the deep-check phase.
+- `--batch-budget-seconds` measures the aggregate two-phase cycle and defers due
+  deep checks when validation alone consumes the budget. Deferral emits no
+  health observation, preserves alarms, and uses the configured stable cadence
+  for retry scheduling. It is a soft phase guard, not queue backpressure.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -113,10 +117,11 @@ VideoSim should split into a master control plane and many worker nodes:
   This is admission control, not measured media capacity.
 - Worker concurrency and built-in probe waits are bounded when configured, but
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
-  HTTP preemption, protocol/tenant cost tokens, dynamic pressure signals,
-  durable spool, and full backpressure remain open. Workers can keep validation
-  on every cycle while staggering the deep-check phase at stable per-stream
-  offsets. Graceful workers finish the current report, stop
+  HTTP preemption, protocol/tenant cost tokens, validation-phase bounds,
+  pressure/recovery telemetry, durable spool, and full queue backpressure
+  remain open. Workers can keep validation on every cycle, shed the deep phase
+  when validation exhausts an aggregate budget, and stagger retries at stable
+  per-stream offsets. Graceful workers finish the current report, stop
   heartbeats, and transition their fenced incarnation/leases to `draining` for
   immediate higher-epoch reassignment; hard kills still rely on lease expiry.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
@@ -135,8 +140,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/utilization metadata, bounded concurrent execution,
-  cancellation, encrypted spooling, dynamic backpressure, and scheduling beyond
-  the current static capacity/deep-cadence controls.
+  cancellation, encrypted spooling, full queue backpressure, and scheduling
+  beyond the current static capacity and soft batch-pressure controls.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

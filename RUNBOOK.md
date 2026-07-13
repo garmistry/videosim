@@ -461,6 +461,13 @@ probe metric and no health observation, preserving existing deep-check alarms.
 Zero keeps the existing every-cycle deep checks. Select the interval from
 measured freshness and worker-capacity evidence; this control is deterministic
 load shedding, not dynamic backpressure or capacity certification.
+Use `--batch-budget-seconds N` to finish validation for every assignment and
+defer the due deep phase when validation has consumed that aggregate cycle
+budget. The skipped phase remains inconclusive and does not clear alarms. With
+`--deep-check-interval-seconds`, deferred work moves to the stream's next stable
+cadence offset; without a cadence it is retried on the next worker cycle. This
+is a soft phase guard and does not bound validation duration, persist reports,
+or provide queue backpressure.
 When `--max-concurrent-checks` is greater than one, the worker validates every
 assigned stream before starting TR-101, frame-rate, and loudness checks. This
 protects core validation freshness but is not protocol- or tenant-cost fairness.

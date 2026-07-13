@@ -81,9 +81,11 @@ implementation and must pass before those milestones advance.
 - Concurrent workers now complete validation for all assigned streams before
   starting TR-101/frame-rate/loudness work, with deterministic phase-order unit
   coverage. Workers can stagger that deep phase with a configured cadence while
-  validation continues every cycle, and deferred phases preserve active alarms.
-  Black/frozen validation cost, protocol/tenant token fairness, dynamic pressure
-  feedback, and slow-stream-storm freshness evidence remain open.
+  validation continues every cycle, and an aggregate cycle budget can defer due
+  deep work after a slow validation phase without clearing alarms. Black/frozen
+  validation cost, protocol/tenant token fairness, validation-phase bounds,
+  pressure/recovery telemetry, full queue backpressure, and slow-stream-storm
+  freshness evidence remain open.
 - The environment-gated Compose startup workflow proves one worker plus one
   normal SRT feed through the real HTTP API, captures Docker state/logs, and has
   a documented Chrome path. It does not exercise the production PostgreSQL/NATS

@@ -75,6 +75,10 @@ are capped by the remaining budget.
 Use `--deep-check-interval-seconds N` to keep validation on every worker cycle
 while staggering TR-101, frame-rate, and loudness analysis across that cadence.
 Zero retains the every-cycle behavior.
+Use `--batch-budget-seconds N` to defer the deep phase when validation has
+already consumed that aggregate worker-cycle budget. Pair it with the deep-check
+cadence to spread deferred retries; this is a soft pressure guard, not queue
+backpressure or capacity evidence.
 With concurrent checks enabled, every assigned stream finishes validation
 before the worker starts TR-101, frame-rate, or loudness checks.
 

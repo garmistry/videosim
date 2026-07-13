@@ -101,6 +101,7 @@ class WorkerTest(unittest.TestCase):
                 max_concurrent_checks=4,
                 stream_budget_seconds=30,
                 deep_check_interval_seconds=60,
+                batch_budget_seconds=20,
             )
         payload = json.loads(open_url.call_args.args[0].data)
         self.assertEqual(
@@ -110,6 +111,7 @@ class WorkerTest(unittest.TestCase):
                 "maxConcurrentChecks": 4,
                 "streamBudgetSeconds": 30,
                 "deepCheckIntervalSeconds": 60,
+                "batchBudgetSeconds": 20,
             },
         )
 
@@ -206,6 +208,7 @@ class WorkerTest(unittest.TestCase):
                     max_concurrent_checks=2,
                     stream_budget_seconds=30,
                     deep_check_interval_seconds=60,
+                    batch_budget_seconds=20,
                 ),
                 0,
             )
@@ -216,6 +219,7 @@ class WorkerTest(unittest.TestCase):
                 "max_concurrency": 2,
                 "stream_budget_seconds": 30,
                 "deep_check_interval_seconds": 60,
+                "batch_budget_seconds": 20,
             },
         )
 

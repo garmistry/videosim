@@ -81,6 +81,7 @@ def post_heartbeat(
     max_concurrent_checks: int = 0,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
+    batch_budget_seconds: float = 0,
 ) -> dict:
     payload = {"workerId": worker_id}
     if worker_incarnation_id:
@@ -100,6 +101,8 @@ def post_heartbeat(
         capacity["streamBudgetSeconds"] = stream_budget_seconds
     if deep_check_interval_seconds:
         capacity["deepCheckIntervalSeconds"] = deep_check_interval_seconds
+    if batch_budget_seconds:
+        capacity["batchBudgetSeconds"] = batch_budget_seconds
     if capacity:
         payload["capacity"] = capacity
     body = json.dumps(payload).encode("utf-8")
@@ -148,6 +151,7 @@ def _heartbeat_loop(
     max_concurrent_checks: int,
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
+    batch_budget_seconds: float,
 ):
     while not stop.wait(interval_seconds):
         try:
@@ -156,6 +160,7 @@ def _heartbeat_loop(
                 or max_concurrent_checks
                 or stream_budget_seconds
                 or deep_check_interval_seconds
+                or batch_budget_seconds
             ):
                 post_heartbeat(
                     control_plane_url,
@@ -166,6 +171,7 @@ def _heartbeat_loop(
                     max_concurrent_checks,
                     stream_budget_seconds,
                     deep_check_interval_seconds,
+                    batch_budget_seconds,
                 )
             else:
                 post_heartbeat(
@@ -339,6 +345,7 @@ def run_worker(
     max_concurrent_checks: int = 1,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
+    batch_budget_seconds: float = 0,
     drain_event: threading.Event | None = None,
 ) -> int:
     if heartbeat_seconds <= 0:
@@ -351,6 +358,8 @@ def run_worker(
         raise ValueError("stream_budget_seconds must be zero or greater")
     if not math.isfinite(deep_check_interval_seconds) or deep_check_interval_seconds < 0:
         raise ValueError("deep_check_interval_seconds must be zero or greater")
+    if not math.isfinite(batch_budget_seconds) or batch_budget_seconds < 0:
+        raise ValueError("batch_budget_seconds must be zero or greater")
     state = empty_monitor_state()
     assignment_conflicts = 0
     report_sequence = 0
@@ -376,6 +385,7 @@ def run_worker(
             max_concurrent_checks if max_concurrent_checks > 1 else 0,
             stream_budget_seconds,
             deep_check_interval_seconds,
+            batch_budget_seconds,
         ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
@@ -407,6 +417,7 @@ def run_worker(
             or max_concurrent_checks > 1
             or stream_budget_seconds
             or deep_check_interval_seconds
+            or batch_budget_seconds
         ):
             call_with_retry(
                 lambda: post_heartbeat(
@@ -418,6 +429,7 @@ def run_worker(
                     max_concurrent_checks if max_concurrent_checks > 1 else 0,
                     stream_budget_seconds,
                     deep_check_interval_seconds,
+                    batch_budget_seconds,
                 ),
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
@@ -474,6 +486,8 @@ def run_worker(
                 monitor_kwargs["deep_check_interval_seconds"] = (
                     deep_check_interval_seconds
                 )
+            if batch_budget_seconds:
+                monitor_kwargs["batch_budget_seconds"] = batch_budget_seconds
             state = run_monitor_once(
                 {"streams": streams},
                 state,

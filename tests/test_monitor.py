@@ -233,6 +233,72 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(result["probeMetrics"]["streamCount"], 3)
         self.assertEqual(result["probeMetrics"]["checkCount"], 12)
 
+    def test_batch_budget_defers_deep_checks_without_clearing_alarms(self):
+        streams = [
+            stream()
+            | {
+                "id": f"stream-{index}",
+                "endpoint": f"srt://127.0.0.1:{9000 + index}?mode=caller",
+            }
+            for index in (1, 2)
+        ]
+        previous = apply_issues(
+            empty_monitor_state(),
+            [
+                issue(current, "tr101_1_1_ts_sync_loss", "sync lost")
+                for current in streams
+            ],
+            now=90,
+            repeat_seconds=5,
+            history_limit=20,
+        )
+        clock = [0.0]
+
+        def validator(config):
+            clock[0] = 10.0
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            )
+
+        def should_not_run(*_args):
+            raise AssertionError("deep check ran after batch budget exhaustion")
+
+        result = run_monitor_once(
+            {"streams": streams},
+            previous,
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=should_not_run,
+            loudness_checker=should_not_run,
+            frame_rate_checker=should_not_run,
+            monotonic=lambda: clock[0],
+            max_concurrency=2,
+            deep_check_interval_seconds=60,
+            batch_budget_seconds=5,
+        )
+
+        self.assertEqual(
+            result["probeMetrics"]["outcomes"], {"success": 2, "skipped": 2}
+        )
+        self.assertEqual(
+            {
+                item.get("detail")
+                for item in result["probeMetrics"]["streams"]
+                if item["check"] == "deep_checks"
+            },
+            {"validation phase exhausted batch budget"},
+        )
+        self.assertEqual(len(set(result["deepCheckSchedule"].values())), 2)
+        self.assertEqual(len(result["alarms"]), 2)
+        self.assertTrue(all(alarm["active"] for alarm in result["alarms"]))
+
     def test_concurrent_deep_checks_use_staggered_cadence_without_false_clear(self):
         streams = [
             stream()
@@ -302,6 +368,18 @@ class MonitorTest(unittest.TestCase):
                 history_limit=20,
                 srt_host="app",
                 deep_check_interval_seconds=-1,
+            )
+
+    def test_batch_budget_rejects_non_finite_values(self):
+        with self.assertRaisesRegex(ValueError, "batch_budget_seconds"):
+            run_monitor_once(
+                {"streams": []},
+                empty_monitor_state(),
+                now=100,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                batch_budget_seconds=float("nan"),
             )
 
     def test_monitor_catalogue_exposes_tr101_priority_3_status(self):

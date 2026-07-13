@@ -145,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="staggered TR-101/frame-rate/loudness cadence; zero runs every cycle",
     )
+    worker.add_argument(
+        "--batch-budget-seconds",
+        type=float,
+        default=0,
+        help="defer deep checks when validation consumes this batch budget; zero disables",
+    )
     worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     control_plane_benchmark = subparsers.add_parser(
@@ -435,6 +441,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("stream_budget_seconds must be zero or greater")
             if args.deep_check_interval_seconds < 0:
                 raise ValueError("deep_check_interval_seconds must be zero or greater")
+            if args.batch_budget_seconds < 0:
+                raise ValueError("batch_budget_seconds must be zero or greater")
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
             ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
@@ -443,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
                 or args.max_concurrent_checks > 1
                 or args.stream_budget_seconds
                 or args.deep_check_interval_seconds
+                or args.batch_budget_seconds
             ):
                 return run_worker(
                     args.control_plane_url,
@@ -460,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_concurrent_checks=args.max_concurrent_checks,
                     stream_budget_seconds=args.stream_budget_seconds,
                     deep_check_interval_seconds=args.deep_check_interval_seconds,
+                    batch_budget_seconds=args.batch_budget_seconds,
                 )
             return run_worker(
                 args.control_plane_url,

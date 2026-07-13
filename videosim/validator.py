@@ -205,7 +205,7 @@ def _expected_tracks_present(endpoint, expected):
             args.extend(["fakesink", "sync=false", "num-buffers=5"])
     if expected["audio"]:
         args.extend(["demux.", "!", "queue", "!", "aacparse", "!", "fakesink", "sync=false", "num-buffers=5"])
-    return _receiver_succeeds(args, timeout=15)
+    return _receiver_succeeds(args, timeout=15, attempts=3)
 
 
 def _track_present(endpoint, track):
@@ -463,15 +463,25 @@ def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path | bytes, count:
     return result.stdout[: frame_size * count]
 
 
-def _receiver_succeeds(args, timeout):
-    bounded_timeout = probe_timeout(timeout)
-    try:
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=bounded_timeout)
-    except subprocess.TimeoutExpired as exc:
-        if bounded_timeout < timeout:
-            raise TimeoutError("stream probe budget exhausted") from exc
-        return False
-    return result.returncode == 0
+def _receiver_succeeds(args, timeout, attempts=1):
+    attempt_timeout = timeout / attempts
+    for attempt in range(attempts):
+        bounded_timeout = probe_timeout(attempt_timeout)
+        try:
+            result = subprocess.run(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=bounded_timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if bounded_timeout < attempt_timeout:
+                raise TimeoutError("stream probe budget exhausted") from exc
+            if attempt + 1 == attempts:
+                return False
+            continue
+        return result.returncode == 0
 
 
 def _fetch_url(url: str, timeout: float = 8) -> bytes:

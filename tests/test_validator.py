@@ -25,6 +25,23 @@ class ValidatorOutputTest(unittest.TestCase):
 
         self.assertLess(run.call_args.kwargs["timeout"], 1)
 
+    def test_gstreamer_receiver_retries_within_total_timeout(self):
+        from videosim.validator import _receiver_succeeds
+
+        with patch(
+            "videosim.validator.subprocess.run",
+            side_effect=[
+                subprocess.TimeoutExpired("gst-launch-1.0", 5),
+                subprocess.CompletedProcess([], 0),
+            ],
+        ) as run:
+            self.assertTrue(
+                _receiver_succeeds(["gst-launch-1.0"], timeout=15, attempts=3)
+            )
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.kwargs["timeout"], 5)
+
     def test_stream_budget_bounds_dash_polling(self):
         from videosim.validator import _wait_for_dash_manifest
 

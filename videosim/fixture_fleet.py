@@ -17,6 +17,7 @@ from .feed import require_gst_launch
 
 FIXTURE_SCHEMA = "videosim.fixture-fleet/v1"
 BEHAVIORS = ("healthy", "slow", "dead", "malformed")
+SRT_MULTICAST_GROUP = "239.255.42.42"
 
 
 def behavior_endpoint_counts(manifest: dict) -> dict[str, int]:
@@ -86,9 +87,9 @@ def load_fixture_manifest(path: str | Path) -> tuple[dict, str]:
             raise ValueError(
                 f"fixture fleet behaviorEndpointCounts total must not exceed {MAX_REPORT_STREAMS}"
             )
-    if protocol == "srt" and manifest["basePort"] + sum(
-        behavior_endpoint_counts(manifest).values()
-    ) > 65536:
+    counts = behavior_endpoint_counts(manifest)
+    required_ports = sum(counts.values()) + (2 if counts["healthy"] > 1 else 0)
+    if protocol == "srt" and manifest["basePort"] + required_ports > 65536:
         raise ValueError("fixture fleet basePort plus endpoint count exceeds 65535")
     return manifest, hashlib.sha256(raw).hexdigest()
 
@@ -219,36 +220,70 @@ def srt_fixture_commands(manifest: dict) -> list[list[str]]:
         )
         offset += counts[behavior]
 
-    def listener(port: int) -> list[str]:
+    def listener(port: int, *, wait: bool = False) -> list[str]:
         return [
             "!",
             "srtsink",
             f"uri=srt://:{port}?mode=listener",
-            "wait-for-connection=false",
+            f"wait-for-connection={'true' if wait else 'false'}",
         ]
 
-    commands = []
-    for port in ports["healthy"]:
-        commands.append(
+    def feed(port: int) -> list[str]:
+        return [
+            sys.executable,
+            "-m",
+            "videosim",
+            "start",
+            "--profile",
+            manifest["profile"],
+            "--protocol",
+            "srt",
+            "--port",
+            str(port),
+            "--width",
+            str(manifest["width"]),
+            "--height",
+            str(manifest["height"]),
+            "--framerate",
+            str(manifest["framerate"]),
+        ]
+
+    healthy_ports = ports["healthy"]
+    if len(healthy_ports) == 1:
+        commands = [feed(healthy_ports[0])]
+    else:
+        source_port = manifest["basePort"] + sum(counts.values())
+        multicast_port = source_port + 1
+        commands = [
+            feed(source_port),
             [
-                sys.executable,
-                "-m",
-                "videosim",
-                "start",
-                "--profile",
-                manifest["profile"],
-                "--protocol",
-                "srt",
-                "--port",
-                str(port),
-                "--width",
-                str(manifest["width"]),
-                "--height",
-                str(manifest["height"]),
-                "--framerate",
-                str(manifest["framerate"]),
-            ]
-        )
+                gst_launch,
+                "-q",
+                "srtsrc",
+                f"uri=srt://127.0.0.1:{source_port}?mode=caller",
+                "blocksize=1316",
+                "!",
+                "udpsink",
+                f"host={SRT_MULTICAST_GROUP}",
+                f"port={multicast_port}",
+                "auto-multicast=true",
+                "sync=false",
+                "async=false",
+            ],
+        ]
+        for port in healthy_ports:
+            commands.append(
+                [
+                    gst_launch,
+                    "-q",
+                    "udpsrc",
+                    f"address={SRT_MULTICAST_GROUP}",
+                    f"port={multicast_port}",
+                    "auto-multicast=true",
+                    "caps=video/mpegts,systemstream=(boolean)true,packetsize=(int)188",
+                    *listener(port, wait=True),
+                ]
+            )
     for port in ports["slow"]:
         commands.append(
             [
@@ -288,8 +323,16 @@ def srt_fixture_commands(manifest: dict) -> list[list[str]]:
 def run_srt_fixture_fleet(manifest: dict, state_path: str, manifest_sha256: str) -> int:
     processes = []
     try:
-        for command in srt_fixture_commands(manifest):
+        commands = srt_fixture_commands(manifest)
+        for index, command in enumerate(commands):
             processes.append(subprocess.Popen(command))
+            if index == 0 and behavior_endpoint_counts(manifest)["healthy"] > 1:
+                # ponytail: fixed local barrier; use SRT readiness signaling for remote startup.
+                time.sleep(2)
+                if processes[0].poll() is not None:
+                    raise ValueError(
+                        f"SRT fixture source exited with {processes[0].returncode}"
+                    )
         time.sleep(0.5)
         for process in processes:
             if process.poll() is not None:

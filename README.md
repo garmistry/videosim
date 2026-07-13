@@ -205,9 +205,11 @@ stress input, not independent-stream or capacity evidence.
 
 `scale/fixtures/srt-endpoints-500.json` and
 `scale/fixtures/dash-endpoints-500.json` instead declare 500 distinct protocol
-URLs each with that same behavior mix. The SRT fleet launches one process per
-non-dead listener; the DASH URLs still share one generator/origin. Treat both as
-load inputs, not capacity evidence, until their full run artifacts pass F5.
+URLs each with that same behavior mix. The SRT fleet encodes one captioned
+transport stream, distributes it over local multicast, and uses a lightweight
+relay for each healthy listener; slow and malformed listeners remain separate
+fault processes. The DASH URLs still share one generator/origin. These are load
+inputs, not capacity evidence, until the complete F5 gate passes.
 
 To fail unless cursor rotation starts validation for every logical stream, add
 `--require-full-validation-coverage` and run enough measured iterations. With

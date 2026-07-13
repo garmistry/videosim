@@ -618,10 +618,12 @@ bounded scheduling/deferral and never as media-capacity evidence.
 For 1,000 distinct protocol URLs, run the fleets with
 `scale/fixtures/srt-endpoints-500.json` and
 `scale/fixtures/dash-endpoints-500.json`, then pass those two states to the same
-composer command. The SRT manifest starts 475 live listener processes and leaves
-25 ports dead by design, so use a resource-controlled load host. The 500 DASH
-paths share one generator and HTTP origin. Distinct URLs prove request/socket
-fan-out only; they do not prove independent source generation or capacity.
+composer command. The SRT manifest uses one caption-capable encoder, one local
+multicast distributor, 400 lightweight healthy relays, 50 slow processes, and
+25 malformed processes while leaving 25 ports dead by design. Use a
+resource-controlled Linux load host. The 500 DASH paths share one generator and
+HTTP origin. Distinct URLs prove request/socket fan-out only; they do not prove
+independent source generation or capacity.
 
 For a strict rotation run with eight admitted validations per cycle:
 

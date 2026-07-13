@@ -21,6 +21,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FixtureFleetTest(unittest.TestCase):
+    @patch("videosim.fixture_fleet.require_gst_launch", return_value="gst-launch-1.0")
+    def test_repository_srt_endpoint_manifest_uses_one_encoder(self, _require):
+        manifest, _digest = load_fixture_manifest(
+            ROOT / "scale/fixtures/srt-endpoints-500.json"
+        )
+
+        commands = srt_fixture_commands(manifest)
+
+        self.assertEqual(len(commands), 477)
+        self.assertEqual(sum("videosim" in command for command in commands), 1)
+        self.assertEqual(sum("udpsrc" in command for command in commands), 400)
+        self.assertEqual(
+            sum("filltype=pattern" in command for command in commands), 25
+        )
+
     def test_repository_endpoint_manifests_build_exact_500_url_mix(self):
         for protocol in ("srt", "dash"):
             with self.subTest(protocol=protocol):
@@ -150,9 +165,21 @@ class FixtureFleetTest(unittest.TestCase):
 
         self.assertEqual(len(state["streams"]), 6)
         self.assertEqual(len({stream["endpoint"] for stream in state["streams"]}), 6)
-        self.assertEqual(len(commands), 5)
-        self.assertIn("19081", commands[0])
-        self.assertIn("19082", commands[1])
+        self.assertEqual(len(commands), 7)
+        self.assertIn("19087", commands[0])
+        self.assertIn("uri=srt://127.0.0.1:19087?mode=caller", commands[1])
+        self.assertIn("host=239.255.42.42", commands[1])
+        self.assertIn("port=19088", commands[1])
+        self.assertIn("address=239.255.42.42", commands[2])
+        self.assertIn("uri=srt://:19081?mode=listener", commands[2])
+        self.assertIn("wait-for-connection=true", commands[2])
+        self.assertIn("address=239.255.42.42", commands[3])
+        self.assertIn("uri=srt://:19082?mode=listener", commands[3])
+        self.assertIn("uri=srt://:19083?mode=listener", commands[4])
+        self.assertNotIn(
+            "19084", " ".join(part for command in commands for part in command)
+        )
+        self.assertIn("uri=srt://:19085?mode=listener", commands[5])
         self.assertIn("uri=srt://:19086?mode=listener", commands[-1])
 
     def test_fixture_fleet_rejects_unsupported_protocol(self):
@@ -183,7 +210,7 @@ class FixtureFleetTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "basePort"):
                 load_fixture_manifest(path)
 
-            source["basePort"] = 65532
+            source["basePort"] = 65530
             source["behaviorEndpointCounts"] = {
                 "healthy": 2,
                 "slow": 1,

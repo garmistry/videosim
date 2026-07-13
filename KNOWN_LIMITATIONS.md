@@ -76,10 +76,11 @@
   runs real probes from a supplied state scenario, but measures one worker and
   does not provide fixtures, distributed load, failure injection, or a capacity
   decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
-  dead/malformed matrices. `fixture-scenario` can expand them into 1,000 unique
-  logical streams, but those streams reuse eight physical endpoints and provide
-  neither distributed load nor capacity evidence. `worker-benchmark` can now
-  fail unless every assignment starts validation across measured cycles; that
+  dead/malformed matrices. Legacy four-endpoint states still make 1,000 logical
+  streams reuse eight URLs; the 500-URL manifests instead compose 1,000 unique
+  URLs, but their healthy streams share one source per protocol and provide
+  neither independent generation nor capacity evidence. `worker-benchmark` can
+  now fail unless every assignment starts validation across measured cycles; that
   proves cursor coverage, not detection freshness or sustained capacity.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local

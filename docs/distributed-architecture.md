@@ -112,7 +112,9 @@ VideoSim should split into a master control plane and many worker nodes:
   deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
   It reuses the existing generators, a standard-library DASH HTTP service, and
   GStreamer SRT listeners. Optional per-behavior endpoint counts expand distinct
-  URLs/listener ports; checked-in manifests declare 500 URLs per protocol.
+  URLs/listener ports; checked-in manifests declare 500 URLs per protocol. At
+  scale, one captioned SRT encoder feeds local UDP multicast and one lightweight
+  relay per healthy listener instead of duplicating the encoder per port.
 - `python -m videosim fixture-scenario` deterministically expands those states
   into exact logical protocol/behavior mixes for bounded-worker tests. The
   checked-in 1,000-stream scenario reuses eight endpoints and is not a capacity

@@ -224,6 +224,61 @@ zone-B disk and was discarded with the fixture rather than claimed as
 recovered. The unauthenticated worker request returned HTTP 400 and operator
 health remained healthy.
 
+## Network-Partition Follow-Up
+
+The worker loop now treats exhausted assignment-fetch and lease-ack transport
+retries as a disconnected cycle: it keeps the same process and incarnation,
+waits one poll interval, and refetches. HTTP 409 still triggers an immediate
+authority refetch, non-retryable failures still stop the worker, and one-shot
+mode still fails closed. A focused regression covers both transport points.
+
+A fresh local control plane and 33 zero-restart workers then repeated the
+1,320-placeholder-feed topology. The accepted baseline held exact 40/20/20
+placement with zero authority changes for 15 seconds. All 11 zone-A containers
+were disconnected from their Docker network without stopping them. The last
+disconnect was recorded at `2026-07-13T10:17:53.227261Z`.
+
+| Check | Result |
+|---|---:|
+| Fresh survivors | 22 |
+| Active leases after recovery | 1,320 |
+| Leases per survivor | 60 |
+| SRT/DASH per survivor | 30/30 |
+| Failed-domain streams moved | 440/440 |
+| Healthy authority changes | 0/880 |
+| First replacement acknowledgement | 51.667 seconds |
+| Last replacement acknowledgement | 61.194 seconds |
+| Authority changes in 15-second recovered hold | 0 |
+| Disconnected process/incarnation changes | 0/11 |
+| Worker container restarts | 0/33 |
+
+The same 11 containers were reconnected. Every PID, container start time,
+database incarnation, and restart count still matched its baseline. The
+encrypted stale-report backlog was fenced and drained, and the fleet returned
+to exact 33-worker 40/20/20 placement. The final zone-A acknowledgement was
+170.343 seconds after the last network connect; no rejoin SLO is claimed. The
+rejoined authority map remained unchanged for 15 seconds.
+
+Direct mTLS assignment checks in all three domains returned 33 workers, 40
+assignments, 20 SRT, 20 DASH, and zero shortfall. Operator state reported zero
+blocked workers, queued reports, and spool bytes. The worker listener returned
+HTTP 400 without a client certificate, and operator health remained healthy.
+
+From the last disconnect through the fixed validation cutoff, Nginx recorded
+8,205 HTTP 200 responses, 11 expected stale-report HTTP 409 responses, one
+expected lease-ack HTTP 409 during rejoin, one deliberate no-certificate HTTP
+400, and no HTTP 499 or 5xx response. One operator-state request returned HTTP
+401 because the disposable OAuth stub emitted the email header instead of the
+user header; the stub was corrected and the state API then passed. Across
+2,462 committed reports, commit latency was 0.2311 seconds average, 0.6686 p95,
+1.0459 p99, and 5.8814 maximum. The app, PostgreSQL, NATS, Nginx, publisher,
+pruner, and all workers had no critical error or traceback match in the fault
+window.
+
+This closes the same-host whole-domain assignment-transport partition gap. It
+does not prove independent-host partitions, immutable production deployment,
+representative media throughput, HA, or F5 admission.
+
 ## Validation
 
 - `python3 -m unittest tests.test_cert_script`: 1 passed.
@@ -253,6 +308,11 @@ health remained healthy.
 - Exact `gui.py` hash was overlaid on the existing local app image after Docker
   Buildx again stopped at base-image metadata resolution; the no-build startup
   API/media/log workflow then passed in 13.514 seconds.
+- Partition-resilience worker/CLI/spool suites: 52 passed.
+- Partition-resilience project-image unit discovery: 387 passed with 87
+  environment-gated skips in 24.329 seconds.
+- Exact `worker.py` hash was overlaid on the existing local worker image; the
+  no-build startup API/media/log workflow passed in 11.909 seconds.
 - Documentation contract: 4 passed.
 
 ## Remaining Gates

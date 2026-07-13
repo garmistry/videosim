@@ -84,10 +84,13 @@ implementation and must pass before those milestones advance.
   rerun then moved all 440 failed-domain streams with zero owner/incarnation/
   epoch changes across the 880 healthy streams in 65.565 seconds. A subsequent
   same-host loss/rejoin/second-loss run recovered in 65.466 and 66.018 seconds
-  with zero healthy authority changes in both cycles. Network partitions,
-  independent-host repeated recovery, and a production churn SLO remain
-  unproven, and none of the local smokes is the missing approved evidence
-  bundle.
+  with zero healthy authority changes in both cycles. A same-host whole-domain
+  network partition then kept all 11 isolated processes/incarnations alive,
+  recovered their 440 leases in 61.194 seconds with zero healthy authority
+  changes, drained fenced stale reports after reconnect, and returned to exact
+  40/20/20 balance. Independent-host partitions/repeated recovery and a
+  production churn SLO remain unproven, and none of the local smokes is the
+  missing approved evidence bundle.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
@@ -149,9 +152,11 @@ implementation and must pass before those milestones advance.
   but also moved one healthy stream. The subsequent recovery-floor fix retained
   all 880 healthy owner/incarnation/epoch tuples while replacing 440 failed
   leases in 65.565 seconds. A second local run repeated that result across two
-  distinct domain losses separated by full rejoin. It still does not exercise
-  network partitions, representative media probes, or separate infrastructure
-  hosts.
+  distinct domain losses separated by full rejoin. A third local run isolated
+  one domain at the Docker network boundary, preserved all 11 process
+  incarnations, recovered exact survivor placement in 61.194 seconds, and
+  rejoined without restarts. It still does not exercise independent-host
+  partitions, representative media probes, or separate infrastructure hosts.
 - `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
   with unique mTLS identities and the candidate's exact admission/concurrency
   limits. Three instances were booted on one local Docker host and exercised

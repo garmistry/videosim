@@ -235,9 +235,10 @@ To separate fixture generation from worker hosts, run
 `docker-compose.fixture-domain.yml` on three Linux load hosts. Each host uses
 the checked-in 220-SRT/220-DASH manifests and a unique advertised hostname.
 `scripts/fixture-domain-startup.py` renders and boots the domain, checks the
-DASH health API, validates one healthy SRT and DASH endpoint through the real
-media-probe path, and captures Compose state plus Docker logs. Pass each
-retained state to `fixture-scenario` with repeated `--srt-state` and
+DASH health API, fails unless every manifest endpoint appears exactly once in
+the generated state, validates one healthy SRT and DASH endpoint through the
+real media-probe path, and captures Compose state, Docker resources, and logs.
+Pass each retained state to `fixture-scenario` with repeated `--srt-state` and
 `--dash-state` options; duplicate endpoints across shards fail closed.
 Three shards compose the exact 660/660 candidate input, but each shard still
 shares one source per protocol and startup validation is not saturation

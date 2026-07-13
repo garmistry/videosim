@@ -714,10 +714,14 @@ VIDEOSIM_FIXTURE_STARTUP_ARTIFACT_DIR="$VIDEOSIM_FIXTURE_STATE_DIR/startup-valid
 ```
 
 The command fails unless the image uses an immutable digest, both services
-remain running, the DASH `/healthz` API passes, one healthy SRT and one healthy
-DASH endpoint pass full media validation, and Docker logs contain no critical
-marker. Retain `result.json`, `media-validation.json`, `compose-ps.txt`,
-`docker.log`, `srt-state.json`, and `dash-state.json` from every host.
+remain running, each generated state exactly matches its selected manifest with
+distinct IDs and endpoints, the DASH `/healthz` API passes, one healthy SRT and
+one healthy DASH endpoint pass full media validation, a Docker resource
+snapshot is captured, and Docker logs contain no critical marker. Retain
+`result.json`, `fixture-inventory.json`, `media-validation.json`,
+`docker-stats.json`, `compose-ps.txt`, `docker.log`, `srt-state.json`, and
+`dash-state.json` from every host. Inventory proves startup of the declared
+shape; the sampled media check does not prove every endpoint path or capacity.
 
 Copy the six state files to the workload coordinator and compose the exact
 candidate input:

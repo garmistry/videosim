@@ -156,8 +156,9 @@ VideoSim should split into a master control plane and many worker nodes:
   reuses eight endpoints and is not a capacity workload.
 - `docker-compose.fixture-domain.yml` runs one 220-SRT/220-DASH source shard
   on a Linux load host. Three uniquely advertised shards compose exact
-  1,320/660/660 headroom input; the marked startup validator checks DASH HTTP,
-  real SRT/DASH media, process state, and Docker logs before a run.
+  1,320/660/660 headroom input; the marked startup validator checks exact
+  manifest/state endpoint inventory, DASH HTTP, sampled real SRT/DASH media,
+  process state, Docker resources, and logs before a run.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,
@@ -246,10 +247,11 @@ VideoSim should split into a master control plane and many worker nodes:
   and is not host-sized. Same-host three-domain loss/partition and two-API
   assignment smokes exist, but no independent-host HTTPS/mTLS deployment,
   production load balancer, HA storage, or production recovery artifact exists.
-- The fixture-domain Compose contract and sampled startup path are implemented,
-  but the 220+220 shape has not run on three hosts. Each shard still shares one
-  media generator per protocol, so independent-source and capacity evidence
-  remain open.
+- The fixture-domain Compose contract and sampled startup path are implemented;
+  one local Docker VM booted an exact 220+220 shard, but the shape has not run
+  on three independent hosts or under all-path worker load. Each shard still
+  shares one media generator per protocol, so independent-source and capacity
+  evidence remain open.
 
 ## Next Upgrade Points
 

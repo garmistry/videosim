@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from .assignment_verifier import _workload_spec
 from .distributed_benchmark import percentile
@@ -17,6 +18,8 @@ from .worker import worker_resource_snapshot
 
 
 REPORT_SCHEMA = "videosim.control-plane-load/v1"
+FAILOVER_P95_LIMIT_SECONDS = 45
+FAILOVER_P99_LIMIT_SECONDS = 90
 
 
 @dataclass(frozen=True)
@@ -72,19 +75,30 @@ def run_control_plane_load(
     duration_seconds: float,
     *,
     tick_seconds: float = 20,
+    worker_freshness_seconds: int = 60,
     output_path: str = "",
 ) -> ControlPlaneLoadReport:
     if not math.isfinite(duration_seconds) or duration_seconds <= 0:
         raise ValueError("duration_seconds must be finite and greater than zero")
     if not math.isfinite(tick_seconds) or tick_seconds <= 0:
         raise ValueError("tick_seconds must be finite and greater than zero")
+    if (
+        not isinstance(worker_freshness_seconds, int)
+        or isinstance(worker_freshness_seconds, bool)
+        or worker_freshness_seconds <= 0
+    ):
+        raise ValueError("worker_freshness_seconds must be a positive integer")
     workload = _read_workload(Path(workload_path))
     spec = _load_spec(workload)
     tenant_id = f"control-plane-load-{uuid.uuid4()}"
-    store = PostgresControlPlaneStore(database_url, tenant_id=tenant_id)
+    store = PostgresControlPlaneStore(
+        database_url,
+        tenant_id=tenant_id,
+        worker_freshness_seconds=worker_freshness_seconds,
+    )
     started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
-    metrics = _empty_metrics(spec)
+    metrics = _empty_metrics(spec, worker_freshness_seconds)
     errors: list[str] = []
     try:
         _assert_empty_database(store)
@@ -129,12 +143,17 @@ def run_control_plane_load(
 
 def human_summary(report: ControlPlaneLoadReport) -> str:
     metrics = report.metrics
+    loss = next(
+        (event for event in metrics.get("events", []) if event["kind"] == "worker-domain-loss"),
+        None,
+    )
     summary = (
         f"Control-plane load {'passed' if report.passed else 'failed'}: "
         f"streams={metrics.get('desiredStreams', 0)} "
         f"workers={metrics.get('freshWorkers', 0)} "
         f"ticks={metrics.get('ticks', 0)} "
         f"reports={metrics.get('reportsAccepted', 0)}"
+        + (f" domainLoss={loss['status']}" if loss else "")
     )
     return summary if not report.errors else summary + "\n" + "\n".join(
         f"- {error}" for error in report.errors
@@ -170,7 +189,29 @@ def _load_spec(workload: dict) -> dict:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("workload check-profile name must be non-empty")
         parsed_profiles.append((f"probe.load.{index}", cadence, name))
-    return spec | {"profiles": tuple(parsed_profiles)}
+    events = workload.get("eventStorms")
+    if not isinstance(events, list):
+        raise ValueError("workload.eventStorms must be an array")
+    parsed_events = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("workload.eventStorms must contain objects")
+        kind = event.get("kind")
+        offset = event.get("offsetSeconds")
+        if kind not in {"worker-domain-loss", "endpoint-fault-storm"}:
+            raise ValueError(f"unsupported workload event kind: {kind}")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise ValueError("workload event offsetSeconds must be a non-negative integer")
+        parsed_events.append({"kind": kind, "offsetSeconds": offset})
+    domain_loss_count = sum(
+        event["kind"] == "worker-domain-loss" for event in parsed_events
+    )
+    if domain_loss_count > spec["unavailable"]:
+        raise ValueError("workload declares more simultaneous domain losses than allowed")
+    if domain_loss_count > 1:
+        raise ValueError("control-plane-load currently supports one worker-domain-loss event")
+    parsed_events.sort(key=lambda item: (item["offsetSeconds"], item["kind"]))
+    return spec | {"profiles": tuple(parsed_profiles), "events": tuple(parsed_events)}
 
 
 def _workers(spec: dict) -> list[tuple[str, uuid.UUID]]:
@@ -272,13 +313,15 @@ def _run_load(
     load_started = time.perf_counter()
     deadline = load_started + duration_seconds
     next_due = [load_started] * len(spec["profiles"])
+    active_workers = list(workers)
+    loss_state = None
     sequence = 0
     heartbeat_ms = []
     report_ms = []
     tick_ms = []
     while True:
         tick_started = time.perf_counter()
-        for worker_id, incarnation_id in workers:
+        for worker_id, incarnation_id in active_workers:
             operation_started = time.perf_counter()
             accepted = store.heartbeat(worker_id, incarnation_id)
             heartbeat_ms.append((time.perf_counter() - operation_started) * 1000)
@@ -292,7 +335,7 @@ def _run_load(
             sequence += 1
             metrics["reportWindows"] += 1
             metrics["profileWindows"] += len(due)
-            for worker_id, incarnation_id in workers:
+            for worker_id, incarnation_id in active_workers:
                 observed_at = datetime.now(timezone.utc)
                 results = tuple(
                     CheckResult(
@@ -334,10 +377,48 @@ def _run_load(
                 ):
                     errors.append(f"report disposition was incomplete: {worker_id}")
                     break
+            if loss_state and loss_state.get("recovered") and not errors:
+                loss_state["event"]["postRecoveryReports"] += len(active_workers)
             for profile_index in due:
                 cadence = spec["profiles"][profile_index][1]
                 while next_due[profile_index] <= now:
                     next_due[profile_index] += cadence
+        elapsed = time.perf_counter() - load_started
+        if loss_state is None and metrics["reportWindows"]:
+            event = next(
+                (
+                    item
+                    for item in metrics["events"]
+                    if item["kind"] == "worker-domain-loss"
+                    and item["status"] == "not_reached"
+                    and elapsed >= item["offsetSeconds"]
+                ),
+                None,
+            )
+            if event is not None:
+                loss_state = _begin_worker_domain_loss(
+                    workers,
+                    assignments,
+                    leases,
+                    spec,
+                    event,
+                    elapsed,
+                )
+                active_workers = loss_state["survivors"]
+        if loss_state and not loss_state.get("recovered") and not errors:
+            recovered = _recover_worker_domain(store, workers, spec, loss_state)
+            if recovered is not None:
+                active_workers = recovered["workers"]
+                assignments = recovered["assignments"]
+                leases = recovered["leases"]
+                loss_state.update(recovered)
+                loss_state["recovered"] = True
+                loss_state["event"].update(recovered["metrics"])
+                loss_state["event"]["status"] = "recovered"
+                loss_state["event"]["recoveredAtSeconds"] = round(
+                    time.perf_counter() - load_started, 6
+                )
+                next_due = [time.perf_counter()] * len(spec["profiles"])
         metrics["ticks"] += 1
         tick_ms.append((time.perf_counter() - tick_started) * 1000)
         if errors:
@@ -351,6 +432,188 @@ def _run_load(
         "heartbeat": _percentiles(heartbeat_ms),
         "reportCommit": _percentiles(report_ms),
         "tick": _percentiles(tick_ms),
+    }
+
+
+def _begin_worker_domain_loss(workers, assignments, leases, spec, event, elapsed):
+    zone = spec["zones"][0]
+    failed = [worker for worker in workers if worker[0].startswith(f"{zone}-worker-")]
+    failed_ids = {worker_id for worker_id, _ in failed}
+    if len(failed) != spec["domainCounts"][0]:
+        raise ValueError("worker-domain-loss could not resolve the declared failure domain")
+    baseline_owners = {
+        stream_id: worker_id
+        for worker_id, stream_ids in assignments.items()
+        for stream_id in stream_ids
+    }
+    affected = sorted(
+        stream_id
+        for stream_id, worker_id in baseline_owners.items()
+        if worker_id in failed_ids
+    )
+    event.update(
+        {
+            "status": "awaiting-expiry",
+            "failureDomain": zone,
+            "triggeredAtSeconds": round(elapsed, 6),
+            "failedWorkers": len(failed),
+            "affectedStreams": len(affected),
+            "postRecoveryReports": 0,
+            "p95LimitSeconds": FAILOVER_P95_LIMIT_SECONDS,
+            "p99LimitSeconds": FAILOVER_P99_LIMIT_SECONDS,
+        }
+    )
+    return {
+        "event": event,
+        "failedIds": failed_ids,
+        "survivors": [worker for worker in workers if worker[0] not in failed_ids],
+        "baselineOwners": baseline_owners,
+        "affected": set(affected),
+        "oldLeases": {stream_id: leases[stream_id] for stream_id in affected},
+        "triggered": time.perf_counter(),
+    }
+
+
+def _recover_worker_domain(store, workers, spec, state):
+    from .gui import capacity_aware_assignments
+
+    incarnation_ids = dict(workers)
+    streams = [
+        SimpleNamespace(id=stream_id, protocol=protocol)
+        for stream_id, protocol in _feeds(spec)
+    ]
+    with store.assignment_scheduler_transaction() as connection:
+        worker_records = store.active_worker_records(_connection=connection)
+        fresh_ids = {worker["id"] for worker in worker_records}
+        if state["failedIds"] & fresh_ids:
+            return None
+        planned, shortfall = capacity_aware_assignments(
+            worker_records,
+            streams,
+            preferred_owners=store.preferred_lease_owners(_connection=connection),
+        )
+        if shortfall:
+            raise ValueError(f"worker-domain-loss left {shortfall} streams unassigned")
+        offered = {}
+        for worker in worker_records:
+            worker_id = worker["id"]
+            stream_ids = [stream.id for stream in planned[worker_id]]
+            offered[worker_id] = store.reconcile_leases(
+                stream_ids,
+                worker_id,
+                incarnation_ids[worker_id],
+                ttl_seconds=store.worker_freshness_seconds,
+                _connection=connection,
+            )
+            store.revoke_unassigned_leases(
+                worker_id,
+                incarnation_ids[worker_id],
+                stream_ids,
+                _connection=connection,
+            )
+
+    assignments = {
+        worker_id: [stream.id for stream in assigned]
+        for worker_id, assigned in planned.items()
+    }
+    leases = {}
+    recovery_seconds = []
+    for worker in worker_records:
+        worker_id = worker["id"]
+        acknowledged = store.acknowledge_leases(
+            [
+                (lease.stream_id, lease.epoch, lease.config_version)
+                for lease in offered[worker_id]
+            ],
+            worker_id,
+            incarnation_ids[worker_id],
+            ttl_seconds=store.worker_freshness_seconds,
+        )
+        acknowledged_at = time.perf_counter()
+        leases.update({lease.stream_id: lease for lease in acknowledged})
+        recovery_seconds.extend(
+            acknowledged_at - state["triggered"]
+            for lease in acknowledged
+            if lease.stream_id in state["affected"]
+        )
+
+    owners = {
+        stream_id: worker_id
+        for worker_id, stream_ids in assignments.items()
+        for stream_id in stream_ids
+    }
+    changes = {
+        stream_id
+        for stream_id, worker_id in state["baselineOwners"].items()
+        if owners.get(stream_id) != worker_id
+    }
+    stale_accepted, stale_reasons = _attempt_stale_report(store, workers, state)
+    return {
+        "workers": [
+            (worker["id"], incarnation_ids[worker["id"]]) for worker in worker_records
+        ],
+        "assignments": assignments,
+        "leases": leases,
+        "metrics": {
+            "survivorWorkers": len(worker_records),
+            "ownershipChanges": len(changes),
+            "healthyOwnershipChanges": len(changes - state["affected"]),
+            "authorityRecoverySeconds": _percentiles(recovery_seconds),
+            "assignmentShape": _assignment_shape(assignments, spec),
+            "staleReportAccepted": stale_accepted,
+            "staleReportRejectedReasons": stale_reasons,
+        },
+    }
+
+
+def _attempt_stale_report(store, workers, state):
+    stream_id = min(state["affected"])
+    old_lease = state["oldLeases"][stream_id]
+    failed_incarnations = dict(workers)
+    disposition = store.ingest_report(
+        FencedReport(
+            uuid.uuid4(),
+            store.tenant_id,
+            old_lease.worker_id,
+            failed_incarnations[old_lease.worker_id],
+            (
+                CheckResult(
+                    uuid.uuid4(),
+                    stream_id,
+                    "probe.load.stale-owner",
+                    old_lease.epoch,
+                    old_lease.config_version,
+                    2,
+                    "healthy",
+                    datetime.now(timezone.utc),
+                    {"synthetic": True, "staleOwnerAttempt": True},
+                ),
+            ),
+        )
+    )
+    return bool(disposition.accepted_result_ids), sorted(
+        {item.get("reason", "unknown") for item in disposition.rejected}
+    )
+
+
+def _assignment_shape(assignments, spec):
+    protocols = dict(_feeds(spec))
+    totals = [len(stream_ids) for stream_ids in assignments.values()]
+    protocol_counts = {
+        protocol: [
+            sum(protocols[stream_id] == protocol for stream_id in stream_ids)
+            for stream_ids in assignments.values()
+        ]
+        for protocol in spec["protocols"]
+    }
+    return {
+        "workers": len(assignments),
+        "minimumStreams": min(totals, default=0),
+        "maximumStreams": max(totals, default=0),
+        "minimumSrtStreams": min(protocol_counts["srt"], default=0),
+        "maximumSrtStreams": max(protocol_counts["srt"], default=0),
+        "minimumDashStreams": min(protocol_counts["dash"], default=0),
+        "maximumDashStreams": max(protocol_counts["dash"], default=0),
     }
 
 
@@ -439,10 +702,11 @@ def _database_metrics(store) -> dict:
     }
 
 
-def _empty_metrics(spec: dict) -> dict:
+def _empty_metrics(spec: dict, worker_freshness_seconds: int) -> dict:
     return {
         "expectedStreams": spec["load"],
         "expectedWorkers": sum(spec["domainCounts"]),
+        "workerFreshnessSeconds": worker_freshness_seconds,
         "setupMs": 0,
         "loadElapsedSeconds": 0,
         "ticks": 0,
@@ -454,13 +718,36 @@ def _empty_metrics(spec: dict) -> dict:
         "duplicateResults": 0,
         "resultsRejected": 0,
         "latencyMs": {},
+        "events": [
+            {
+                **event,
+                "status": (
+                    "not_reached"
+                    if event["kind"] == "worker-domain-loss"
+                    else "out_of_scope"
+                ),
+                **(
+                    {}
+                    if event["kind"] == "worker-domain-loss"
+                    else {"reason": "endpoint faults require independent media probes"}
+                ),
+            }
+            for event in spec["events"]
+        ],
     }
 
 
 def _check_metrics(spec: dict, metrics: dict, errors: list[str]):
+    loss = next(
+        (event for event in metrics["events"] if event["kind"] == "worker-domain-loss"),
+        None,
+    )
+    expected_workers = sum(spec["domainCounts"])
+    if loss and loss["status"] == "recovered":
+        expected_workers = loss["survivorWorkers"]
     for field, expected in (
         ("desiredStreams", spec["load"]),
-        ("freshWorkers", sum(spec["domainCounts"])),
+        ("freshWorkers", expected_workers),
         ("authoritativeLeases", spec["load"]),
         ("currentCheckStreams", spec["load"]),
     ):
@@ -472,6 +759,24 @@ def _check_metrics(spec: dict, metrics: dict, errors: list[str]):
         errors.append("load produced duplicate or rejected results")
     if metrics.get("resultOutboxEvents") != metrics["reportsAccepted"]:
         errors.append("accepted reports and retained result outbox events differ")
+    if loss and loss["status"] == "awaiting-expiry":
+        errors.append("worker-domain-loss did not recover before the load window ended")
+    if loss and loss["status"] == "recovered":
+        if loss["ownershipChanges"] != loss["affectedStreams"]:
+            errors.append("worker-domain-loss ownership changes do not match affected streams")
+        if loss["healthyOwnershipChanges"]:
+            errors.append("worker-domain-loss changed healthy-domain ownership")
+        if loss["staleReportAccepted"]:
+            errors.append("worker-domain-loss accepted a stale failed-owner report")
+        if not loss["staleReportRejectedReasons"]:
+            errors.append("worker-domain-loss stale report had no rejection reason")
+        if loss["postRecoveryReports"] < loss["survivorWorkers"]:
+            errors.append("worker-domain-loss completed without survivor report coverage")
+        recovery = loss["authorityRecoverySeconds"]
+        if recovery["p95"] > FAILOVER_P95_LIMIT_SECONDS:
+            errors.append("worker-domain-loss authority recovery exceeded the p95 limit")
+        if recovery["p99"] > FAILOVER_P99_LIMIT_SECONDS:
+            errors.append("worker-domain-loss authority recovery exceeded the p99 limit")
 
 
 def _assert_empty_database(store):

@@ -208,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_load.add_argument("--workload", required=True)
     control_plane_load.add_argument("--duration", required=True, type=parse_duration)
     control_plane_load.add_argument("--tick-seconds", type=float, default=20)
+    control_plane_load.add_argument("--worker-freshness-seconds", type=int, default=60)
     control_plane_load.add_argument("--output", required=True)
     control_plane_load.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"
@@ -557,6 +558,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.workload,
                 args.duration,
                 tick_seconds=args.tick_seconds,
+                worker_freshness_seconds=args.worker_freshness_seconds,
                 output_path=args.output,
             )
             print(report.to_json() if args.json else control_plane_load_summary(report))

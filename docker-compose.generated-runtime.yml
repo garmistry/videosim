@@ -1,0 +1,49 @@
+services:
+  app:
+    environment:
+      VIDEOSIM_GENERATED_SRT_HOST: "${VIDEOSIM_GENERATED_SRT_HOST:-generated-feed-runtime}"
+      VIDEOSIM_GENERATED_DASH_BASE_URL: "${VIDEOSIM_GENERATED_DASH_BASE_URL:-http://generated-dash-origin:8090}"
+
+  generated-feed-runtime:
+    build: .
+    init: true
+    depends_on:
+      postgres-role-grants:
+        condition: service_completed_successfully
+    environment:
+      VIDEOSIM_DATABASE_URL: "postgresql://videosim_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
+    command: >
+      python -m videosim.generated_runtime
+      --runtime-id "${VIDEOSIM_GENERATED_RUNTIME_ID:-generated-feed-runtime-1}"
+      --max-feeds "${VIDEOSIM_GENERATED_MAX_FEEDS:-100}"
+      --srt-port-start "${VIDEOSIM_GENERATED_SRT_PORT_START:-9000}"
+      --srt-port-end "${VIDEOSIM_GENERATED_SRT_PORT_END:-9999}"
+      --dash-root /var/lib/videosim-generated
+      --dash-base-url "${VIDEOSIM_GENERATED_DASH_BASE_URL:-http://generated-dash-origin:8090}"
+      --poll-interval-seconds "${VIDEOSIM_GENERATED_POLL_SECONDS:-2}"
+    ports:
+      - "${VIDEOSIM_GENERATED_SRT_PORT_RANGE:-9000-9999}:${VIDEOSIM_GENERATED_SRT_PORT_RANGE:-9000-9999}/udp"
+    volumes:
+      - generated-dash-data:/var/lib/videosim-generated
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  generated-dash-origin:
+    image: nginx:1.27-alpine
+    depends_on:
+      generated-feed-runtime:
+        condition: service_started
+    ports:
+      - "${VIDEOSIM_GENERATED_DASH_PORT:-8090}:8090"
+    volumes:
+      - ./deploy/nginx/generated-dash.conf:/etc/nginx/conf.d/default.conf:ro
+      - generated-dash-data:/data:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  generated-dash-data:

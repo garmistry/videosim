@@ -13,6 +13,8 @@ x-api: &api
   environment:
     VIDEOSIM_DATABASE_URL: postgresql://postgres:videosim-test@postgres:5432/videosim
     VIDEOSIM_GENERATED_SRT_HOST: generated-feed-runtime
+    VIDEOSIM_GENERATED_SRT_PORT_START: "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
+    VIDEOSIM_GENERATED_SRT_PORT_END: "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT_END:-19101}"
   command: >
     python -m videosim gui --host 0.0.0.0 --http-port 8080
     --feed-port "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
@@ -66,7 +68,7 @@ services:
       --runtime-id generated-validation-runtime
       --max-feeds 1
       --srt-port-start "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
-      --srt-port-end "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
+      --srt-port-end "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT_END:-19101}"
       --poll-interval-seconds 0.25
     stop_grace_period: 20s
 

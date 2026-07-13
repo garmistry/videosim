@@ -131,6 +131,23 @@ def running_in_container() -> bool:
     return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
 
 
+def generated_srt_port_range(default_start: int) -> tuple[int, int]:
+    try:
+        start = int(
+            os.environ.get("VIDEOSIM_GENERATED_SRT_PORT_START", default_start)
+        )
+        end = int(
+            os.environ.get(
+                "VIDEOSIM_GENERATED_SRT_PORT_END", min(start + 999, 65535)
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Generated SRT port range must contain integers") from exc
+    if not 1 <= start <= end <= 65535:
+        raise ValueError("Generated SRT port range is invalid")
+    return start, end
+
+
 def feed_path(stream_id: str) -> str:
     return f"/feeds/{quote(stream_id, safe='')}"
 
@@ -1174,6 +1191,22 @@ class GuiState:
             return
         version = stream.config_version if expected_version is None else expected_version
         try:
+            if (
+                isinstance(self.feed_store, PostgresControlPlaneStore)
+                and stream.source == "generated"
+                and stream.protocol == "srt"
+            ):
+                port_start, port_end = generated_srt_port_range(self.feed_port)
+                stream.config_version, stream.feed_port = (
+                    self.feed_store.upsert_generated_srt(
+                        stream_registration(stream),
+                        expected_version=version,
+                        port_start=port_start,
+                        port_end=port_end,
+                        audit=audit,
+                    )
+                )
+                return
             if audit is not None and isinstance(
                 self.feed_store, PostgresControlPlaneStore
             ):

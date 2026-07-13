@@ -314,6 +314,79 @@ class PostgresControlPlaneStore:
                 )
                 return version
 
+    def upsert_generated_srt(
+        self,
+        feed: Mapping,
+        *,
+        expected_version: int,
+        port_start: int,
+        port_end: int,
+        audit: Mapping | None = None,
+    ) -> tuple[int, int]:
+        if (
+            feed.get("source") != "generated"
+            or feed.get("protocol") != "srt"
+        ):
+            raise ValueError("generated SRT allocation requires a generated SRT feed")
+        if (
+            type(port_start) is not int
+            or type(port_end) is not int
+            or not 1 <= port_start <= port_end <= 65535
+        ):
+            raise ValueError("invalid generated SRT port range")
+        config = dict(feed)
+        config.pop("config_version", None)
+        feed_id = str(config["id"])
+        requested_port = config.get("feed_port")
+        if type(requested_port) is not int:
+            requested_port = None
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                tenant = connection.execute(
+                    "SELECT id FROM tenants WHERE id = %s FOR UPDATE",
+                    (self.tenant_id,),
+                ).fetchone()
+                if tenant is None:
+                    raise PostgresStoreError("tenant does not exist")
+                allocation = connection.execute(
+                    """
+                    SELECT candidate.port
+                    FROM generate_series(%s::integer, %s::integer) AS candidate(port)
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM feeds
+                        WHERE tenant_id = %s
+                          AND id <> %s
+                          AND config ->> 'source' = 'generated'
+                          AND config ->> 'protocol' = 'srt'
+                          AND (config ->> 'feed_port')::integer = candidate.port
+                    )
+                    ORDER BY (candidate.port = %s) DESC, candidate.port
+                    LIMIT 1
+                    """,
+                    (
+                        port_start,
+                        port_end,
+                        self.tenant_id,
+                        feed_id,
+                        requested_port,
+                    ),
+                ).fetchone()
+                if allocation is None:
+                    raise ReportConflict("generated SRT port range is exhausted")
+                port = int(allocation["port"])
+                config["feed_port"] = port
+                _, version = self._upsert_feed_with_expected_version_in_transaction(
+                    connection, config, expected_version
+                )
+                if audit is not None:
+                    self._append_mutation_audit(
+                        connection,
+                        audit,
+                        resource_type="feed",
+                        resource_id=feed_id,
+                    )
+                return version, port
+
     def _lock_feed_generation(self, connection, feed_id: str) -> int | None:
         row = connection.execute(
             """

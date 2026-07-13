@@ -57,6 +57,14 @@ class GeneratedRuntimeComposeTest(unittest.TestCase):
             "generated-feed-runtime",
         )
         self.assertEqual(
+            services["app"]["environment"]["VIDEOSIM_GENERATED_SRT_PORT_START"],
+            "9000",
+        )
+        self.assertEqual(
+            services["app"]["environment"]["VIDEOSIM_GENERATED_SRT_PORT_END"],
+            "9999",
+        )
+        self.assertEqual(
             services["app"]["environment"]["VIDEOSIM_GENERATED_DASH_BASE_URL"],
             "http://generated-dash-origin:8090",
         )

@@ -1,6 +1,7 @@
 import os
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 from videosim.generated_runtime import (
@@ -11,7 +12,7 @@ from videosim.generated_runtime import (
     runtime_port_lock_id,
 )
 from videosim.migrations import PostgresMigrator
-from videosim.postgres_store import PostgresControlPlaneStore
+from videosim.postgres_store import PostgresControlPlaneStore, ReportConflict
 
 
 DATABASE_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_URL", "")
@@ -297,6 +298,38 @@ class GeneratedRuntimePostgresIntegrationTest(unittest.TestCase):
             if not second.connection.closed:
                 with patch("videosim.generated_runtime.os.killpg"):
                     second.close()
+
+    def test_two_replicas_allocate_exact_1000_unique_srt_ports(self):
+        self.store.delete("stream-a")
+        other = PostgresControlPlaneStore(
+            DATABASE_URL,
+            tenant_id=self.tenant_id,
+            min_pool_size=1,
+            max_pool_size=6,
+        )
+
+        def create(index):
+            store = self.store if index % 2 == 0 else other
+            config = feed_row(f"allocated-{index:04d}")["config"]
+            return store.upsert_generated_srt(
+                config,
+                expected_version=0,
+                port_start=9000,
+                port_end=9999,
+            )[1]
+
+        try:
+            with ThreadPoolExecutor(max_workers=12) as executor:
+                ports = list(executor.map(create, range(1000)))
+            self.assertEqual(set(ports), set(range(9000, 10000)))
+            with self.assertRaisesRegex(ReportConflict, "range is exhausted"):
+                create(1000)
+            from psycopg.errors import UniqueViolation
+
+            with self.assertRaises(UniqueViolation):
+                self.store.upsert(feed_row("forced-duplicate")["config"])
+        finally:
+            other.close()
 
 
 if __name__ == "__main__":

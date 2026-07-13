@@ -6,8 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from videosim.cli import main
+from videosim.fixture_catalog import (
+    fixture_config_sha256,
+    load_fixture_feed_configs,
+)
 from videosim.fixture_fleet import fixture_state, load_fixture_manifest
-from videosim.fixture_scenario import run_fixture_scenario
+from videosim.fixture_scenario import load_fixture_scenario_state, run_fixture_scenario
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +135,79 @@ class FixtureScenarioTest(unittest.TestCase):
         self.assertEqual(
             len({stream["endpoint"] for stream in scenario["streams"]}), 1320
         )
+
+    def test_composed_state_maps_to_complete_durable_external_configs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            states = {}
+            for protocol in ("srt", "dash"):
+                manifest, digest = load_fixture_manifest(
+                    ROOT / f"scale/fixtures/{protocol}-matrix.json"
+                )
+                manifest["behaviorEndpointCounts"] = {
+                    behavior: 1
+                    for behavior in ("healthy", "slow", "dead", "malformed")
+                }
+                path = Path(directory) / f"{protocol}.json"
+                path.write_text(
+                    json.dumps(fixture_state(manifest, digest)), encoding="utf-8"
+                )
+                states[protocol] = path
+            manifest = json.loads(
+                (ROOT / "scale/fixtures/mixed-1000.json").read_text(encoding="utf-8")
+            )
+            manifest["streamCount"] = 8
+            manifest["behaviorPercent"] = {
+                behavior: 25
+                for behavior in ("healthy", "slow", "dead", "malformed")
+            }
+            manifest_path = Path(directory) / "manifest.json"
+            state_path = Path(directory) / "state.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with patch("builtins.print"):
+                run_fixture_scenario(
+                    str(manifest_path),
+                    str(states["srt"]),
+                    str(states["dash"]),
+                    str(state_path),
+                )
+
+            configs, state, state_sha256 = load_fixture_feed_configs(
+                state_path, require_distinct_endpoints=True
+            )
+
+        self.assertEqual(len(configs), 8)
+        self.assertEqual(len(state_sha256), 64)
+        self.assertEqual(state["protocolCounts"], {"srt": 4, "dash": 4})
+        self.assertEqual(len(fixture_config_sha256(configs)), 64)
+        for config in configs:
+            self.assertEqual(config["source"], "external")
+            self.assertEqual(config["desired_state"], "running")
+            self.assertEqual(config["mode"], "normal")
+            self.assertIsNone(config["alert_enabled_ids"])
+            self.assertTrue(config["external_url"])
+
+    def test_scenario_state_loader_rejects_tampered_summary_and_shared_urls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            srt = self.write_fixture_state(directory, "srt")
+            dash = self.write_fixture_state(directory, "dash")
+            state_path = Path(directory) / "state.json"
+            with patch("builtins.print"):
+                run_fixture_scenario(
+                    str(ROOT / "scale/fixtures/mixed-1000.json"),
+                    str(srt),
+                    str(dash),
+                    str(state_path),
+                )
+            with self.assertRaisesRegex(ValueError, "distinct endpoints"):
+                load_fixture_scenario_state(
+                    state_path, require_distinct_endpoints=True
+                )
+
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["protocolCounts"]["srt"] -= 1
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "protocolCounts"):
+                load_fixture_scenario_state(state_path)
 
     def test_rejects_invalid_percentages_and_missing_fixture_behavior(self):
         with tempfile.TemporaryDirectory() as directory:

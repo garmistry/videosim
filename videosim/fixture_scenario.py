@@ -8,11 +8,12 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from .control_plane import MAX_REPORT_STREAMS
+from .control_plane import MAX_IDENTIFIER_LENGTH, MAX_REPORT_STREAMS
 from .fixture_fleet import BEHAVIORS, write_fixture_state
 
 
 SCENARIO_SCHEMA = "videosim.fixture-scenario/v1"
+SCENARIO_STATE_SCHEMA = "videosim.fixture-scenario-state/v1"
 PROTOCOLS = ("srt", "dash")
 
 
@@ -66,6 +67,106 @@ def load_fixture_scenario_manifest(path: str | Path) -> tuple[dict, str]:
         manifest.get("behaviorPercent"), BEHAVIORS, "behaviorPercent"
     )
     return manifest, digest
+
+
+def load_fixture_scenario_state(
+    path: str | Path, *, require_distinct_endpoints: bool = False
+) -> tuple[dict, str]:
+    state, digest = _read_object(path, "fixture scenario state")
+    if state.get("schemaVersion") != SCENARIO_STATE_SCHEMA:
+        raise ValueError(
+            f"fixture scenario state schemaVersion must be {SCENARIO_STATE_SCHEMA}"
+        )
+    streams = state.get("streams")
+    if not isinstance(streams, list) or not 1 <= len(streams) <= MAX_REPORT_STREAMS:
+        raise ValueError(
+            f"fixture scenario state must contain 1-{MAX_REPORT_STREAMS} streams"
+        )
+
+    ids = []
+    endpoints = []
+    protocol_counts = Counter()
+    behavior_counts = Counter()
+    for index, stream in enumerate(streams):
+        label = f"fixture scenario state streams[{index}]"
+        if not isinstance(stream, dict):
+            raise ValueError(f"{label} must be an object")
+        stream_id = stream.get("id")
+        if (
+            not isinstance(stream_id, str)
+            or not stream_id
+            or len(stream_id) > MAX_IDENTIFIER_LENGTH
+        ):
+            raise ValueError(f"{label}.id must be a bounded non-empty string")
+        name = stream.get("name")
+        if not isinstance(name, str) or not name or len(name) > MAX_IDENTIFIER_LENGTH:
+            raise ValueError(f"{label}.name must be a bounded non-empty string")
+        protocol = stream.get("protocol")
+        if protocol not in PROTOCOLS:
+            raise ValueError(f"{label}.protocol must be srt or dash")
+        behavior = stream.get("fixtureBehavior")
+        if behavior not in BEHAVIORS:
+            raise ValueError(f"{label}.fixtureBehavior is unsupported")
+        endpoint = stream.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 2048:
+            raise ValueError(f"{label}.endpoint must be a bounded non-empty string")
+        if (
+            stream.get("source") != "external"
+            or stream.get("status") != "running"
+            or stream.get("mode") != "normal"
+        ):
+            raise ValueError(f"{label} must be a running normal external feed")
+        for field, maximum in (("width", 7680), ("height", 4320)):
+            value = stream.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 1 <= value <= maximum
+            ):
+                raise ValueError(
+                    f"{label}.{field} must be an integer from 1 to {maximum}"
+                )
+        framerate = stream.get("framerate")
+        try:
+            valid_framerate = float(framerate)
+        except (TypeError, ValueError):
+            valid_framerate = 0
+        if not math.isfinite(valid_framerate) or not 0 < valid_framerate <= 240:
+            raise ValueError(
+                f"{label}.framerate must be a positive number no greater than 240"
+            )
+        if not isinstance(stream.get("fixtureEndpointShared"), bool):
+            raise ValueError(f"{label}.fixtureEndpointShared must be a boolean")
+        ids.append(stream_id)
+        endpoints.append((protocol, endpoint))
+        protocol_counts[protocol] += 1
+        behavior_counts[behavior] += 1
+
+    if len(ids) != len(set(ids)):
+        raise ValueError("fixture scenario state stream IDs must be unique")
+    endpoint_counts = Counter(endpoints)
+    shared = any(count > 1 for count in endpoint_counts.values())
+    if state.get("logicalStreamsShareEndpoints") is not shared:
+        raise ValueError("fixture scenario state endpoint-sharing summary is inconsistent")
+    for stream in streams:
+        expected_shared = endpoint_counts[(stream["protocol"], stream["endpoint"])] > 1
+        if stream["fixtureEndpointShared"] is not expected_shared:
+            raise ValueError(
+                f"fixture scenario state endpoint-sharing marker is inconsistent: {stream['id']}"
+            )
+    if require_distinct_endpoints and shared:
+        raise ValueError("fixture scenario state must contain distinct endpoints")
+    actual_protocol_counts = {
+        protocol: protocol_counts[protocol] for protocol in PROTOCOLS
+    }
+    actual_behavior_counts = {
+        behavior: behavior_counts[behavior] for behavior in BEHAVIORS
+    }
+    if state.get("protocolCounts") != actual_protocol_counts:
+        raise ValueError("fixture scenario state protocolCounts is inconsistent")
+    if state.get("behaviorCounts") != actual_behavior_counts:
+        raise ValueError("fixture scenario state behaviorCounts is inconsistent")
+    return state, digest
 
 
 def _allocate(total: int, percentages: dict, fields: tuple[str, ...]) -> dict[str, int]:
@@ -198,7 +299,7 @@ def compose_fixture_scenario(
         stream["name"] = f"Fixture {index:05d} ({stream['protocol']} {stream['fixtureBehavior']})"
     shared_endpoints = any(count > 1 for count in endpoint_counts.values())
     return {
-        "schemaVersion": "videosim.fixture-scenario-state/v1",
+        "schemaVersion": SCENARIO_STATE_SCHEMA,
         "fixtureScenarioSha256": manifest_sha256,
         "fixtureStateSha256": {
             protocol: combined_fixture_digest(fixture_digests[protocol])

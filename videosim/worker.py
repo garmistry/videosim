@@ -729,16 +729,27 @@ def run_worker(
                     continue
                 if replay == "stale":
                     state = empty_monitor_state()
-            assignments = call_with_retry(
-                lambda: fetch_assignments(
-                    control_plane_url,
-                    worker_id,
-                    ssl_context,
-                    worker_incarnation_id,
-                ),
-                attempts=retry_attempts,
-                base_seconds=retry_base_seconds,
-            )
+            try:
+                assignments = call_with_retry(
+                    lambda: fetch_assignments(
+                        control_plane_url,
+                        worker_id,
+                        ssl_context,
+                        worker_incarnation_id,
+                    ),
+                    attempts=retry_attempts,
+                    base_seconds=retry_base_seconds,
+                )
+            except Exception as exc:
+                if not retryable_transport_error(exc):
+                    raise
+                update_pressure(cycleActive=False)
+                if once:
+                    return 1
+                if drain_requested.wait(poll_seconds):
+                    finish_drain()
+                    return 0
+                continue
             registered = True
             streams = assignments.get("streams", [])
             if (
@@ -761,13 +772,21 @@ def run_worker(
                         attempts=retry_attempts,
                         base_seconds=retry_base_seconds,
                     )
-                except HTTPError as exc:
-                    if exc.code != 409:
+                except Exception as exc:
+                    if isinstance(exc, HTTPError) and exc.code == 409:
+                        assignment_conflicts += 1
+                        state = empty_monitor_state()
+                        if assignment_conflicts >= MAX_ASSIGNMENT_CONFLICT_REFETCHES:
+                            raise
+                        continue
+                    if not retryable_transport_error(exc):
                         raise
-                    assignment_conflicts += 1
-                    state = empty_monitor_state()
-                    if assignment_conflicts >= MAX_ASSIGNMENT_CONFLICT_REFETCHES:
-                        raise
+                    update_pressure(cycleActive=False)
+                    if once:
+                        return 1
+                    if drain_requested.wait(poll_seconds):
+                        finish_drain()
+                        return 0
                     continue
             if drain_requested.is_set():
                 finish_drain()

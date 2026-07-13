@@ -606,6 +606,54 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         self.assertEqual(sleeps, [0.125, 0.25])
 
+    def test_worker_keeps_incarnation_across_assignment_transport_outage(self):
+        monitor_state = {
+            "updatedAt": "now",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+        }
+        drain = threading.Event()
+        incarnations = []
+
+        def fetch(*args):
+            incarnations.append(args[3])
+            if len(incarnations) == 1:
+                raise URLError("partitioned")
+            return durable_assignment()
+
+        def report(*_args, **_kwargs):
+            drain.set()
+            return {"ok": True}
+
+        with patch("videosim.worker.fetch_assignments", side_effect=fetch) as fetch_call, patch(
+            "videosim.worker.post_lease_acknowledgement",
+            side_effect=[URLError("partitioned"), {"ok": True}],
+        ) as acknowledge, patch(
+            "videosim.worker.run_monitor_once", return_value=monitor_state
+        ) as monitor, patch(
+            "videosim.worker.post_report", side_effect=report
+        ), patch(
+            "videosim.worker.post_drain", return_value={"ok": True}
+        ):
+            code = run_worker(
+                "http://master:8080",
+                "worker-a",
+                0,
+                7,
+                20,
+                "app",
+                heartbeat_seconds=100,
+                retry_attempts=1,
+                drain_event=drain,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(fetch_call.call_count, 3)
+        self.assertEqual(acknowledge.call_count, 2)
+        self.assertEqual(monitor.call_count, 1)
+        self.assertEqual(len(set(incarnations)), 1)
+
     def test_spooled_report_blocks_new_probe_work_until_delivery(self):
         with tempfile.TemporaryDirectory() as directory:
             spool, key = self.spool(directory)

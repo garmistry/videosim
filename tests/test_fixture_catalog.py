@@ -7,13 +7,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 from videosim.cli import main
-from videosim.fixture_catalog import run_fixture_catalog_import
+from videosim.fixture_catalog import (
+    load_fixture_feed_configs,
+    run_fixture_catalog_import,
+)
+from videosim.fixture_fleet import (
+    fixture_state,
+    load_fixture_manifest,
+    write_fixture_state,
+)
+from videosim.fixture_scenario import run_fixture_scenario
 from videosim.gui import GuiState, worker_assignments_payload
 from videosim.migrations import PostgresMigrator
 from videosim.postgres_store import PostgresControlPlaneStore, PostgresStoreError
 
 
 DATABASE_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_URL", "")
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def feed(feed_id: str) -> dict:
@@ -212,6 +222,38 @@ class FixtureCatalogPostgresIntegrationTest(unittest.TestCase):
         self.assertEqual(len(report["sourceStateSha256"]), 64)
         self.assertEqual(len(report["catalogConfigSha256"]), 64)
         self.assertEqual(len(self.store.load()), 2)
+
+    def test_marked_exact_1320_catalog_import_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            states = {}
+            for protocol in ("srt", "dash"):
+                manifest, digest = load_fixture_manifest(
+                    ROOT / f"scale/fixtures/{protocol}-endpoints-660.json"
+                )
+                state_path = Path(directory, f"{protocol}.json")
+                write_fixture_state(state_path, fixture_state(manifest, digest))
+                states[protocol] = state_path
+            scenario_path = Path(directory, "mixed-1320.json")
+            with patch("builtins.print"):
+                run_fixture_scenario(
+                    str(ROOT / "scale/fixtures/mixed-1320.json"),
+                    str(states["srt"]),
+                    str(states["dash"]),
+                    str(scenario_path),
+                )
+            configs, state, _digest = load_fixture_feed_configs(
+                scenario_path, require_distinct_endpoints=True
+            )
+
+        self.assertEqual(len(configs), 1320)
+        self.assertEqual(state["protocolCounts"], {"srt": 660, "dash": 660})
+        self.assertEqual(
+            self.store.import_feeds_if_changed(configs, reject_unlisted=True), 1320
+        )
+        self.assertEqual(
+            self.store.import_feeds_if_changed(configs, reject_unlisted=True), 0
+        )
+        self.assertEqual(len(self.store.load()), 1320)
 
     def test_marked_batch_error_rolls_back_all_rows(self):
         invalid = feed("fixture-00002") | {"name": object()}

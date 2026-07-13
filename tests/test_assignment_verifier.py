@@ -151,78 +151,128 @@ class AssignmentVerifierTest(unittest.TestCase):
 
 @unittest.skipUnless(DATABASE_URL, "VIDEOSIM_TEST_POSTGRES_URL is not configured")
 class AssignmentSnapshotPostgresIntegrationTest(unittest.TestCase):
-    def test_read_only_snapshot_verifies_live_lease_authority(self):
+    def test_exact_candidate_baseline_and_domain_loss_use_one_database_snapshot(self):
         PostgresMigrator(DATABASE_URL).apply()
         tenant_id = f"assignment-test-{uuid.uuid4()}"
         store = PostgresControlPlaneStore(DATABASE_URL, tenant_id=tenant_id)
+        baseline = candidate_snapshot()
+        loss = candidate_snapshot(unavailable_zone="candidate-zone-a")
         try:
             with store._pool.connection() as connection:
-                connection.execute(
-                    "INSERT INTO tenants (id, name) VALUES (%s, %s)",
-                    (tenant_id, tenant_id),
-                )
-                connection.commit()
-            feeds = (
-                {
-                    "id": "srt-1",
-                    "name": "SRT",
-                    "source": "external",
-                    "external_url": "srt://example.test:9000?mode=caller",
-                    "protocol": "srt",
-                    "mode": "normal",
-                },
-                {
-                    "id": "dash-1",
-                    "name": "DASH",
-                    "source": "external",
-                    "external_url": "https://example.test/manifest.mpd",
-                    "protocol": "dash",
-                    "mode": "normal",
-                },
-            )
-            workers = ("zone-a-worker-01", "zone-b-worker-01")
-            incarnations = {worker: uuid.uuid4() for worker in workers}
-            for feed in feeds:
-                store.upsert(feed)
-            for worker in workers:
-                store.register_worker(
-                    worker,
-                    incarnations[worker],
-                    worker,
-                    capacity={"maxStreams": 1, "maxSrtStreams": 1, "maxDashStreams": 1},
-                )
-            for feed, worker in zip(feeds, workers):
-                offered = store.reconcile_lease(
-                    feed["id"], worker, incarnations[worker], ttl_seconds=60
-                )
-                store.acknowledge_lease(
-                    feed["id"],
-                    worker,
-                    incarnations[worker],
-                    epoch=offered.epoch,
-                    config_version=offered.config_version,
-                    ttl_seconds=60,
-                )
+                with connection.transaction():
+                    connection.execute(
+                        "INSERT INTO tenants (id, name) VALUES (%s, %s)",
+                        (tenant_id, tenant_id),
+                    )
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            """
+                            INSERT INTO feeds (tenant_id, id, config, config_version)
+                            VALUES (%s, %s, %s::jsonb, 1)
+                            """,
+                            [
+                                (
+                                    tenant_id,
+                                    feed["streamId"],
+                                    json.dumps(
+                                        {
+                                            "source": "external",
+                                            "protocol": feed["protocol"],
+                                        }
+                                    ),
+                                )
+                                for feed in baseline["feeds"]
+                            ],
+                        )
+                        cursor.executemany(
+                            """
+                            INSERT INTO workers (
+                                tenant_id, worker_id, incarnation_id,
+                                certificate_subject, capacity, state
+                            ) VALUES (%s, %s, %s, %s, %s::jsonb, 'active')
+                            """,
+                            [
+                                (
+                                    tenant_id,
+                                    worker["workerId"],
+                                    worker["incarnationId"],
+                                    worker["workerId"],
+                                    json.dumps(worker["capacity"]),
+                                )
+                                for worker in baseline["workers"]
+                            ],
+                        )
+                        cursor.executemany(
+                            """
+                            INSERT INTO leases (
+                                tenant_id, stream_id, worker_id,
+                                worker_incarnation_id, epoch, config_version,
+                                expires_at, state, acknowledged_at
+                            ) VALUES (%s, %s, %s, %s, 1, 1,
+                                      clock_timestamp() + interval '5 minutes',
+                                      'active', clock_timestamp())
+                            """,
+                            [
+                                (
+                                    tenant_id,
+                                    lease["streamId"],
+                                    lease["workerId"],
+                                    lease["workerIncarnationId"],
+                                )
+                                for lease in baseline["leases"]
+                            ],
+                        )
 
-            workload = {
-                "schemaVersion": "videosim.scale-workload/v1",
-                "loadStreams": 2,
-                "failureDomainsUnavailable": 1,
-                "protocolMix": {"srtPercent": 50, "dashPercent": 50},
-                "placement": {"zones": ["zone-a", "zone-b"]},
-                "workerShape": {
-                    "count": 2,
-                    "failureDomains": 2,
-                    "failureDomainWorkerCounts": [1, 1],
-                    "maxStreams": 1,
-                    "maxSrtStreams": 1,
-                    "maxDashStreams": 1,
-                },
-            }
-            report = verify_assignment_snapshot(
-                capture_assignment_snapshot(store), workload
+            baseline_report = verify_assignment_snapshot(
+                capture_assignment_snapshot(store), WORKLOAD
             )
-            self.assertTrue(report.passed, report.errors)
+            self.assertTrue(baseline_report.passed, baseline_report.errors)
+
+            baseline_owner = {
+                lease["streamId"]: lease["workerId"] for lease in baseline["leases"]
+            }
+            changed = [
+                lease
+                for lease in loss["leases"]
+                if baseline_owner[lease["streamId"]] != lease["workerId"]
+            ]
+            with store._pool.connection() as connection:
+                with connection.transaction():
+                    connection.execute(
+                        """
+                        UPDATE workers
+                        SET last_heartbeat_at = clock_timestamp() - interval '2 minutes'
+                        WHERE tenant_id = %s AND worker_id LIKE 'candidate-zone-a-worker-%%'
+                        """,
+                        (tenant_id,),
+                    )
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            """
+                            UPDATE leases
+                            SET worker_id = %s, worker_incarnation_id = %s, epoch = 2,
+                                expires_at = clock_timestamp() + interval '5 minutes'
+                            WHERE tenant_id = %s AND stream_id = %s
+                            """,
+                            [
+                                (
+                                    lease["workerId"],
+                                    lease["workerIncarnationId"],
+                                    tenant_id,
+                                    lease["streamId"],
+                                )
+                                for lease in changed
+                            ],
+                        )
+
+            loss_report = verify_assignment_snapshot(
+                capture_assignment_snapshot(store),
+                WORKLOAD,
+                baseline_report.snapshot,
+            )
+            self.assertTrue(loss_report.passed, loss_report.errors)
+            self.assertEqual(len(changed), 440)
+            self.assertEqual(loss_report.metrics["ownershipChanges"], 440)
         finally:
             with store._pool.connection() as connection:
                 connection.execute("DELETE FROM tenants WHERE id = %s", (tenant_id,))

@@ -130,8 +130,10 @@ When `VIDEOSIM_DATABASE_URL` selects PostgreSQL, worker endpoints require v2:
    placement. Fresh offered/active lease owners are retained up to each
    worker's current total/protocol target; loss moves unavailable ownership,
    while joins and capacity changes still rebalance. The scheduler revokes
-   dropped leases, reconciles the worker's complete stream set in one ordered
-   transaction, and returns each stream's epoch, config version, and expiry.
+   dropped leases, reconciles the worker's complete stream set, and returns each
+   stream's epoch, config version, and expiry. Membership/owner reads and all
+   lease changes share one tenant-scoped PostgreSQL advisory-lock transaction;
+   connection loss rolls it back before another scheduler transaction can lead.
 3. The worker acknowledges the exact lease tuple before probing. Authenticated
    lease arrays validate completely and commit atomically in one transaction;
    independent heartbeats extend only active leases for the same incarnation.

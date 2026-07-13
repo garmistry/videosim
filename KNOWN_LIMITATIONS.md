@@ -138,7 +138,9 @@
   replay parity; it is not implemented.
 - The default direct-app/trusted-lab path has no worker authentication or TLS
   and retains worker v1. The production Compose/VM proxy path adds mTLS and
-  worker v2 durable lease fencing, but there is no HA scheduler/storage failover.
+  worker v2 durable lease fencing. PostgreSQL serializes each assignment
+  decision with transaction-scoped leadership, but there is no replicated
+  deployment, persistent scheduler leader, or HA storage failover.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

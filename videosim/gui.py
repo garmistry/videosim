@@ -2156,8 +2156,11 @@ def worker_assignments_payload(
             worker_incarnation_id=worker_incarnation_id,
             certificate_subject=certificate_subject or worker_id,
         )
-        with state.control_plane_lock:
-            worker_records = store.active_worker_records()
+        with (
+            state.control_plane_lock,
+            store.assignment_scheduler_transaction() as connection,
+        ):
+            worker_records = store.active_worker_records(_connection=connection)
             worker_ids = [item["id"] for item in worker_records]
             if worker_id not in worker_ids:
                 raise WorkerReportConflict("worker is not fresh and active")
@@ -2168,14 +2171,9 @@ def worker_assignments_payload(
             assignments, capacity_shortfall = capacity_aware_assignments(
                 worker_records,
                 running_streams,
-                preferred_owners=store.active_lease_owners(),
+                preferred_owners=store.active_lease_owners(_connection=connection),
             )
             assigned_streams = assignments[worker_id]
-            store.revoke_unassigned_leases(
-                worker_id,
-                worker_incarnation_id,
-                (stream.id for stream in assigned_streams),
-            )
             leases = {
                 lease.stream_id: lease
                 for lease in store.reconcile_leases(
@@ -2183,8 +2181,15 @@ def worker_assignments_payload(
                     worker_id,
                     worker_incarnation_id,
                     ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
+                    _connection=connection,
                 )
             }
+            store.revoke_unassigned_leases(
+                worker_id,
+                worker_incarnation_id,
+                (stream.id for stream in assigned_streams),
+                _connection=connection,
+            )
             streams = []
             for stream in assigned_streams:
                 lease = leases[stream.id]

@@ -113,8 +113,10 @@ implementation and must pass before those milestones advance.
   remain open.
 - Lease offer/renew and acknowledgement arrays now remove per-lease transaction
   overhead and roll back atomically, but still issue per-stream SQL inside each
-  transaction. Production PostgreSQL saturation, lock-wait/deadlock metrics,
-  replicated scheduler leadership, and 1,000-stream poll cadence remain open.
+  transaction. Tenant-scoped PostgreSQL transaction leadership now serializes
+  assignment decisions and rolls back on scheduler-session loss. Production
+  PostgreSQL saturation, lock-wait/deadlock metrics, persistent leadership,
+  replicated deployment, and 1,000-stream poll cadence remain open.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A
   configured cadence staggers deep work; aggregate budget exhaustion stops new

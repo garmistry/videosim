@@ -264,6 +264,45 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
 
         self.assertNotIn(feed_id, self.store.active_lease_owners())
 
+    def test_scheduler_transaction_rolls_back_and_releases_after_connection_loss(self):
+        from psycopg import OperationalError
+
+        feed_id = f"scheduler-feed-{uuid.uuid4()}"
+        worker_id = f"scheduler-worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.upsert(feed(feed_id))
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        replica = PostgresControlPlaneStore(
+            DATABASE_URL, min_pool_size=1, max_pool_size=2
+        )
+        try:
+            with self.assertRaises(OperationalError):
+                with self.store.assignment_scheduler_transaction() as connection:
+                    with self.assertRaisesRegex(
+                        PostgresStoreError, "another scheduler transaction"
+                    ):
+                        with replica.assignment_scheduler_transaction():
+                            pass
+                    self.store.reconcile_leases(
+                        [feed_id],
+                        worker_id,
+                        incarnation,
+                        ttl_seconds=60,
+                        _connection=connection,
+                    )
+                    with replica._pool.connection() as killer:
+                        terminated = killer.execute(
+                            "SELECT pg_terminate_backend(%s) AS terminated",
+                            (connection.info.backend_pid,),
+                        ).fetchone()["terminated"]
+                    self.assertTrue(terminated)
+
+            self.assertEqual(replica.leases_for_worker(worker_id, incarnation), [])
+            with replica.assignment_scheduler_transaction():
+                pass
+        finally:
+            replica.close()
+
     def test_batch_lease_reconcile_is_ordered_and_atomic(self):
         feed_ids = [f"batch-a-{uuid.uuid4()}", f"batch-b-{uuid.uuid4()}"]
         for feed_id in feed_ids:

@@ -95,6 +95,10 @@ VideoSim should split into a master control plane and many worker nodes:
   PostgreSQL transaction, and each lease-acknowledgement array commits in one
   transaction after full request validation. Stream locks use stable ID order;
   single-lease helpers retain the same epoch/config fences.
+- Durable assignment now takes a tenant-scoped PostgreSQL advisory leadership
+  lock and performs worker/owner reads, offer/renew, and revocation in that same
+  transaction. A concurrent replica fails retryably; loss of the database
+  session rolls back the decision before another replica can acquire the lock.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete
@@ -154,7 +158,8 @@ VideoSim should split into a master control plane and many worker nodes:
 
 - The SQLite worker v1 registry, assignment generation, and tokens remain
   process-local transition fences. Production PostgreSQL uses v2 durable
-  leases, but its scheduler is not leader-elected.
+  leases and transaction-scoped database scheduler leadership, but no
+  continuously elected scheduler or replicated API deployment exists.
 - PostgreSQL assignment is capacity-aware for workers advertising total or
   SRT/DASH protocol limits; unconfigured workers use compatibility round-robin.
   A current spool-blocked signal removes a worker from placement, but has no
@@ -181,7 +186,8 @@ VideoSim should split into a master control plane and many worker nodes:
   unexpired active leases for its incarnation. Worker-health alarms and
   retry/backoff telemetry are not implemented yet.
 - Durable tenant keys exist, but authorization grants and tenant-isolation behavior are not implemented.
-- The app, PostgreSQL, and NATS deployments remain single instances. HA storage and leader election are not implemented.
+- The app, PostgreSQL, and NATS deployments remain single instances. Replicated
+  API routing, persistent scheduler leadership, and HA storage are not implemented.
 
 ## Next Upgrade Points
 

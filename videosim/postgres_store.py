@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Mapping
@@ -182,6 +183,26 @@ class PostgresControlPlaneStore:
 
     def close(self):
         self._pool.close()
+
+    @contextmanager
+    def assignment_scheduler_transaction(self):
+        lock_id = int.from_bytes(
+            hashlib.sha256(f"videosim.scheduler:{self.tenant_id}".encode()).digest()[:8],
+            "big",
+            signed=True,
+        )
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                # ponytail: one transaction per tenant; shard after measured contention.
+                acquired = connection.execute(
+                    "SELECT pg_try_advisory_xact_lock(%s) AS acquired",
+                    (lock_id,),
+                ).fetchone()["acquired"]
+                if not acquired:
+                    raise PostgresStoreError(
+                        "another scheduler transaction is active for this tenant"
+                    )
+                yield connection
 
     # FeedRegistrationStore compatibility.
     def load(self) -> list[dict]:
@@ -591,43 +612,47 @@ class PostgresControlPlaneStore:
     def active_worker_ids(self) -> list[str]:
         return [worker["id"] for worker in self.active_worker_records()]
 
-    def active_worker_records(self) -> list[dict]:
-        with self._pool.connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT worker_id, capacity FROM workers
-                WHERE tenant_id = %s AND state = 'active'
-                  AND last_heartbeat_at > clock_timestamp()
-                      - (%s * interval '1 second')
-                ORDER BY worker_id
-                """,
-                (self.tenant_id, self.worker_freshness_seconds),
-            ).fetchall()
+    def active_worker_records(self, *, _connection=None) -> list[dict]:
+        if _connection is None:
+            with self._pool.connection() as connection:
+                return self.active_worker_records(_connection=connection)
+        rows = _connection.execute(
+            """
+            SELECT worker_id, capacity FROM workers
+            WHERE tenant_id = %s AND state = 'active'
+              AND last_heartbeat_at > clock_timestamp()
+                  - (%s * interval '1 second')
+            ORDER BY worker_id
+            """,
+            (self.tenant_id, self.worker_freshness_seconds),
+        ).fetchall()
         return [
             {"id": row["worker_id"], "capacity": dict(row["capacity"])}
             for row in rows
         ]
 
-    def active_lease_owners(self) -> dict[str, str]:
-        with self._pool.connection() as connection:
-            rows = connection.execute(
-                """
-                SELECT leases.stream_id, leases.worker_id
-                FROM leases
-                JOIN workers
-                  ON workers.tenant_id = leases.tenant_id
-                 AND workers.worker_id = leases.worker_id
-                 AND workers.incarnation_id = leases.worker_incarnation_id
-                WHERE leases.tenant_id = %s
-                  AND leases.state IN ('offered', 'active')
-                  AND leases.expires_at > clock_timestamp()
-                  AND workers.state = 'active'
-                  AND workers.last_heartbeat_at > clock_timestamp()
-                      - (%s * interval '1 second')
-                ORDER BY leases.stream_id
-                """,
-                (self.tenant_id, self.worker_freshness_seconds),
-            ).fetchall()
+    def active_lease_owners(self, *, _connection=None) -> dict[str, str]:
+        if _connection is None:
+            with self._pool.connection() as connection:
+                return self.active_lease_owners(_connection=connection)
+        rows = _connection.execute(
+            """
+            SELECT leases.stream_id, leases.worker_id
+            FROM leases
+            JOIN workers
+              ON workers.tenant_id = leases.tenant_id
+             AND workers.worker_id = leases.worker_id
+             AND workers.incarnation_id = leases.worker_incarnation_id
+            WHERE leases.tenant_id = %s
+              AND leases.state IN ('offered', 'active')
+              AND leases.expires_at > clock_timestamp()
+              AND workers.state = 'active'
+              AND workers.last_heartbeat_at > clock_timestamp()
+                  - (%s * interval '1 second')
+            ORDER BY leases.stream_id
+            """,
+            (self.tenant_id, self.worker_freshness_seconds),
+        ).fetchall()
         return {row["stream_id"]: row["worker_id"] for row in rows}
 
     def heartbeat(self, worker_id: str, incarnation_id: uuid.UUID) -> bool:
@@ -718,6 +743,7 @@ class PostgresControlPlaneStore:
         worker_incarnation_id: uuid.UUID,
         *,
         ttl_seconds: int,
+        _connection=None,
     ) -> list[DurableLease]:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be greater than 0")
@@ -726,32 +752,40 @@ class PostgresControlPlaneStore:
             raise ValueError("stream_ids must be unique")
         if not requested_stream_ids:
             return []
-        leases = {}
-        with self._pool.connection() as connection:
-            with connection.transaction():
-                worker = connection.execute(
-                    """
-                    SELECT incarnation_id, state,
-                           last_heartbeat_at > clock_timestamp()
-                               - (%s * interval '1 second') AS heartbeat_fresh
-                    FROM workers
-                    WHERE tenant_id = %s AND worker_id = %s
-                    FOR UPDATE
-                    """,
-                    (self.worker_freshness_seconds, self.tenant_id, worker_id),
-                ).fetchone()
-                if not worker or worker["state"] != "active" or worker["incarnation_id"] != worker_incarnation_id:
-                    raise LeaseConflict("worker incarnation is not active")
-                if not worker["heartbeat_fresh"]:
-                    raise LeaseConflict("worker heartbeat is stale")
-                for stream_id in sorted(requested_stream_ids):
-                    leases[stream_id] = self._reconcile_lease_in_transaction(
-                        connection,
-                        stream_id,
+        if _connection is None:
+            with self._pool.connection() as connection:
+                with connection.transaction():
+                    return self.reconcile_leases(
+                        requested_stream_ids,
                         worker_id,
                         worker_incarnation_id,
-                        ttl_seconds,
+                        ttl_seconds=ttl_seconds,
+                        _connection=connection,
                     )
+        leases = {}
+        worker = _connection.execute(
+            """
+            SELECT incarnation_id, state,
+                   last_heartbeat_at > clock_timestamp()
+                       - (%s * interval '1 second') AS heartbeat_fresh
+            FROM workers
+            WHERE tenant_id = %s AND worker_id = %s
+            FOR UPDATE
+            """,
+            (self.worker_freshness_seconds, self.tenant_id, worker_id),
+        ).fetchone()
+        if not worker or worker["state"] != "active" or worker["incarnation_id"] != worker_incarnation_id:
+            raise LeaseConflict("worker incarnation is not active")
+        if not worker["heartbeat_fresh"]:
+            raise LeaseConflict("worker heartbeat is stale")
+        for stream_id in sorted(requested_stream_ids):
+            leases[stream_id] = self._reconcile_lease_in_transaction(
+                _connection,
+                stream_id,
+                worker_id,
+                worker_incarnation_id,
+                ttl_seconds,
+            )
         return [leases[stream_id] for stream_id in requested_stream_ids]
 
     def _reconcile_lease_in_transaction(
@@ -934,22 +968,31 @@ class PostgresControlPlaneStore:
         worker_id: str,
         incarnation_id: uuid.UUID,
         assigned_stream_ids: Iterable[str],
+        *,
+        _connection=None,
     ) -> list[str]:
         assigned = list(assigned_stream_ids)
-        with self._pool.connection() as connection:
-            with connection.transaction():
-                rows = connection.execute(
-                    """
-                    UPDATE leases
-                    SET state = 'revoked', expires_at = clock_timestamp()
-                    WHERE tenant_id = %s AND worker_id = %s
-                      AND worker_incarnation_id = %s
-                      AND state IN ('offered', 'active', 'draining')
-                      AND NOT (stream_id = ANY(%s::text[]))
-                    RETURNING stream_id
-                    """,
-                    (self.tenant_id, worker_id, incarnation_id, assigned),
-                ).fetchall()
+        if _connection is None:
+            with self._pool.connection() as connection:
+                with connection.transaction():
+                    return self.revoke_unassigned_leases(
+                        worker_id,
+                        incarnation_id,
+                        assigned,
+                        _connection=connection,
+                    )
+        rows = _connection.execute(
+            """
+            UPDATE leases
+            SET state = 'revoked', expires_at = clock_timestamp()
+            WHERE tenant_id = %s AND worker_id = %s
+              AND worker_incarnation_id = %s
+              AND state IN ('offered', 'active', 'draining')
+              AND NOT (stream_id = ANY(%s::text[]))
+            RETURNING stream_id
+            """,
+            (self.tenant_id, worker_id, incarnation_id, assigned),
+        ).fetchall()
         return sorted(row["stream_id"] for row in rows)
 
     def leases_for_worker(self, worker_id: str, incarnation_id: uuid.UUID) -> list[DurableLease]:

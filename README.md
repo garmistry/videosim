@@ -237,7 +237,8 @@ the checked-in 220-SRT/220-DASH manifests and a unique advertised hostname.
 `scripts/fixture-domain-startup.py` renders and boots the domain, checks the
 DASH health API, fails unless every manifest endpoint appears exactly once in
 the generated state, validates one healthy SRT and DASH endpoint through the
-real media-probe path, and captures Compose state, Docker resources, and logs.
+real media-probe path, and captures a bounded Docker Engine identity, Compose
+state, Docker resources, and logs.
 `scripts/fixture-domain-fault.py` then stops both source services, requires the
 sampled healthy SRT/DASH paths to become unreachable, restarts the same
 containers, and retains timed recovery evidence while leaving the domain up.
@@ -350,9 +351,12 @@ After collecting startup artifacts from all three fixture hosts and all three
 worker hosts, run `python3 scripts/f5-domain-preflight.py` with the three
 ordered `--fixture-result`/`--srt-state`/`--dash-state` triplets and three
 `--worker-result` files. It rejects incomplete domains, reused advertised
-hosts/endpoints, worker ID or zone drift, mutable/mismatched images, and
-tampered state hashes. Its report always keeps `independentHostsCertified` and
-`capacityCertified` false; see `RUNBOOK.md` for the full command.
+hosts/endpoints, reused Docker Engine IDs, worker ID or zone drift,
+mutable/mismatched images, and tampered state hashes. A passing report requires
+`dockerHostCount=6` and `distinctDockerHostsValidated=true`. Docker daemon IDs
+do not attest physical topology, so the report always keeps
+`independentHostsCertified` and `capacityCertified` false; see `RUNBOOK.md` for
+the full command.
 
 After an endpoint-fault exercise, reconcile the durable result and alarm
 projections from one PostgreSQL snapshot:
@@ -383,9 +387,10 @@ python3 scripts/worker-domain-startup.py
 Use the same file on three separate hosts with distinct failure-domain names,
 worker certificates, and spool storage. The command validates the candidate
 zone and all 11 certificate identities, immutable image resolution, host and
-worker-path health APIs, process stability, and Docker logs, then retains the
-evidence directory without stopping the workers. The runbook contains the
-cross-domain Chrome/API, failure-injection, and admission checks.
+worker-path health APIs, a bounded Docker Engine identity, process stability,
+and Docker logs, then retains the evidence directory without stopping the
+workers. The runbook contains the cross-domain Chrome/API, failure-injection,
+and admission checks.
 
 ## Documentation
 

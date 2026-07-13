@@ -56,8 +56,9 @@ VideoSim should split into a master control plane and many worker nodes:
   three separate hosts with distinct domain names, certificates, and spool
   storage for the checked-in F5 candidate. `worker-domain-startup.py` validates
   the candidate zone/certificate set, immutable image and container identity,
-  host plus worker-path health APIs, zero-restart process stability, and logs;
-  one local run is not three-host deployment evidence.
+  host plus worker-path health APIs, bounded Docker Engine identity,
+  zero-restart process stability, and logs; one local run is not three-host
+  deployment evidence.
 - Generated DASH assignments include a master HTTP `monitorEndpoint` so workers do not need a shared DASH volume.
 - Generated SRT workers use `--srt-host` to reach listener feeds through the master/app container host name.
 - Worker contract `videosim.worker/v1` adds process-restart, generation, and assignment-token fencing. HTTP 409 causes a bounded assignment refetch instead of silently applying stale state.
@@ -166,9 +167,10 @@ VideoSim should split into a master control plane and many worker nodes:
   on a Linux load host. Three uniquely advertised shards compose exact
   1,320/660/660 headroom input; the marked startup validator checks exact
   manifest/state endpoint inventory, DASH HTTP, sampled real SRT/DASH media,
-  process state, Docker resources, and logs before a run. The host fault
-  workflow stops both fixture services, proves sampled media failure, restarts
-  them, and records recovery timing without claiming all-endpoint coverage.
+  bounded Docker Engine identity, process state, Docker resources, and logs
+  before a run. The host fault workflow stops both fixture services, proves
+  sampled media failure, restarts them, and records recovery timing without
+  claiming all-endpoint coverage.
 - `durable-fixture-startup.py` composes one local source shard into an exact
   440-stream catalog, boots fresh PostgreSQL plus the API and 11 real workers,
   and fails closed on lease balance, latest behavior outcomes, alarm shape,
@@ -178,9 +180,10 @@ VideoSim should split into a master control plane and many worker nodes:
 - `f5-domain-preflight.py` verifies the artifacts copied from three fixture and
   three worker domains before the distributed run. It requires exact candidate
   endpoint/behavior/worker/zone shape, state-hash parity, required startup
-  checks and windows, distinct advertised hosts, and one immutable image digest.
-  It cannot infer physical host independence from collected JSON and never
-  certifies capacity.
+  checks and windows, distinct advertised hosts, six distinct bounded Linux
+  Docker Engine identities, and one immutable image digest. Daemon identity
+  prevents hostname-only reuse but cannot attest physical host topology; the
+  preflight never certifies physical independence or capacity.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

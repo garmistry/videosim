@@ -719,8 +719,9 @@ VIDEOSIM_FIXTURE_STARTUP_KEEP=1 \
 The command fails unless the image uses an immutable digest, both services
 remain running, each generated state exactly matches its selected manifest with
 distinct IDs and endpoints, the DASH `/healthz` API passes, one healthy SRT and
-one healthy DASH endpoint pass full media validation, a Docker resource
-snapshot is captured, and Docker logs contain no critical marker. Retain
+one healthy DASH endpoint pass full media validation, a bounded Linux Docker
+Engine identity is captured, a Docker resource snapshot is captured, and
+Docker logs contain no critical marker. Retain
 `result.json`, `fixture-inventory.json`, `media-validation.json`,
 `docker-stats.json`, `compose-ps.txt`, `docker.log`, `srt-state.json`, and
 `dash-state.json` from every host. Inventory proves startup of the declared
@@ -915,7 +916,8 @@ files are mode `0600` or stricter, the spool key is valid, and the image uses
 an immutable digest. It renders and converges the existing Compose project,
 checks the control-plane health API from the host and from `worker-01`, then
 requires the exact 11-service set to stay up on one resolved image with zero
-restarts and no critical Docker-log marker. It leaves the domain running.
+restarts and no critical Docker-log marker. It also records the bounded Linux
+Docker Engine identity in `result.json` and leaves the domain running.
 Retain `result.json`, `certificate-inventory.json`, `compose-config.json`,
 `compose-ps.txt`, `container-state.json`, `control-plane-health.json`, and
 `docker.log` from `VIDEOSIM_WORKER_STARTUP_ARTIFACT_DIR`.
@@ -963,11 +965,14 @@ python3 scripts/f5-domain-preflight.py \
 
 Require `passed=true`, three unique advertised hosts, three workload failure
 domains, 660 SRT/660 DASH paths, 1,056/132/66/66 behavior counts, 33 unique
-worker IDs, and one immutable image digest. The verifier matches each fixture
-result to its state hashes and rejects duplicate cross-domain endpoints. Host
-names cannot prove separate physical failure domains, so the report always
-keeps `independentHostsCertified=false` and `capacityCertified=false`. Retain
-the report as preflight evidence, then prove host identity/topology separately.
+worker IDs, one immutable image digest, `dockerHostCount=6`, and
+`distinctDockerHostsValidated=true`. The verifier matches each fixture result
+to its state hashes, rejects duplicate cross-domain endpoints, validates each
+bounded startup host identity, and rejects any reused Docker Engine ID. A
+Docker daemon ID is stronger than an advertised name but cannot prove separate
+physical failure domains, so the report always keeps
+`independentHostsCertified=false` and `capacityCertified=false`. Retain the
+report as preflight evidence, then prove physical topology separately.
 
 From a coordinator with read access to the same PostgreSQL database, set
 `VIDEOSIM_DATABASE_URL` and retain the converged authority baseline:

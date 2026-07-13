@@ -143,8 +143,10 @@
   host sizing, media load, or physical domain-loss execution has passed.
 - The cross-domain startup preflight validates three advertised fixture hosts,
   three worker zones, exact endpoint/worker counts, retained state hashes, and
-  one immutable image digest. Collected JSON cannot prove that advertised names
-  map to separate physical failure domains, so its report permanently keeps
+  one immutable image digest, and requires six distinct bounded Linux Docker
+  Engine identities. Engine IDs prevent one daemon from masquerading under
+  multiple advertised names, but collected JSON cannot prove that distinct
+  daemons map to separate physical failure domains. The report therefore keeps
   `independentHostsCertified=false` and `capacityCertified=false`.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local

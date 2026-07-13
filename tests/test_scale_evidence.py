@@ -274,7 +274,7 @@ class ScaleEvidenceTest(unittest.TestCase):
             (22, 1320, 660, 660),
         )
 
-    def test_checked_in_candidate_survives_one_scheduler_domain_loss(self):
+    def test_checked_in_candidate_survives_rejoin_and_second_domain_loss(self):
         root = Path(__file__).resolve().parents[1]
         workload = json.loads(
             (root / "scale/workloads/f5-1000-candidate.json").read_text(
@@ -353,6 +353,65 @@ class ScaleEvidenceTest(unittest.TestCase):
         )
         self.assertEqual(sum(len(initial[worker]) for worker in failed_workers), 440)
         for assigned in reassigned.values():
+            self.assertEqual(len(assigned), 60)
+            self.assertEqual(sum(stream.protocol == "srt" for stream in assigned), 30)
+            self.assertEqual(sum(stream.protocol == "dash" for stream in assigned), 30)
+
+        rejoined, rejoin_shortfall = capacity_aware_assignments(
+            workers,
+            streams,
+            preferred_owners=new_owners,
+        )
+        rejoined_owners = {
+            stream.id: worker_id
+            for worker_id, assigned in rejoined.items()
+            for stream in assigned
+        }
+        second_failed_workers = {
+            worker["id"]
+            for worker in workers[
+                len(failed_workers) : 2 * len(failed_workers)
+            ]
+        }
+        second_survivors = [
+            worker
+            for worker in workers
+            if worker["id"] not in second_failed_workers
+        ]
+        second_recovery, second_shortfall = capacity_aware_assignments(
+            second_survivors,
+            streams,
+            preferred_owners=rejoined_owners,
+        )
+        second_owners = {
+            stream.id: worker_id
+            for worker_id, assigned in second_recovery.items()
+            for stream in assigned
+        }
+
+        self.assertEqual(rejoin_shortfall, 0)
+        for assigned in rejoined.values():
+            self.assertEqual(len(assigned), 40)
+            self.assertEqual(sum(stream.protocol == "srt" for stream in assigned), 20)
+            self.assertEqual(sum(stream.protocol == "dash" for stream in assigned), 20)
+        self.assertEqual(second_shortfall, 0)
+        self.assertEqual(
+            {
+                stream_id
+                for stream_id, owner in rejoined_owners.items()
+                if second_owners[stream_id] != owner
+            },
+            {
+                stream_id
+                for stream_id, owner in rejoined_owners.items()
+                if owner in second_failed_workers
+            },
+        )
+        self.assertEqual(
+            sum(len(rejoined[worker]) for worker in second_failed_workers),
+            440,
+        )
+        for assigned in second_recovery.values():
             self.assertEqual(len(assigned), 60)
             self.assertEqual(sum(stream.protocol == "srt" for stream in assigned), 30)
             self.assertEqual(sum(stream.protocol == "dash" for stream in assigned), 30)

@@ -790,6 +790,36 @@ assignments per worker. The capture uses one read-only repeatable PostgreSQL
 snapshot and treats only an active, unexpired, current-config lease held by the
 fresh matching worker incarnation as authoritative.
 
+### Run durable control-plane load
+
+Provision a separate empty PostgreSQL database with the same version and
+settings as the candidate, apply migrations, and run:
+
+```sh
+python3 -m videosim control-plane-load \
+  --database-url "$VIDEOSIM_LOAD_DATABASE_URL" \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --duration 24h --tick-seconds 20 \
+  --output artifacts/control-plane-load.json
+```
+
+The preflight rejects any existing non-default tenant, feed, worker, report,
+audit, inbox, or outbox data. On the F5 candidate, initial assignment must be
+exactly 33 workers at 40 total/20 SRT/20 DASH streams each. Every tick refreshes
+all worker heartbeats; workload check profiles schedule fenced synthetic probe
+results at their declared cadences. Require zero rejected/duplicate results,
+one accepted-result outbox event per accepted report, 1,320 current checked
+streams and authoritative leases, and non-empty heartbeat/report/tick latency
+percentiles.
+
+The command intentionally retains the synthetic tenant, worker reports, check
+results, current state, leases, and immutable outbox rows. Retain a database
+snapshot with the JSON report, then destroy the disposable database as a whole;
+do not selectively delete immutable evidence. `mediaProbesExecuted=false` and
+`capacityCertified=false` are permanent report fields. This harness measures
+the PostgreSQL control-plane path only and cannot replace worker HTTP/mTLS,
+broker-consumer, independent media, domain-loss, or 24-hour admission evidence.
+
 After the declared endpoint-fault storm has raised and cleared alarms, retain a
 durable projection report:
 

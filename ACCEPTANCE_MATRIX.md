@@ -81,6 +81,7 @@
 |---|---|
 | Assignment consistency at the F5 candidate shape. | `verify-assignments` checks a read-only repeatable PostgreSQL snapshot for exact 1,320-stream authority, capacity, protocol/domain balance, and bounded one-domain ownership movement. Independent-host capture remains pending. |
 | Alarm consistency at the F5 candidate shape. | P0 PostgreSQL coverage projects 1,320 unhealthy results through current check/alarm state, immutable transition payloads, and outbox rows; an inconclusive follow-up preserves active state and a false clear without a matching edge fails. `verify-alarm-consistency` emits the operator evidence report. Independent-host 24-hour evidence remains pending. |
+| Durable control-plane load at the F5 candidate shape. | `control-plane-load` uses an empty disposable PostgreSQL database to sustain the exact workload's leases, heartbeats, profile-cadenced fenced reports, current state, and accepted-result outbox evidence. P0 coverage proves one 1,320-stream/33-worker tick; media, failure, and 24-hour admission remain pending. |
 
 ## Milestone Status
 

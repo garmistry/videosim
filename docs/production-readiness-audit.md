@@ -644,14 +644,14 @@ Exact names are proposals and must be implemented before use:
 ```text
 python -m videosim fixture-fleet --manifest <scenario.yaml>
 python -m videosim worker-benchmark --scenario <scenario.yaml> --json <report.json>
-python -m videosim control-plane-load --streams 1000 --workers <n> --duration 24h
+python -m videosim control-plane-load --database-url <url> --workload <manifest> --duration 24h --output <report.json>
 python -m videosim verify-assignments --workload <manifest> --output <capture.json> [--baseline <capture.json>]
 python -m videosim verify-alarm-consistency --workload <manifest> --output <report.json>
 python -m videosim chaos --scenario worker-partition|db-failover|event-storm
 python -m videosim capacity-check --report <report.json> --policy <gate.json>
 ```
 
-`fixture-fleet`, `worker-benchmark`, `verify-assignments`,
+`fixture-fleet`, `worker-benchmark`, `control-plane-load`, `verify-assignments`,
 `verify-alarm-consistency`, and `capacity-check`
 are now partially or fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
 slow/dead/malformed matrices; the worker command runs real probes from their
@@ -660,6 +660,12 @@ create exact seeded 1,000- and 1,320-URL mixes from one or more source-host
 states while rejecting duplicate shard endpoints; a Linux fixture-domain
 Compose/startup contract samples real SRT/DASH media and logs; and the worker
 benchmark can fail unless validation rotation covers every logical stream. The
+control-plane load command requires an empty disposable database and sustains
+workload-driven feeds, workers, balanced leases, heartbeats, profile-cadenced
+fenced synthetic results, current state, and accepted-result outbox rows while
+recording latency/resource/database metrics. It permanently disclaims media
+execution and capacity certification. Exact PostgreSQL coverage proves one
+1,320-stream/33-worker/two-profile tick; no 24-hour run exists. The
 assignment command captures one read-only repeatable PostgreSQL snapshot and
 fails closed on incomplete current authority, protocol/domain/capacity drift,
 unbalanced placement, duplicate authority, or ownership changes outside an

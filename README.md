@@ -264,6 +264,22 @@ aggregate outcomes, per-protocol validation outcomes, and unique validation
 coverage. It measures only the supplied worker scenario and does not certify
 fleet capacity.
 
+Exercise the durable PostgreSQL lease, heartbeat, fenced-result, current-state,
+and transactional-outbox paths with the checked-in F5 workload:
+
+```sh
+python3 -m videosim control-plane-load \
+  --database-url "$VIDEOSIM_LOAD_DATABASE_URL" \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --duration 24h \
+  --output artifacts/control-plane-load.json
+```
+
+The target must be an empty disposable database. The command retains its
+synthetic tenant, results, and immutable outbox evidence for inspection, so
+destroy the database as a whole after capture. It schedules synthetic probe
+profiles but runs no media probes and always reports `capacityCertified=false`.
+
 Verify a completed scale-evidence bundle against the fail-closed F5 policy:
 
 ```sh

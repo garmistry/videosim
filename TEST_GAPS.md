@@ -89,6 +89,13 @@ implementation and must pass before those milestones advance.
   and detects a deliberately unexplained false clear. No independent-host
   endpoint-fault capture, transition-latency measurement, broker/consumer
   delivery proof, retention-window soak, or 24-hour report exists yet.
+  `control-plane-load` now drives the exact 1,320-stream/33-worker shape through
+  real PostgreSQL lease, heartbeat, fenced-result, current-state, and result-
+  outbox transactions in an empty disposable database. Its P0 integration test
+  proves one complete two-profile tick and retained evidence, not sustained
+  load: no 24-hour run, worker HTTP/mTLS path, broker consumption, endpoint
+  behavior, media freshness, failure storm, or independent-host resource curve
+  has passed.
   Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
   has not run on independent hosts or passed media/headroom/24-hour admission.

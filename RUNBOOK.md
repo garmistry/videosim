@@ -710,6 +710,7 @@ set -a
 . ./.env.fixture-domain
 set +a
 VIDEOSIM_FIXTURE_STARTUP_ARTIFACT_DIR="$VIDEOSIM_FIXTURE_STATE_DIR/startup-validation" \
+VIDEOSIM_FIXTURE_STARTUP_KEEP=1 \
   python3 scripts/fixture-domain-startup.py
 ```
 
@@ -722,6 +723,8 @@ snapshot is captured, and Docker logs contain no critical marker. Retain
 `docker-stats.json`, `compose-ps.txt`, `docker.log`, `srt-state.json`, and
 `dash-state.json` from every host. Inventory proves startup of the declared
 shape; the sampled media check does not prove every endpoint path or capacity.
+`VIDEOSIM_FIXTURE_STARTUP_KEEP=1` is required for the later fault workflow;
+without it the isolated startup validator cleans up its containers on exit.
 
 Copy the six state files to the workload coordinator and compose the exact
 candidate input:
@@ -868,26 +871,28 @@ and outbox burst only; `syntheticControlPlaneOnly=true` keeps them out of media
 capacity evidence.
 
 Run the real endpoint fault separately at the workload offset on one fixture
-host. With that host's `.env.fixture-domain` loaded, stop both source services:
+host. With that host's `.env.fixture-domain` loaded, use the startup artifact
+from the same still-running project and choose a hold long enough for the
+deployed worker cadence:
 
 ```sh
-docker compose \
-  -p "${VIDEOSIM_FIXTURE_STARTUP_PROJECT:-videosim-fixture-startup}" \
-  -f docker-compose.fixture-domain.yml stop srt dash
+VIDEOSIM_FIXTURE_STARTUP_ARTIFACT_DIR="$VIDEOSIM_FIXTURE_STATE_DIR/startup-validation" \
+VIDEOSIM_FIXTURE_FAULT_ARTIFACT_DIR="$VIDEOSIM_FIXTURE_STATE_DIR/fault-validation" \
+VIDEOSIM_FIXTURE_FAULT_HOLD_SECONDS=120 \
+  python3 scripts/fixture-domain-fault.py
 ```
 
-Retain before/during process state and Docker logs. Hold the fault until the
-durable state contains a conclusive unreachable observation for every endpoint
-that was `feed_reachable=healthy` in that fixture shard's baseline; an elapsed
-offset alone is not evidence. Restart both services, require those same checks
-to return healthy and clear, rerun the fixture media validator, and retain the
-after state:
+The command fails unless the startup project/image/inventory match, sampled
+healthy SRT/DASH media passes before the fault, both source services stop, both
+samples become non-success, and the same services/API/media recover. It retains
+before/fault/recovery media reports, process state, Docker resources/logs, and
+timings, leaves the services running, and attempts fail-safe restart on error.
+Require `passed=true` and `servicesRunningAtEnd=true`.
 
-```sh
-docker compose \
-  -p "${VIDEOSIM_FIXTURE_STARTUP_PROJECT:-videosim-fixture-startup}" \
-  -f docker-compose.fixture-domain.yml start srt dash
-```
+The durable state must still contain a conclusive unreachable observation for
+every endpoint that was `feed_reachable=healthy` in that fixture shard's
+baseline; a configured hold and two sampled paths are not all-stream evidence.
+After recovery, require those same durable checks to return healthy and clear.
 
 Stopping one same-host test project is useful workflow validation but is not
 independent fixture-host or 1,000-stream media evidence.

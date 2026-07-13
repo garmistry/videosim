@@ -32,9 +32,10 @@
 - The candidate fixture-domain deployment requires a Linux Docker engine with
   host networking. One local full-shape startup produced exact 220-SRT and
   220-DASH distinct endpoint inventories and sampled one healthy media path per
-  protocol, but it did not load every path or use independent hosts. Each host
-  still shares one encoder or generator per protocol; this is not per-stream
-  source independence or 1,000-stream capacity evidence.
+  protocol. A physical stop/restart made both samples fail and recover, but it
+  did not load or observe every path and used one Docker VM. Each host still
+  shares one encoder or generator per protocol; this is not independent-host,
+  per-stream source independence, all-alarm, or 1,000-stream capacity evidence.
 - The GUI preview is a local refreshed frame matching the active mode, not
   native browser SRT playback and not validation proof of the SRT output.
   Audio-only mode and external feeds have no video preview.

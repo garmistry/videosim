@@ -238,11 +238,15 @@ the checked-in 220-SRT/220-DASH manifests and a unique advertised hostname.
 DASH health API, fails unless every manifest endpoint appears exactly once in
 the generated state, validates one healthy SRT and DASH endpoint through the
 real media-probe path, and captures Compose state, Docker resources, and logs.
+`scripts/fixture-domain-fault.py` then stops both source services, requires the
+sampled healthy SRT/DASH paths to become unreachable, restarts the same
+containers, and retains timed recovery evidence while leaving the domain up.
 Pass each retained state to `fixture-scenario` with repeated `--srt-state` and
 `--dash-state` options; duplicate endpoints across shards fail closed.
 Three shards compose the exact 660/660 candidate input, but each shard still
 shares one source per protocol and startup validation is not saturation
-evidence.
+evidence. The fault workflow samples two paths; durable worker alarms must
+separately prove every affected endpoint transition.
 
 To fail unless cursor rotation starts validation for every logical stream, add
 `--require-full-validation-coverage` and run enough measured iterations. Add

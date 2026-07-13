@@ -158,7 +158,9 @@ VideoSim should split into a master control plane and many worker nodes:
   on a Linux load host. Three uniquely advertised shards compose exact
   1,320/660/660 headroom input; the marked startup validator checks exact
   manifest/state endpoint inventory, DASH HTTP, sampled real SRT/DASH media,
-  process state, Docker resources, and logs before a run.
+  process state, Docker resources, and logs before a run. The host fault
+  workflow stops both fixture services, proves sampled media failure, restarts
+  them, and records recovery timing without claiming all-endpoint coverage.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

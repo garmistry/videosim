@@ -146,9 +146,12 @@ implementation and must pass before those milestones advance.
   One local exact-source image run booted a full 220+220 shard and recorded
   220 distinct endpoints per protocol with the exact 176/22/11/11 behavior
   split. It sampled only two media paths and ran on one Docker VM; three
-  independent hosts, all-path media load, per-stream source independence,
-  concurrent reconnect pressure, source-domain loss, and sustained capacity
-  remain open.
+  independent hosts and all-path media load remain open. A follow-up physically
+  stopped both full-shard source containers, observed sampled healthy SRT/DASH
+  paths become issues in 16.595 seconds, and recovered both in 3.446 seconds
+  after restart. That still proves only two paths on one VM, not all 440 worker
+  observations/alarms, per-stream source independence, concurrent reconnect
+  pressure, independent source-domain loss, or sustained capacity.
 - The worker benchmark can require and report unique validation-start coverage
   plus repeated cycle and wall-time cadence. A 250-cycle Linux run against 1,000
   distinct SRT/DASH URLs covered every stream at least twice with eight

@@ -92,6 +92,10 @@ independent heartbeat. PostgreSQL `/state.json` exposes it as
 spool-occupancy fields. Completed batches also publish aggregate CPU time,
 worker/child peak RSS, and Linux open-file-descriptor count. This is current
 state for sizing runs, not historical capacity evidence.
+PostgreSQL deployments also expose the versioned operator read endpoint
+`GET /api/operator/feeds?limit=200&cursor=<feed-id>`. It reads the shared feed
+catalog directly and caps each page at 200 rows; it does not expose runtime
+process state or make the current GUI/mutation paths replica-safe.
 When a durable worker reports `spoolBlocked=true`, assignment excludes that
 worker and reports any resulting `capacityShortfall` instead of granting it new
 lease authority. This is fail-closed load shedding, not a durable fleet queue.

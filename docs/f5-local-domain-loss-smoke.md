@@ -318,6 +318,46 @@ instance. Replicated operator state, generated-feed ownership, authenticated
 rolling/failover behavior, HA storage, media capacity, and F5 admission remain
 open.
 
+## Paginated Operator Catalog Follow-Up
+
+`GET /api/operator/feeds` now reads persisted feed configuration and config
+versions directly from PostgreSQL instead of one API process's startup cache.
+The versioned response uses an ID cursor, defaults to 100 rows, and rejects
+limits outside 1-200. Trusted-proxy mode requires the existing OIDC viewer
+identity, and invalid durable rows fail the complete request with HTTP 503.
+
+Two API processes were started against an empty fresh PostgreSQL 17 database.
+Both process-local `/state.json` views contained zero feeds before and after
+1,320 external placeholders were seeded: 660 SRT and 660 DASH. A page walk then
+alternated requests between the two APIs.
+
+| Check | Result |
+|---|---:|
+| Unique catalog feeds | 1,320/1,320 |
+| SRT/DASH feeds | 660/660 |
+| Pages | 7 |
+| Page sizes | 200/200/200/200/200/200/120 |
+| API A/API B pages | 4/3 |
+| Page latency p50/p95/max | 0.0063/0.0079/0.0167 seconds |
+| Maximum response size | 75,709 bytes |
+| Total response bytes | 484,070 bytes |
+| API/database container restarts | 0/0/0 |
+
+Every ID was globally sorted and appeared once, every config version was one,
+both APIs remained healthy, and their logs contained only the startup line.
+PostgreSQL logged no runtime error after readiness. Focused tests also prove
+SQLite paging, bounds, viewer authorization, post-start create/update/delete
+visibility from a stale-cache replica, and fail-closed malformed/overlong-row
+behavior.
+
+This is a read-only configuration API, not a completed operator read model.
+The cursor does not hold a database snapshot across requests, the React GUI
+still polls unbounded process-local `/state.json`, and feed-detail/runtime
+state, concurrent create-ID allocation, load-balanced mutations, generated
+runtime ownership, a real load balancer, HA storage, and F5 admission remain
+open. The live page scan used security-off direct HTTP; authorization evidence
+is from the trusted-proxy HTTP regression.
+
 ## Validation
 
 - `python3 -m unittest tests.test_cert_script`: 1 passed.
@@ -360,6 +400,11 @@ open.
   passed API readiness, worker registration, feed create/start, normal SRT
   video/audio/captions validation, stop, Compose-state capture, and Docker-log
   capture in 8.318 seconds.
+- Paginated operator follow-up: exact task-only unit discovery passed 394 tests
+  with 92 environment-gated skips in 24.678 seconds; a fresh PostgreSQL database
+  passed 77 durable store/worker-v2 tests with 4 runtime-role skips in 19.812
+  seconds. Hash-verified exact app/worker source overlays passed the no-build
+  startup API/media/log workflow in 11.915 seconds.
 - Documentation contract: 4 passed.
 
 ## Remaining Gates

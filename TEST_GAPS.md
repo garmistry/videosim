@@ -192,16 +192,24 @@ implementation and must pass before those milestones advance.
   processes started with empty caches, then assigned a post-start 1,320-feed
   PostgreSQL catalog exactly once across 33 workers with zero scheduler retries
   and zero cross-replica ownership changes. This covers external-feed worker
-  assignment only: operator stream state, generated-feed process ownership, a
-  production load balancer, bounded lock-wait telemetry/timeouts, and API/DB HA
-  remain open. An earlier local fault window recorded 33 client timeouts,
-  mostly report uploads,
+  assignment only: operator mutations/runtime state, generated-feed process
+  ownership, a production load balancer, bounded lock-wait telemetry/timeouts,
+  and API/DB HA remain open. An earlier local fault window recorded 33 client
+  timeouts, mostly report uploads,
   despite successful spool recovery. Probe-report ingestion now bulk-reads its
   fences and batch-writes mutable projections; a same-shape follow-up recorded
   zero HTTP 499/5xx, one stale-authority 409, 1.3693-second report commit p95,
   and eventual empty spools. Sustained report saturation, lock-wait/deadlock
   metrics, persistent leadership, replicated deployment, and sustained
   1,000-stream poll cadence remain open.
+- `GET /api/operator/feeds` now provides an authenticated, versioned,
+  fail-closed PostgreSQL catalog read with a 200-row maximum and ID cursor. A
+  local alternating two-API walk returned all 1,320 post-start rows exactly
+  once in seven pages while both process caches stayed empty. The cursor is not
+  a cross-request database snapshot, and the React GUI still polls unbounded
+  process-local `/state.json`; feed-detail/runtime reads, concurrent create-ID
+  allocation, load-balanced update/delete, and generated runtime ownership are
+  open F4 gates.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A
   configured cadence staggers deep work; aggregate budget exhaustion stops new

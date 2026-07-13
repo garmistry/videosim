@@ -178,6 +178,19 @@ feed detail pages keep a rolling five-minute in-browser window and plot bit
 rate plus outbound data in real time. Use Validate to prove actual
 receiver-visible stream state.
 
+For a bounded durable feed-catalog read, page the operator API instead of
+loading every feed through `/state.json`:
+
+```sh
+curl -fsS 'http://127.0.0.1:8080/api/operator/feeds?limit=200'
+curl -fsS 'http://127.0.0.1:8080/api/operator/feeds?limit=200&cursor=stream-0200'
+```
+
+Follow `nextCursor` while `hasMore` is true. The maximum and default limits are
+200 and 100. Production requests use the same OIDC viewer authorization as the
+GUI. This endpoint returns persisted configuration/config versions only; it is
+not a generated-runtime status API, and the React GUI does not consume it yet.
+
 Video-present modes include a running clock overlay in the encoded video so
 receivers can visually prove live motion and timing.
 

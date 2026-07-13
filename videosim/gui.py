@@ -2171,7 +2171,9 @@ def worker_assignments_payload(
             assignments, capacity_shortfall = capacity_aware_assignments(
                 worker_records,
                 running_streams,
-                preferred_owners=store.active_lease_owners(_connection=connection),
+                preferred_owners=store.preferred_lease_owners(
+                    _connection=connection
+                ),
             )
             assigned_streams = assignments[worker_id]
             leases = {

@@ -250,19 +250,29 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         self.assertEqual(restarted.worker_incarnation_id, second_incarnation)
         self.assertEqual(restarted.state, "offered")
 
-    def test_active_lease_owners_exclude_stale_workers(self):
+    def test_preferred_lease_owners_keep_expired_fresh_worker_and_exclude_stale_worker(self):
         feed_id = f"feed-{uuid.uuid4()}"
         self.store.upsert(feed(feed_id))
         worker_id = f"worker-{uuid.uuid4()}"
         incarnation = uuid.uuid4()
         self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
         self.store.reconcile_lease(feed_id, worker_id, incarnation, ttl_seconds=60)
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE leases
+                    SET expires_at = clock_timestamp() - interval '1 second'
+                    WHERE tenant_id = %s AND stream_id = %s
+                    """,
+                    (self.store.tenant_id, feed_id),
+                )
 
-        self.assertEqual(self.store.active_lease_owners()[feed_id], worker_id)
+        self.assertEqual(self.store.preferred_lease_owners()[feed_id], worker_id)
 
         self.make_worker_stale(worker_id)
 
-        self.assertNotIn(feed_id, self.store.active_lease_owners())
+        self.assertNotIn(feed_id, self.store.preferred_lease_owners())
 
     def test_scheduler_transaction_rolls_back_and_releases_after_connection_loss(self):
         from psycopg import OperationalError
@@ -388,6 +398,72 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
             revoked_after["config_version"],
             before[feed_ids[0]].config_version,
         )
+
+    def test_1000_stream_lease_batch_is_ordered_and_bounded(self):
+        prefix = f"lease-scale-{uuid.uuid4()}-"
+        feed_ids = [f"{prefix}{index:04d}" for index in range(1000)]
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+
+        class CountingConnection:
+            def __init__(self, connection):
+                self.connection = connection
+                self.execute_count = 0
+
+            def execute(self, *args, **kwargs):
+                self.execute_count += 1
+                return self.connection.execute(*args, **kwargs)
+
+        try:
+            with self.store._pool.connection() as connection:
+                with connection.transaction():
+                    connection.execute(
+                        """
+                        INSERT INTO feeds (tenant_id, id, config)
+                        SELECT %s, stream_id, jsonb_build_object('id', stream_id)
+                        FROM unnest(%s::text[]) AS stream_id
+                        """,
+                        (self.store.tenant_id, feed_ids),
+                    )
+                    counted = CountingConnection(connection)
+                    leases = self.store.reconcile_leases(
+                        feed_ids,
+                        worker_id,
+                        incarnation,
+                        ttl_seconds=60,
+                        _connection=counted,
+                    )
+
+            self.assertEqual(counted.execute_count, 2)
+            self.assertEqual([lease.stream_id for lease in leases], feed_ids)
+            self.assertTrue(all(lease.state == "offered" for lease in leases))
+            acknowledged = self.store.acknowledge_leases(
+                [
+                    (lease.stream_id, lease.epoch, lease.config_version)
+                    for lease in leases
+                ],
+                worker_id,
+                incarnation,
+                ttl_seconds=60,
+            )
+            self.assertEqual(
+                [lease.stream_id for lease in acknowledged], feed_ids
+            )
+            self.assertTrue(
+                all(lease.state == "active" for lease in acknowledged)
+            )
+        finally:
+            with self.store._pool.connection() as connection:
+                with connection.transaction():
+                    connection.execute(
+                        "DELETE FROM feeds WHERE tenant_id = %s AND id = ANY(%s::text[])",
+                        (self.store.tenant_id, feed_ids),
+                    )
+                    connection.execute(
+                        "DELETE FROM workers WHERE tenant_id = %s AND worker_id = %s",
+                        (self.store.tenant_id, worker_id),
+                    )
 
     def test_new_epoch_resets_sequence_for_config_incarnation_expiry_and_restore(self):
         feed_id = f"feed-{uuid.uuid4()}"

@@ -646,12 +646,13 @@ python -m videosim fixture-fleet --manifest <scenario.yaml>
 python -m videosim worker-benchmark --scenario <scenario.yaml> --json <report.json>
 python -m videosim control-plane-load --streams 1000 --workers <n> --duration 24h
 python -m videosim verify-assignments --workload <manifest> --output <capture.json> [--baseline <capture.json>]
-python -m videosim verify-alarm-consistency --results <capture>
+python -m videosim verify-alarm-consistency --workload <manifest> --output <report.json>
 python -m videosim chaos --scenario worker-partition|db-failover|event-storm
 python -m videosim capacity-check --report <report.json> --policy <gate.json>
 ```
 
-`fixture-fleet`, `worker-benchmark`, `verify-assignments`, and `capacity-check`
+`fixture-fleet`, `worker-benchmark`, `verify-assignments`,
+`verify-alarm-consistency`, and `capacity-check`
 are now partially or fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
 slow/dead/malformed matrices; the worker command runs real probes from their
 states and reports outcomes by protocol; the fixture-scenario command can
@@ -668,8 +669,13 @@ evenly across three domains so any 22 survivors retain exact 1,320/660/660
 total/SRT/DASH tokens. Reusable Compose files render one 11-worker domain and
 one 220-SRT/220-DASH fixture shard, but neither shape has been booted on three
 independent hosts. The assignment verifier has exact synthetic and
-PostgreSQL-backed 1,320-stream integration coverage, but no three-host capture. Per-stream
-independent sources, remaining proposed harnesses, and production-like evidence
+PostgreSQL-backed 1,320-stream integration coverage, but no three-host capture.
+The alarm verifier uses one read-only repeatable snapshot to reconcile latest
+results, current check state, pending/current alarms, retained transition
+payloads, and outbox rows. Exact PostgreSQL-backed 1,320-stream coverage proves
+that inconclusive evidence preserves an active alarm and that an unexplained
+false clear fails. Per-stream independent sources, three-host alarm captures,
+transition-latency/consumer evidence, remaining proposed harnesses, and production-like evidence
 are not implemented; a valid candidate
 or deployment render is not scale admission.
 

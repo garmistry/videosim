@@ -75,6 +75,13 @@
 | Frame-rate validation. | Feed creation/update exposes 23.97, 24, 25, 50, 59.94, and 60 fps choices, uses rational GStreamer caps for fractional rates, and raises a monitor alarm when measured video frame rate differs from the configured rate. |
 | Loudness monitoring. | Audio-present feeds raise alarms for ITU-R BS.1770 measurement failure, EBU R 128 integrated/true-peak loudness violations, and ATSC A/85 integrated loudness violations. |
 
+## Distributed Scale Evidence
+
+| Capability | Acceptance evidence |
+|---|---|
+| Assignment consistency at the F5 candidate shape. | `verify-assignments` checks a read-only repeatable PostgreSQL snapshot for exact 1,320-stream authority, capacity, protocol/domain balance, and bounded one-domain ownership movement. Independent-host capture remains pending. |
+| Alarm consistency at the F5 candidate shape. | P0 PostgreSQL coverage projects 1,320 unhealthy results through current check/alarm state, immutable transition payloads, and outbox rows; an inconclusive follow-up preserves active state and a false clear without a matching edge fails. `verify-alarm-consistency` emits the operator evidence report. Independent-host 24-hour evidence remains pending. |
+
 ## Milestone Status
 
 | Milestone | Status | Human-visible output |

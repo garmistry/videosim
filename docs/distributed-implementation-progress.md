@@ -101,7 +101,7 @@ linked evidence passes in a production-like environment.
 | Event transport | Hash-immutable transactional outbox, concurrent `SKIP LOCKED`, retry/dead state, exact JetStream policy, at-least-once IDs, consumer-inbox schema | Producer implemented and local integration-tested; no consumer deployed, so consumer/read cutover remains blocked |
 | Backup/restore | Custom-format scripts, migration check, informational generation increment, enforced lease expiry, explicit broker mode, repeatable-read semantic comparator | Implemented; local empty/retained-broker functional restores passed; PITR/RPO/RTO not certified |
 | Deployment | Production Compose role-init → migrate → role-grants → app/publisher/pruner dependencies and persistent volumes | Implemented/config validated; PostgreSQL/NATS remain single-instance |
-| Scale evidence | Production-like durability/load/failover data | Not started; no scale claim |
+| Scale evidence | Read-only assignment and alarm-consistency reports tied to the checked-in workload; production-like durability/load/failover data | Exact 1,320-stream PostgreSQL verifier coverage implemented; independent-host 24-hour evidence not started, so no scale claim |
 
 The detailed authority model, exact commands, local evidence boundary, rollback,
 and remaining cutover work are in

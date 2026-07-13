@@ -82,6 +82,13 @@ implementation and must pass before those milestones advance.
   PostgreSQL-backed tests cover 1,320 streams, 33 baseline workers, 22
   survivors, and 440 required moves; they do not replace the missing
   independent-host capture, stale-report/latency evidence, or soak.
+  `verify-alarm-consistency` now reconciles latest results, current check state,
+  pending/current alarms, retained transition payloads, and matching outbox rows
+  from one read-only repeatable snapshot. Its P0 PostgreSQL test covers all
+  1,320 desired streams, proves a timeout cannot explain an active-alarm clear,
+  and detects a deliberately unexplained false clear. No independent-host
+  endpoint-fault capture, transition-latency measurement, broker/consumer
+  delivery proof, retention-window soak, or 24-hour report exists yet.
   Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
   has not run on independent hosts or passed media/headroom/24-hour admission.

@@ -282,6 +282,20 @@ failure domains. Losing one domain leaves 22 workers with exact capacity for
 1,320 streams, including 660 SRT and 660 DASH. This is checked configuration,
 not an approved capacity result.
 
+After an endpoint-fault exercise, reconcile the durable result and alarm
+projections from one PostgreSQL snapshot:
+
+```sh
+python3 -m videosim verify-alarm-consistency \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --output artifacts/alarm-consistency.json
+```
+
+The command requires all 1,320 desired streams to have current check state,
+requires retained alarm transitions, and fails on result/current-state drift,
+an unexplained clear, malformed alarm events, or a missing/mismatched outbox
+record. It is a consistency gate, not the missing multi-host 24-hour run.
+
 Render one 11-worker domain before deployment with:
 
 ```sh

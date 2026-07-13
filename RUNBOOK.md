@@ -790,6 +790,32 @@ assignments per worker. The capture uses one read-only repeatable PostgreSQL
 snapshot and treats only an active, unexpired, current-config lease held by the
 fresh matching worker incarnation as authoritative.
 
+After the declared endpoint-fault storm has raised and cleared alarms, retain a
+durable projection report:
+
+```sh
+python3 -m videosim verify-alarm-consistency \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --output artifacts/alarm-consistency.json
+```
+
+Require `passed=true`, `expectedDesiredStreams=1320`,
+`desiredStreams=1320`, `observedDesiredStreams=1320`, at least one retained
+alarm event, and zero violations in every named check. The command uses one
+read-only repeatable PostgreSQL snapshot. It reconciles each current check with
+its source and latest result; pending/current alarms with conclusive source
+results; the latest retained transition with current alarm state; and every
+retained event with its identity payload and transactional outbox record. An
+inconclusive current observation may preserve an older active alarm source, but
+an inactive alarm without a matching retained `cleared` or `suppressed` edge
+fails closed. Retain the JSON report with the workload, database metrics, and
+Docker logs.
+
+Run the same command after recovery and at the end of the soak. A passing report
+does not measure transition latency, broker/consumer delivery, retention beyond
+the captured window, independent-host behavior, or 24-hour stability; those
+remain separate admission evidence.
+
 At the declared domain-loss offset, stop all 11 services on one host. After the
 lease TTL and assignment-poll bound, the authenticated state must contain 22
 fresh workers at 60 assignments each. The immutable assignment capture must

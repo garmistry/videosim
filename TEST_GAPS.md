@@ -133,6 +133,11 @@ implementation and must pass before those milestones advance.
   on each of 22 survivors afterward. Only the failed domain's 440 assignments
   move. This does not exercise PostgreSQL lease expiry, worker processes,
   network partitions, media probes, or separate infrastructure hosts.
+- `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
+  with unique mTLS identities and the candidate's exact admission/concurrency
+  limits. It has not been booted on three independent hosts, and no production
+  image digest, certificates, network path, host sizing, or domain-loss log/API
+  capture exists. Compose rendering is not deployment or capacity evidence.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

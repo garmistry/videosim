@@ -660,9 +660,10 @@ fail unless validation rotation covers every logical stream. The capacity
 command checks JSON evidence/policy inputs against
 `scale/policies/f5-1000.json`. The checked-in F5 candidate places 33 workers
 evenly across three domains so any 22 survivors retain exact 1,320/660/660
-total/SRT/DASH tokens. Independent sources, remaining proposed harnesses, and
-production-like evidence are not implemented; a valid candidate is not scale
-admission.
+total/SRT/DASH tokens. A reusable Compose file renders one 11-worker domain,
+but it has not been booted on three independent hosts. Independent sources,
+remaining proposed harnesses, and production-like evidence are not implemented;
+a valid candidate or deployment render is not scale admission.
 
 The control-plane benchmark also supports process-local worker removal. Its
 1,300-stream/ten-worker/one-loss run preserved complete unique ownership and

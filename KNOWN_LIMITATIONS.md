@@ -99,6 +99,10 @@
   on 14 workers and saturated local CPU/process capacity. This repository has
   a 33-worker/three-domain candidate sized to retain those 22 survivors, but no
   measured multi-host deployment to replace that failed run.
+- The reusable worker-domain Compose file renders 11 uniquely identified,
+  capacity-bounded workers per host. It has only config-level validation; no
+  three-host boot, certificate set, remote control-plane path, host sizing, or
+  domain-loss execution has validated it.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

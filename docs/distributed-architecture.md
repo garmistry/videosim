@@ -49,6 +49,11 @@ VideoSim should split into a master control plane and many worker nodes:
 - `python -m videosim worker` CLI loop for polling assignments and reporting monitor state.
 - Compose sample worker service:
   - `docker compose up --build app worker`
+- `docker-compose.worker-domain.yml` renders 11 uniquely identified mTLS
+  workers for one Compose/VM failure domain. Run the same immutable image on
+  three separate hosts with distinct domain names, certificates, and spool
+  storage for the checked-in F5 candidate; config rendering is not deployment
+  evidence.
 - Generated DASH assignments include a master HTTP `monitorEndpoint` so workers do not need a shared DASH volume.
 - Generated SRT workers use `--srt-host` to reach listener feeds through the master/app container host name.
 - Worker contract `videosim.worker/v1` adds process-restart, generation, and assignment-token fencing. HTTP 409 causes a bounded assignment refetch instead of silently applying stale state.
@@ -192,6 +197,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - Durable tenant keys exist, but authorization grants and tenant-isolation behavior are not implemented.
 - The app, PostgreSQL, and NATS deployments remain single instances. Replicated
   API routing, persistent scheduler leadership, and HA storage are not implemented.
+- The candidate worker-domain Compose file is not deployed or host-sized. No
+  three-host worker boot, network partition, domain loss, or recovery artifact
+  exists yet.
 
 ## Next Upgrade Points
 

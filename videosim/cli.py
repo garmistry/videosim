@@ -129,6 +129,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="durable scheduler admission limit; zero keeps legacy unlimited assignment",
     )
     worker.add_argument(
+        "--max-srt-streams",
+        type=int,
+        default=0,
+        help="durable SRT admission limit; zero leaves this protocol uncapped",
+    )
+    worker.add_argument(
+        "--max-dash-streams",
+        type=int,
+        default=0,
+        help="durable DASH admission limit; zero leaves this protocol uncapped",
+    )
+    worker.add_argument(
         "--max-concurrent-checks",
         type=int,
         default=1,
@@ -439,6 +451,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("retry_base_seconds must be zero or greater")
             if args.max_streams < 0:
                 raise ValueError("max_streams must be zero or greater")
+            if args.max_srt_streams < 0:
+                raise ValueError("max_srt_streams must be zero or greater")
+            if args.max_dash_streams < 0:
+                raise ValueError("max_dash_streams must be zero or greater")
             if args.max_concurrent_checks < 1:
                 raise ValueError("max_concurrent_checks must be at least 1")
             if args.stream_budget_seconds < 0:
@@ -467,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
             ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
             if (
                 args.max_streams
+                or args.max_srt_streams
+                or args.max_dash_streams
                 or args.max_concurrent_checks > 1
                 or args.stream_budget_seconds
                 or args.deep_check_interval_seconds
@@ -486,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.retry_attempts,
                     args.retry_base_seconds,
                     max_streams=args.max_streams,
+                    max_srt_streams=args.max_srt_streams,
+                    max_dash_streams=args.max_dash_streams,
                     max_concurrent_checks=args.max_concurrent_checks,
                     stream_budget_seconds=args.stream_budget_seconds,
                     deep_check_interval_seconds=args.deep_check_interval_seconds,

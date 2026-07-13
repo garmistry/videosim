@@ -239,6 +239,10 @@ class VideoFeedCliTest(unittest.TestCase):
                     "worker-a",
                     "--max-streams",
                     "100",
+                    "--max-srt-streams",
+                    "60",
+                    "--max-dash-streams",
+                    "40",
                     "--max-concurrent-checks",
                     "4",
                     "--stream-budget-seconds",
@@ -259,6 +263,8 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(worker.call_args.kwargs, {
             "max_streams": 100,
+            "max_srt_streams": 60,
+            "max_dash_streams": 40,
             "max_concurrent_checks": 4,
             "stream_budget_seconds": 30.0,
             "deep_check_interval_seconds": 60.0,

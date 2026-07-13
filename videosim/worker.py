@@ -79,6 +79,8 @@ def post_heartbeat(
     ssl_context: ssl.SSLContext | None = None,
     worker_incarnation_id: str = "",
     max_streams: int = 0,
+    max_srt_streams: int = 0,
+    max_dash_streams: int = 0,
     max_concurrent_checks: int = 0,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
@@ -96,6 +98,10 @@ def post_heartbeat(
     capacity = {}
     if max_streams:
         capacity["maxStreams"] = max_streams
+    if max_srt_streams:
+        capacity["maxSrtStreams"] = max_srt_streams
+    if max_dash_streams:
+        capacity["maxDashStreams"] = max_dash_streams
     if max_concurrent_checks:
         capacity["maxConcurrentChecks"] = max_concurrent_checks
     if stream_budget_seconds:
@@ -149,6 +155,8 @@ def _heartbeat_loop(
     ssl_context: ssl.SSLContext | None,
     worker_incarnation_id: str,
     max_streams: int,
+    max_srt_streams: int,
+    max_dash_streams: int,
     max_concurrent_checks: int,
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
@@ -158,6 +166,8 @@ def _heartbeat_loop(
         try:
             if (
                 max_streams
+                or max_srt_streams
+                or max_dash_streams
                 or max_concurrent_checks
                 or stream_budget_seconds
                 or deep_check_interval_seconds
@@ -169,6 +179,8 @@ def _heartbeat_loop(
                     ssl_context,
                     worker_incarnation_id,
                     max_streams,
+                    max_srt_streams,
+                    max_dash_streams,
                     max_concurrent_checks,
                     stream_budget_seconds,
                     deep_check_interval_seconds,
@@ -410,6 +422,8 @@ def run_worker(
     retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
     retry_base_seconds: float = DEFAULT_RETRY_BASE_SECONDS,
     max_streams: int = 0,
+    max_srt_streams: int = 0,
+    max_dash_streams: int = 0,
     max_concurrent_checks: int = 1,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
@@ -423,6 +437,10 @@ def run_worker(
         raise ValueError("heartbeat_seconds must be greater than 0")
     if max_streams < 0:
         raise ValueError("max_streams must be zero or greater")
+    if max_srt_streams < 0:
+        raise ValueError("max_srt_streams must be zero or greater")
+    if max_dash_streams < 0:
+        raise ValueError("max_dash_streams must be zero or greater")
     if max_concurrent_checks < 1:
         raise ValueError("max_concurrent_checks must be at least 1")
     if stream_budget_seconds < 0:
@@ -501,6 +519,8 @@ def run_worker(
             ssl_context,
             worker_incarnation_id,
             max_streams,
+            max_srt_streams,
+            max_dash_streams,
             max_concurrent_checks if max_concurrent_checks > 1 else 0,
             stream_budget_seconds,
             deep_check_interval_seconds,
@@ -533,6 +553,8 @@ def run_worker(
     try:
         if (
             max_streams
+            or max_srt_streams
+            or max_dash_streams
             or max_concurrent_checks > 1
             or stream_budget_seconds
             or deep_check_interval_seconds
@@ -545,6 +567,8 @@ def run_worker(
                     ssl_context,
                     worker_incarnation_id,
                     max_streams,
+                    max_srt_streams,
+                    max_dash_streams,
                     max_concurrent_checks if max_concurrent_checks > 1 else 0,
                     stream_budget_seconds,
                     deep_check_interval_seconds,

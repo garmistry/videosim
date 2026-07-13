@@ -446,6 +446,11 @@ that worker. The scheduler will not assign beyond aggregate advertised
 capacity; `capacityShortfall` in the assignment response shows unassigned
 running streams. This controls admission only; probe execution is serial by
 default and requires separate measured capacity testing.
+Use `--max-srt-streams N` and `--max-dash-streams N` for protocol-specific
+admission. A worker must satisfy both its total cap and the stream's protocol
+cap. Mixed workloads that exceed either cap remain unassigned and increase
+`capacityShortfall`. Zero leaves that dimension unbounded; select all limits
+from representative SRT/DASH measurements.
 Use `--max-concurrent-checks N` to bound simultaneous stream checks. This is a
 local execution bound, not a deadline, backpressure, or capacity certification.
 Use `--stream-budget-seconds N` to classify an over-budget stream as timed out

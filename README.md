@@ -67,6 +67,9 @@ This is a one-feed startup gate, not 1,000-stream capacity evidence.
 For PostgreSQL worker admission, pass `--max-streams N` to advertise a static
 per-worker limit. Streams over aggregate advertised capacity remain unassigned
 and are reported as a capacity shortfall; this is not media-capacity evidence.
+Use `--max-srt-streams N` and `--max-dash-streams N` to refine that admission
+limit by protocol. The durable scheduler enforces total and matching protocol
+caps together; zero omits a cap. Set counts from measured worker evidence.
 Use `--max-concurrent-checks N` to bound simultaneous stream checks on a worker;
 checks within each stream remain ordered.
 Use `--stream-budget-seconds N` to stop starting lower-priority checks after a

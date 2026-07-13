@@ -43,6 +43,8 @@ class GuiTest(unittest.TestCase):
             {"streamBudgetSeconds": float("inf")},
             {"deepCheckIntervalSeconds": "60"},
             {"batchBudgetSeconds": 0},
+            {"maxSrtStreams": 0},
+            {"maxDashStreams": True},
         ):
             with self.subTest(capacity=capacity), self.assertRaises(
                 WorkerReportValidationError
@@ -72,6 +74,107 @@ class GuiTest(unittest.TestCase):
             [2, 1],
         )
         self.assertEqual(shortfall, 2)
+
+    def test_protocol_capacity_tokens_prevent_mixed_over_admission(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"SRT {index}",
+                protocol="srt",
+                source="external",
+                external_url=f"srt://example.test:{9000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(5)
+        ] + [
+            state.create_stream(
+                name=f"DASH {index}",
+                protocol="dash",
+                source="external",
+                external_url=f"https://example.test/{index}/manifest.mpd",
+                select=False,
+            )
+            for index in range(2)
+        ]
+        workers = [
+            {
+                "id": "worker-a",
+                "capacity": {
+                    "maxStreams": 4,
+                    "maxSrtStreams": 1,
+                    "maxDashStreams": 3,
+                },
+            },
+            {
+                "id": "worker-b",
+                "capacity": {
+                    "maxStreams": 4,
+                    "maxSrtStreams": 3,
+                    "maxDashStreams": 1,
+                },
+            },
+        ]
+
+        assignments, shortfall = capacity_aware_assignments(workers, streams)
+
+        self.assertEqual(shortfall, 1)
+        self.assertEqual(
+            {
+                worker_id: {
+                    protocol: sum(
+                        stream.protocol == protocol
+                        for stream in assignments[worker_id]
+                    )
+                    for protocol in ("srt", "dash")
+                }
+                for worker_id in assignments
+            },
+            {
+                "worker-a": {"srt": 1, "dash": 2},
+                "worker-b": {"srt": 3, "dash": 0},
+            },
+        )
+
+    def test_1000_mixed_streams_fill_protocol_tokens_evenly(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"SRT {index}",
+                protocol="srt",
+                source="external",
+                external_url=f"srt://example.test:{9000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(500)
+        ] + [
+            state.create_stream(
+                name=f"DASH {index}",
+                protocol="dash",
+                source="external",
+                external_url=f"https://example.test/{index}/manifest.mpd",
+                select=False,
+            )
+            for index in range(500)
+        ]
+        workers = [
+            {
+                "id": f"worker-{index:02d}",
+                "capacity": {
+                    "maxStreams": 100,
+                    "maxSrtStreams": 50,
+                    "maxDashStreams": 50,
+                },
+            }
+            for index in range(10)
+        ]
+
+        assignments, shortfall = capacity_aware_assignments(workers, streams)
+
+        self.assertEqual(shortfall, 0)
+        for assigned in assignments.values():
+            self.assertEqual(len(assigned), 100)
+            self.assertEqual(sum(stream.protocol == "srt" for stream in assigned), 50)
+            self.assertEqual(sum(stream.protocol == "dash" for stream in assigned), 50)
 
     def create_feed(self, state: GuiState, name: str = "Primary feed"):
         return state.create_stream(

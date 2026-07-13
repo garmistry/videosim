@@ -57,6 +57,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - Durable workers may advertise `capacity.maxStreams` with `--max-streams`; the
   scheduler refuses new assignments beyond aggregate advertised capacity and
   reports the shortfall instead of silently over-admitting a worker.
+- `capacity.maxSrtStreams` and `capacity.maxDashStreams` refine durable
+  admission by protocol. A candidate must satisfy both total and matching
+  protocol caps; uncapped workers retain compatibility behavior.
 - Workers can run assigned streams through a bounded pool with
   `--max-concurrent-checks`; checks within one stream remain ordered and
   serial.
@@ -116,12 +119,12 @@ VideoSim should split into a master control plane and many worker nodes:
 - The SQLite worker v1 registry, assignment generation, and tokens remain
   process-local transition fences. Production PostgreSQL uses v2 durable
   leases, but its scheduler is not leader-elected.
-- PostgreSQL assignment is capacity-aware only for workers advertising
-  `capacity.maxStreams`; unconfigured workers use compatibility round-robin.
-  This is admission control, not measured media capacity.
+- PostgreSQL assignment is capacity-aware for workers advertising total or
+  SRT/DASH protocol limits; unconfigured workers use compatibility round-robin.
+  These are static admission counts, not weighted cost or media capacity.
 - Worker concurrency and built-in probe waits are bounded when configured, but
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
-  HTTP preemption, protocol/tenant cost tokens, validation-phase bounds,
+  HTTP preemption, weighted check-cost/tenant tokens, validation-phase bounds,
   fleet pressure/recovery telemetry, spool key rotation/repair, and full
   probe-queue backpressure remain open. Workers can keep validation on every
   cycle, shed the deep phase

@@ -122,6 +122,8 @@ class WorkerTest(unittest.TestCase):
                 "worker-a",
                 worker_incarnation_id="00000000-0000-0000-0000-000000000001",
                 max_streams=100,
+                max_srt_streams=60,
+                max_dash_streams=40,
                 max_concurrent_checks=4,
                 stream_budget_seconds=30,
                 deep_check_interval_seconds=60,
@@ -132,6 +134,8 @@ class WorkerTest(unittest.TestCase):
             payload["capacity"],
             {
                 "maxStreams": 100,
+                "maxSrtStreams": 60,
+                "maxDashStreams": 40,
                 "maxConcurrentChecks": 4,
                 "streamBudgetSeconds": 30,
                 "deepCheckIntervalSeconds": 60,

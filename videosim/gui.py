@@ -60,6 +60,10 @@ PROFILE_OPTIONS = {
     "frozen_video": ("Frozen video", "profiles/srt-frozen-video.yaml"),
 }
 MAX_WORKER_STREAMS = 100_000
+PROTOCOL_CAPACITY_FIELDS = {
+    "srt": "maxSrtStreams",
+    "dash": "maxDashStreams",
+}
 
 PROTOCOL_OPTIONS = {"srt": "SRT", "dash": "DASH"}
 SOURCE_OPTIONS = {"generated": "Generated", "external": "External URL"}
@@ -2225,61 +2229,91 @@ def capacity_aware_assignments(
     assignments = {worker["id"]: [] for worker in workers}
     if not workers:
         return assignments, len(streams)
-    capacities = {}
-    for worker in workers:
-        normalized = normalize_worker_capacity(worker.get("capacity"))
-        capacities[worker["id"]] = normalized.get("maxStreams") if normalized else None
-    if not any(capacity is not None for capacity in capacities.values()):
+    capacities = {
+        worker["id"]: normalize_worker_capacity(worker.get("capacity")) or {}
+        for worker in workers
+    }
+    admission_fields = ("maxStreams", *PROTOCOL_CAPACITY_FIELDS.values())
+    if not any(
+        field in capacity
+        for capacity in capacities.values()
+        for field in admission_fields
+    ):
         for index, stream in enumerate(streams):
             assignments[workers[index % len(workers)]["id"]].append(stream)
         return assignments, 0
 
+    protocol_counts = {
+        worker["id"]: {protocol: 0 for protocol in PROTOCOL_CAPACITY_FIELDS}
+        for worker in workers
+    }
     unassigned = 0
     for stream in streams:
-        eligible = [
-            worker
-            for worker in workers
-            if capacities[worker["id"]] is None
-            or len(assignments[worker["id"]]) < capacities[worker["id"]]
-        ]
+        protocol_field = PROTOCOL_CAPACITY_FIELDS.get(stream.protocol)
+        eligible = []
+        for worker in workers:
+            worker_id = worker["id"]
+            capacity = capacities[worker_id]
+            if len(assignments[worker_id]) >= capacity.get("maxStreams", math.inf):
+                continue
+            if (
+                protocol_field
+                and protocol_counts[worker_id][stream.protocol]
+                >= capacity.get(protocol_field, math.inf)
+            ):
+                continue
+            eligible.append(worker)
         if not eligible:
             unassigned += 1
             continue
+
+        def load(worker: dict) -> tuple[float, int, str]:
+            worker_id = worker["id"]
+            capacity = capacities[worker_id]
+            utilization = []
+            if "maxStreams" in capacity:
+                utilization.append(
+                    len(assignments[worker_id]) / capacity["maxStreams"]
+                )
+            if protocol_field and protocol_field in capacity:
+                utilization.append(
+                    protocol_counts[worker_id][stream.protocol]
+                    / capacity[protocol_field]
+                )
+            return (
+                max(utilization, default=1.0),
+                len(assignments[worker_id]),
+                worker_id,
+            )
+
         selected = min(
             eligible,
-            key=lambda worker: (
-                len(assignments[worker["id"]]) / capacities[worker["id"]]
-                if capacities[worker["id"]]
-                else 1.0,
-                len(assignments[worker["id"]]),
-                worker["id"],
-            ),
+            key=load,
         )
         assignments[selected["id"]].append(stream)
+        if stream.protocol in PROTOCOL_CAPACITY_FIELDS:
+            protocol_counts[selected["id"]][stream.protocol] += 1
     return assignments, unassigned
 
 
 def normalize_worker_capacity(capacity: dict | None) -> dict | None:
     if capacity is None:
         return None
-    max_streams = capacity.get("maxStreams")
-    if max_streams is not None and (
-        isinstance(max_streams, bool)
-        or not isinstance(max_streams, int)
-        or not 1 <= max_streams <= MAX_WORKER_STREAMS
+    for field in (
+        "maxStreams",
+        "maxSrtStreams",
+        "maxDashStreams",
+        "maxConcurrentChecks",
     ):
-        raise WorkerReportValidationError(
-            f"capacity.maxStreams must be an integer between 1 and {MAX_WORKER_STREAMS}"
-        )
-    max_concurrent_checks = capacity.get("maxConcurrentChecks")
-    if max_concurrent_checks is not None and (
-        isinstance(max_concurrent_checks, bool)
-        or not isinstance(max_concurrent_checks, int)
-        or not 1 <= max_concurrent_checks <= MAX_WORKER_STREAMS
-    ):
-        raise WorkerReportValidationError(
-            f"capacity.maxConcurrentChecks must be an integer between 1 and {MAX_WORKER_STREAMS}"
-        )
+        value = capacity.get(field)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 1 <= value <= MAX_WORKER_STREAMS
+        ):
+            raise WorkerReportValidationError(
+                f"capacity.{field} must be an integer between 1 and {MAX_WORKER_STREAMS}"
+            )
     for field in (
         "streamBudgetSeconds",
         "deepCheckIntervalSeconds",

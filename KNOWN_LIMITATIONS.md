@@ -91,6 +91,9 @@
   workers still use compatibility round-robin scheduling and execution remains
   serial unless `--max-concurrent-checks` is configured. The pool is bounded
   stream-level concurrency, not measured media capacity or backpressure.
+  `--max-srt-streams` and `--max-dash-streams` add static protocol admission
+  caps, but they are operator counts rather than measured weighted check costs
+  and do not provide tenant fairness or separate runtime pools.
   `--stream-budget-seconds` defers remaining checks after budget exhaustion but
   now caps built-in media subprocess and DASH polling/socket waits. Arbitrary
   injected checker code and a trickling HTTP response are not preempted.
@@ -104,7 +107,7 @@
   probes behind undelivered reports. It has transition logs but no fleet health
   metric, automatic key rotation, quarantine/repair tool, priority eviction, or
   production outage/disk-pressure evidence. Black/frozen validation can still
-  be expensive and there are no protocol/tenant cost tokens.
+  be expensive and there are no weighted check-cost or tenant tokens.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The
   future JetStream consumer must still use `consumer_inbox` atomically and prove

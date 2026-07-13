@@ -159,6 +159,10 @@ def srt_pipeline_args(config: VideoFeedConfig) -> list[str]:
                 "!",
                 f"closedcaption/x-cea-608,format=raw,field=0,framerate={framerate}",
                 "!",
+                "ccconverter",
+                "!",
+                "closedcaption/x-cea-708,format=cc_data",
+                "!",
                 "cc.caption",
             ]
         )

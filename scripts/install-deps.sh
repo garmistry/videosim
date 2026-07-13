@@ -127,6 +127,7 @@ if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   require_gst_element mpegtsmux
   require_gst_element clockoverlay
   require_gst_element x264enc
+  require_gst_element ccconverter
   require_gst_element h264ccinserter
 fi
 

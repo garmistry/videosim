@@ -66,9 +66,11 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("avenc_aac", args)
         self.assertIn("freq=440", args)
         self.assertIn("cccombiner", args)
+        self.assertIn("ccconverter", args)
         self.assertIn("h264ccinserter", args)
         self.assertIn("fdsrc", args)
         self.assertIn("closedcaption/x-cea-608,format=raw,field=0,framerate=10/1", args)
+        self.assertIn("closedcaption/x-cea-708,format=cc_data", args)
         self.assertIn("mpegtsmux", args)
         self.assertIn("srtsink", args)
         self.assertIn("video/x-raw,width=320,height=180,framerate=10/1", args)
@@ -76,6 +78,7 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("wait-for-connection=false", args)
         self.assertFalse(any("maxconn=" in arg for arg in args))
         self.assertLess(args.index("video/x-raw,framerate=10/1"), args.index("cccombiner"))
+        self.assertLess(args.index("ccconverter"), args.index("closedcaption/x-cea-708,format=cc_data"))
 
     def test_pipeline_accepts_fractional_broadcast_frame_rate(self):
         config = VideoFeedConfig(port=9910, width=320, height=180, framerate="59.94")
@@ -121,6 +124,7 @@ class VideoFeedCliTest(unittest.TestCase):
         self.assertIn("mpd-filename=manifest.mpd", args)
         self.assertIn("dash.video_0", args)
         self.assertIn("dash.audio_0", args)
+        self.assertNotIn("ccconverter", args)
         self.assertNotIn("h264ccinserter", args)
         self.assertNotIn("srtsink", args)
 

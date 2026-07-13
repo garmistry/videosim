@@ -433,6 +433,9 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
   const controls = state.controls || {};
   const readOnly = Boolean(state.operatorReadOnly);
   const runtimeKnown = stream.runtimeKnown !== false;
+  const desiredRunning = runtimeKnown
+    ? stream.status === "running"
+    : stream.desiredState === "running";
   const [configSource, setConfigSource] = useState(stream.source || "generated");
   useEffect(() => {
     setConfigSource(stream.source || "generated");
@@ -454,16 +457,19 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
           <p className="meta-line">{stream.source === "external" ? "External feed" : stream.intentionalOutage ? "Intentional outage" : "Normal feed"}</p>
         </div>
         <div className="header-actions">
-          {!readOnly && runtimeKnown ? (
+          {!readOnly ? (
             <>
-              <form action="/validate" method="post">
-                <input name="stream_id" type="hidden" value={stream.id} />
-                <button className="button secondary" type="submit">Validate</button>
-              </form>
+              {runtimeKnown ? (
+                <form action="/validate" method="post">
+                  <input name="stream_id" type="hidden" value={stream.id} />
+                  <button className="button secondary" type="submit">Validate</button>
+                </form>
+              ) : null}
               {stream.source !== "external" ? (
-                stream.status === "running" ? (
+                desiredRunning ? (
                   <form action="/stop" method="post">
                     <input name="stream_id" type="hidden" value={stream.id} />
+                    <input name="config_version" type="hidden" value={stream.configVersion} />
                     <button className="button danger" type="submit">Stop feed</button>
                   </form>
                 ) : (
@@ -606,7 +612,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
         </div>
       </section>
 
-      {stream.source !== "external" && !readOnly && runtimeKnown ? (
+      {stream.source !== "external" && !readOnly ? (
         <section className="card">
           <header className="card-header"><h2>Fault controls</h2></header>
           <div className="card-body">
@@ -784,6 +790,11 @@ function statusMeta(stream, state) {
     return { key: "stopped", label: "Stopped" };
   }
   if (stream.runtimeKnown === false) {
+    if (stream.source === "generated") {
+      return stream.desiredState === "running"
+        ? { key: "stopped", label: "Desired running" }
+        : { key: "stopped", label: "Desired stopped" };
+    }
     return { key: "stopped", label: "Config only" };
   }
   if (stream.lastError && stream.lastError !== "none") {

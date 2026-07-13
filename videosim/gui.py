@@ -67,6 +67,7 @@ PROTOCOL_CAPACITY_FIELDS = {
 
 PROTOCOL_OPTIONS = {"srt": "SRT", "dash": "DASH"}
 SOURCE_OPTIONS = {"generated": "Generated", "external": "External URL"}
+DESIRED_STATES = {"running", "stopped"}
 
 CONTROL_FIELDS = ("video", "audio", "captions", "black_video", "frozen_video")
 CONTROL_FORM_FIELD = "controls"
@@ -207,6 +208,7 @@ class FeedRecord:
     mode: str
     source: str = "generated"
     external_url: str = ""
+    desired_state: str = "stopped"
     process: subprocess.Popen | None = None
     logs: list[str] = field(default_factory=list)
     last_error: str = ""
@@ -222,6 +224,8 @@ class FeedRecord:
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
         self.source = normalize_source(self.source)
+        if self.desired_state not in DESIRED_STATES:
+            raise ValueError(f"Unsupported desired state: {self.desired_state}")
         self.external_url = validate_external_url(self.protocol, self.external_url) if self.source == "external" else ""
         self.alert_enabled_ids = normalize_enabled_alerts(self.alert_enabled_ids)
         self.alert_delay_seconds = normalize_alert_delay(self.alert_delay_seconds)
@@ -233,8 +237,12 @@ class FeedRecord:
         if self.source == "external":
             return self.external_url
         if self.protocol == "dash":
+            base_url = os.environ.get("VIDEOSIM_GENERATED_DASH_BASE_URL", "").rstrip("/")
+            if base_url:
+                return f"{base_url}/dash/{quote(self.id, safe='')}/manifest.mpd"
             return f"http://127.0.0.1:{self.http_port}/dash/{self.id}/manifest.mpd"
-        return f"srt://127.0.0.1:{self.feed_port}?mode=caller"
+        host = os.environ.get("VIDEOSIM_GENERATED_SRT_HOST", "127.0.0.1")
+        return f"srt://{host}:{self.feed_port}?mode=caller"
 
     @property
     def status(self) -> str:
@@ -415,6 +423,7 @@ class GuiState:
                 mode=mode,
                 source=source,
                 external_url=external_url,
+                desired_state="running" if source == "external" else "stopped",
                 alert_enabled_ids=[] if source == "external" else None,
             )
             if stream.source == "external":
@@ -492,11 +501,54 @@ class GuiState:
             raise OperatorMutationPersistenceError(
                 f"Feed configuration read failed: {exc}"
             ) from exc
-        if persisted.source != "external":
-            raise OperatorMutationConflict(
-                "generated feed mutation requires its runtime-owning replica"
-            )
         return persisted, cached
+
+    def _apply_durable_expectation(
+        self,
+        stream_id: str,
+        mode: str,
+        protocol: str,
+        desired_state: str,
+        audit: dict | None,
+        expected_version: int | None,
+    ) -> bool:
+        if expected_version is None:
+            raise ValueError("config_version is required")
+        stream, cached = self._stream_for_mutation(stream_id, expected_version)
+        if stream is None:
+            self.fail(f"Unsupported stream: {stream_id}")
+            return False
+        if mode not in PROFILE_OPTIONS:
+            self.fail(f"Unsupported mode: {mode}", stream_id)
+            return False
+        if protocol not in PROTOCOL_OPTIONS:
+            self.fail(f"Unsupported protocol: {protocol}", stream_id)
+            return False
+        if desired_state not in DESIRED_STATES:
+            self.fail(f"Unsupported desired state: {desired_state}", stream_id)
+            return False
+        candidate = copy.copy(stream)
+        candidate.mode = mode
+        candidate.protocol = protocol
+        candidate.desired_state = (
+            "running" if candidate.source == "external" else desired_state
+        )
+        if candidate.source == "external":
+            candidate.external_url = validate_external_url(
+                candidate.protocol, candidate.external_url
+            )
+            self.security.validate_external_endpoint(candidate.external_url)
+        self._persist_stream(
+            candidate, audit=audit, expected_version=expected_version
+        )
+        if cached is not None:
+            cached.mode = candidate.mode
+            cached.protocol = candidate.protocol
+            cached.external_url = candidate.external_url
+            cached.desired_state = candidate.desired_state
+            cached.config_version = candidate.config_version
+        mark_assignment_dirty(self)
+        return True
 
     def update_stream(
         self,
@@ -528,11 +580,12 @@ class GuiState:
         next_external_url = validate_external_url(next_protocol, next_external_url) if next_source == "external" else ""
         if next_source == "external":
             self.security.validate_external_endpoint(next_external_url)
-        if cached is not stream and next_source != "external":
-            raise OperatorMutationConflict(
-                "generated feed mutation requires its runtime-owning replica"
-            )
-        restart = cached is stream and stream.source == "generated" and stream.status == "running"
+        restart = (
+            not isinstance(self.feed_store, PostgresControlPlaneStore)
+            and cached is stream
+            and stream.source == "generated"
+            and stream.status == "running"
+        )
         with self.control_plane_lock:
             if cached is not None and not self._ensure_current_stream_locked(
                 cached, "update"
@@ -681,6 +734,12 @@ class GuiState:
         return True
 
     def stop_all(self):
+        if isinstance(self.feed_store, PostgresControlPlaneStore):
+            # Durable intent belongs to PostgreSQL and must survive API shutdown.
+            for stream in list(self.streams.values()):
+                if stream.process is not None:
+                    self._terminate_stream_process(stream)
+            return
         for stream_id in list(self.streams):
             self.stop(stream_id)
 
@@ -704,6 +763,9 @@ class GuiState:
         self.validation_output = stream.validation_output
 
     def start(self, stream_id: str | None = None):
+        if isinstance(self.feed_store, PostgresControlPlaneStore):
+            self.fail("Durable generated feeds require a versioned start request")
+            return False
         if stream_id and not self.select_stream(stream_id):
             return False
         stream = self.active_stream
@@ -793,6 +855,18 @@ class GuiState:
         audit: dict | None = None,
         expected_version: int | None = None,
     ):
+        if isinstance(self.feed_store, PostgresControlPlaneStore):
+            if not stream_id:
+                self.fail("stream_id is required")
+                return False
+            return self._apply_durable_expectation(
+                stream_id,
+                mode,
+                protocol or self.protocol,
+                "running",
+                audit,
+                expected_version,
+            )
         if stream_id and not self.select_stream(stream_id):
             return False
         stream = self.active_stream
@@ -998,7 +1072,31 @@ class GuiState:
             f"Detached process cleanup exhausted for {stream.id} pid={process_id}"
         )
 
-    def stop(self, stream_id: str | None = None) -> bool:
+    def stop(
+        self,
+        stream_id: str | None = None,
+        audit: dict | None = None,
+        expected_version: int | None = None,
+    ) -> bool:
+        if isinstance(self.feed_store, PostgresControlPlaneStore):
+            if not stream_id:
+                self.fail("stream_id is required")
+                return False
+            stream, _ = self._stream_for_mutation(stream_id, expected_version)
+            if stream is None:
+                self.fail(f"Unsupported stream: {stream_id}")
+                return False
+            if stream.source == "external":
+                self.log("External feed has no generated runtime to stop", stream.id)
+                return True
+            return self._apply_durable_expectation(
+                stream_id,
+                stream.mode,
+                stream.protocol,
+                "stopped",
+                audit,
+                expected_version,
+            )
         if stream_id and not self.select_stream(stream_id):
             return False
         stream = self.active_stream
@@ -1176,6 +1274,7 @@ def stream_registration(stream: FeedRecord) -> dict:
         "name": stream.name,
         "source": stream.source,
         "external_url": stream.external_url,
+        "desired_state": stream.desired_state,
         "protocol": stream.protocol,
         "mode": stream.mode,
         "http_port": stream.http_port,
@@ -1555,8 +1654,9 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             try:
                 stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
-                if stream_id:
+                if stream_id and durable_control_store(self.state) is None:
                     self.state.select_stream(stream_id)
+                if stream_id:
                     redirect_stream_id = stream_id
                 mode = mode_from_form(params, self.state.mode)
                 protocol = params.get("protocol", [self.state.protocol])[0]
@@ -1579,8 +1679,23 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
         elif path == "/stop":
             params = self._read_form()
+            try:
+                expected_version = self._mutation_expected_version(params)
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
             redirect_stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
-            self.state.stop(redirect_stream_id or None)
+            try:
+                self.state.stop(
+                    redirect_stream_id or None,
+                    audit=self._mutation_audit(
+                        operator_principal, "feed.runtime.stop"
+                    ),
+                    expected_version=expected_version,
+                )
+            except OperatorMutationPersistenceError as exc:
+                self._send_mutation_persistence_error(exc, operator_principal)
+                return
         elif path == "/validate":
             params = self._read_form()
             redirect_stream_id = params.get("stream_id", [self.state.selected_stream_id])[0]
@@ -2030,13 +2145,17 @@ def operator_feed_detail_view(state: GuiState, stream_id: str) -> GuiState | Non
         return None
     persisted = durable_feed_record(state, registration)
     local = state.streams.get(stream_id)
-    if local is not None and local.config_version == persisted.config_version:
+    if (
+        persisted.source == "external"
+        and local is not None
+        and local.config_version == persisted.config_version
+    ):
         return request_state_view(state, stream_id, local)
     return request_state_view(
         state,
         stream_id,
         persisted,
-        operator_read_only=persisted.source != "external",
+        operator_read_only=False,
         operator_runtime_known=False,
     )
 
@@ -2249,7 +2368,7 @@ def render_page(state: GuiState) -> str:
     <button class="secondary" type="submit">Clear event audit</button>
   </form>'''}
   <div class="row">
-    <form method="post" action="/stop"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Stop</button></form>
+    <form method="post" action="/stop"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><input type="hidden" name="config_version" value="{active.config_version}"><button type="submit">Stop</button></form>
     <form method="post" action="/validate"><input type="hidden" name="stream_id" value="{html.escape(state.selected_stream_id)}"><button type="submit">Validate</button></form>
     <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('endpoint').value)">Copy URL</button>
     <a href="/diagnostics.txt">Download diagnostics</a>
@@ -2403,6 +2522,7 @@ def operator_feed_payload(stream: FeedRecord) -> dict:
         "framerate": stream.framerate,
         "externalUrl": stream.external_url,
         "endpoint": stream.endpoint,
+        "desiredState": stream.desired_state,
         "configVersion": stream.config_version,
         "alertProfile": alert_profile_payload(
             stream.alert_enabled_ids, stream.alert_delay_seconds
@@ -2439,6 +2559,7 @@ def stream_payload(stream: FeedRecord) -> dict:
         "configVersion": stream.config_version,
         "alertProfile": alert_profile_payload(stream.alert_enabled_ids, stream.alert_delay_seconds),
         "status": stream.status,
+        "desiredState": stream.desired_state,
         "endpoint": stream.endpoint,
         "intentionalOutage": stream.intentional_outage,
         "lastError": stream.last_error or "none",
@@ -2563,13 +2684,8 @@ def durable_assignment_streams(
 ) -> list[FeedRecord]:
     streams = []
     for registration in store.load(_connection=connection):
-        if registration.get("source") == "external":
-            stream = durable_feed_record(state, registration)
-        else:
-            stream = state.streams.get(registration.get("id"))
-            if stream is None or stream.config_version != registration["config_version"]:
-                continue
-        if stream.status == "running":
+        stream = durable_feed_record(state, registration)
+        if stream.source == "external" or stream.desired_state == "running":
             streams.append(stream)
     return sorted(streams, key=lambda item: item.id)
 
@@ -2660,7 +2776,8 @@ def control_plane_stream_payload(stream: FeedRecord, base_url: str, worker_id: s
     payload = stream_payload(stream)
     payload["assignedWorkerId"] = worker_id
     if stream.protocol == "dash" and stream.source == "generated":
-        endpoint = f"{base_url.rstrip('/')}/dash/{quote(stream.id, safe='')}/manifest.mpd"
+        origin = os.environ.get("VIDEOSIM_GENERATED_DASH_BASE_URL", base_url).rstrip("/")
+        endpoint = f"{origin}/dash/{quote(stream.id, safe='')}/manifest.mpd"
         payload["endpoint"] = endpoint
         payload["monitorEndpoint"] = endpoint
     return payload

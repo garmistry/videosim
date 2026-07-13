@@ -487,20 +487,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(audit_row["payload"]["operation"], "/streams/create")
         self.assertNotIn(sentinel, json.dumps(audit_row["payload"]))
 
-    def test_generated_expectation_commits_before_local_restart(self):
+    def test_generated_expectation_commits_durable_intent_without_api_process(self):
         self.enable_trusted_security()
         generated = self.state.create_stream(name="Generated audited feed")
-        process = MagicMock(pid=43210)
-        process.poll.return_value = None
-        process.wait.return_value = 0
-        generated.process = process
-        generated.started_at = 1.0
-
-        with patch.object(
-            self.state, "_terminate_stream_process", return_value=True
-        ) as terminate, patch.object(
-            self.state, "start", return_value=True
-        ) as start:
+        with patch("videosim.gui.subprocess.Popen") as popen:
             self.post_form(
                 "/start",
                 {
@@ -529,27 +519,22 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 (self.tenant_id, generated.id),
             ).fetchone()
         self.assertEqual(row["config"]["mode"], "video_only")
+        self.assertEqual(row["config"]["desired_state"], "running")
         self.assertEqual(generated.mode, "video_only")
+        self.assertEqual(generated.desired_state, "running")
         self.assertEqual((audit_row["action"], audit_row["outcome"]), ("feed.expectation.update", "succeeded"))
-        terminate.assert_called_once_with(generated)
-        start.assert_called_once_with(generated.id)
+        popen.assert_not_called()
 
-    def test_generated_expectation_audit_failure_prevents_local_restart(self):
+    def test_generated_expectation_audit_failure_prevents_intent_change(self):
         self.enable_trusted_security()
         generated = self.state.create_stream(name="Generated fail closed")
-        process = MagicMock(pid=43211)
-        process.poll.return_value = None
-        generated.process = process
-        generated.started_at = 1.0
         allocator_before = self.state._next_stream_number
 
         with patch.object(
             self.store,
             "_insert_outbox",
             side_effect=PostgresStoreError("audit outbox unavailable"),
-        ), patch.object(
-            self.state, "_terminate_stream_process"
-        ) as terminate:
+        ), patch("videosim.gui.subprocess.Popen") as popen:
             self.post_form(
                 "/start",
                 {
@@ -570,10 +555,11 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 (self.tenant_id, generated.id),
             ).fetchone()
         self.assertEqual(row["config"]["mode"], "normal")
+        self.assertEqual(row["config"]["desired_state"], "stopped")
         self.assertEqual(generated.mode, "normal")
-        self.assertIs(generated.process, process)
+        self.assertEqual(generated.desired_state, "stopped")
         self.assertEqual(self.state._next_stream_number, allocator_before)
-        terminate.assert_not_called()
+        popen.assert_not_called()
 
     def test_committed_update_and_delete_converge_when_process_cleanup_fails(self):
         self.enable_trusted_security()
@@ -584,7 +570,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         generated.started_at = 1.0
         with patch.object(
             self.state, "_terminate_stream_process", return_value=False
-        ):
+        ) as terminate:
             self.post_form(
                 "/streams/update",
                 {
@@ -607,7 +593,8 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(generated.name, "Committed despite cleanup failure")
         self.assertEqual(generated.mode, "video_only")
         self.assertIs(generated.process, process)
-        self.assertIn("previous process could not be stopped", generated.last_error)
+        self.assertFalse(generated.last_error)
+        terminate.assert_not_called()
 
         cleanup_called = threading.Event()
         with patch.object(
@@ -679,6 +666,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                     "video_only",
                     stream_id=self.stream_id,
                     audit=audit("feed.expectation.update"),
+                    expected_version=1,
                 )
             with self.assertRaises(OperatorMutationPersistenceError):
                 other_state.update_alert_profile(
@@ -686,6 +674,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                     ["feed_reachable"],
                     5,
                     audit=audit("feed.alert_profile.update"),
+                    expected_version=1,
                 )
             with self.store._pool.connection() as connection:
                 feed_row = connection.execute(
@@ -801,7 +790,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             source="external",
             external_url="srt://example.test:9200?mode=caller",
         )
-        generated = self.state.create_stream(name="Owner-only generated feed")
+        generated = self.state.create_stream(name="Durable generated feed")
         try:
             _, detail = self.get_json(
                 f"/api/operator/feeds/{external.id}",
@@ -813,6 +802,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
 
             for path, fields in (
                 ("/start", {"protocol": "srt", "mode": "normal"}),
+                ("/stop", {}),
                 ("/streams/update", {"name": "Missing fence"}),
                 ("/streams/alerts", {"alert_action": "enable_all"}),
                 ("/streams/delete", {}),
@@ -886,19 +876,56 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 {},
                 base_url=replica_url,
             )
-            self.assertTrue(generated_detail["operatorReadOnly"])
+            self.assertFalse(generated_detail["operatorReadOnly"])
             self.assertFalse(generated_detail["streams"][0]["runtimeKnown"])
-            owner_only = self.post_form(
-                "/streams/update",
+            self.assertEqual(generated_detail["streams"][0]["desiredState"], "stopped")
+            self.post_form(
+                "/start",
                 {
                     "stream_id": generated.id,
                     "config_version": generated.config_version,
-                    "name": "Must stay owner-bound",
+                    "protocol": "srt",
+                    "mode": "video_only",
                 },
-                expected_status=409,
                 base_url=replica_url,
             )
-            self.assertIn("runtime-owning replica", owner_only["error"])
+            started = self.store.load_one(generated.id)
+            self.assertEqual(started["desired_state"], "running")
+            self.assertEqual(started["mode"], "video_only")
+            self.assertEqual(started["config_version"], 2)
+            self.assertEqual(replica_state.streams, {})
+
+            stale_stop = self.post_form(
+                "/stop",
+                {
+                    "stream_id": generated.id,
+                    "config_version": generated.config_version,
+                },
+                expected_status=409,
+            )
+            self.assertIn("reload and retry", stale_stop["error"])
+            self.post_form(
+                "/streams/update",
+                {
+                    "stream_id": generated.id,
+                    "config_version": started["config_version"],
+                    "name": "Updated generated through replica",
+                },
+                base_url=replica_url,
+            )
+            generated_updated = self.store.load_one(generated.id)
+            self.assertEqual(generated_updated["desired_state"], "running")
+            self.assertEqual(generated_updated["config_version"], 3)
+            self.post_form(
+                "/stop",
+                {
+                    "stream_id": generated.id,
+                    "config_version": generated_updated["config_version"],
+                },
+            )
+            generated_stopped = self.store.load_one(generated.id)
+            self.assertEqual(generated_stopped["desired_state"], "stopped")
+            self.assertEqual(generated_stopped["config_version"], 4)
 
             self.post_form(
                 "/streams/delete",

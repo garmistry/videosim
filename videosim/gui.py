@@ -1657,8 +1657,11 @@ class GuiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_bytes(self, body: bytes, content_type: str):
         self.send_response(200)

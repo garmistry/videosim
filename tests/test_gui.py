@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from videosim.control_plane import WorkerReportConflict, WorkerReportPersistenceError, WorkerReportValidationError
 from videosim.feed_store import SqliteFeedStore
 from videosim.gui import (
+    GuiHandler,
     GuiState,
     MODE_CONTROLS,
     PROFILE_OPTIONS,
@@ -37,6 +38,16 @@ def empty_worker_state():
 
 
 class GuiTest(unittest.TestCase):
+    def test_json_response_ignores_disconnected_client(self):
+        handler = object.__new__(GuiHandler)
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        handler.wfile.write.side_effect = BrokenPipeError
+
+        handler._send_json({"ok": True})
+
     def test_worker_capacity_rejects_invalid_probe_controls(self):
         for capacity in (
             {"maxConcurrentChecks": 0},

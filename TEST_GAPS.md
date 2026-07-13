@@ -96,12 +96,13 @@ implementation and must pass before those milestones advance.
   stops one synthetic domain, waits for real PostgreSQL freshness expiry, uses
   the production scheduler to move exactly its 440 streams to 22 survivors,
   preserves all healthy owners, rejects a stale failed-owner report, and
-  resumes complete reporting. It compresses freshness to one second and is not
-  sustained or deployment-timing evidence. The current 60-second control-plane
-  default cannot meet the 45-second p95 authority-recovery gate. No 24-hour
-  run, worker HTTP/mTLS path, broker consumption, endpoint-fault behavior,
-  media freshness, physical-domain timing, or independent-host resource curve
-  has passed.
+  resumes complete reporting. The candidate default is now a configurable
+  30-second freshness boundary with five-second heartbeats, and retained exact
+  PostgreSQL evidence recovered at 29.888/29.889-second p95/p99. That synthetic
+  result is not sustained or physical deployment-timing evidence. No 24-hour
+  run, worker HTTP/mTLS domain loss, broker consumption, endpoint-fault
+  behavior, media freshness, physical-domain timing, or independent-host
+  resource curve has passed.
   Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
   has not run on independent hosts or passed media/headroom/24-hour admission.

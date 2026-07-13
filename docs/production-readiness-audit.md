@@ -670,8 +670,10 @@ coverage plus 45/90-second p95/p99 authority recovery. It permanently
 disclaims media execution and capacity certification. Exact PostgreSQL
 coverage proves one 1,320-stream/33-worker/two-profile tick and compressed
 recovery of all 440 affected streams onto 22 survivors with zero healthy-owner
-churn. The one-second test TTL is not deployment evidence, and the current
-60-second default cannot meet the p95 gate; no 24-hour run exists. The
+churn. The candidate now uses configurable 30-second freshness and five-second
+heartbeats; an exact retained synthetic run measured 29.888/29.889-second
+p95/p99 recovery. That is not physical deployment or media evidence, and no
+24-hour run exists. The
 assignment command captures one read-only repeatable PostgreSQL snapshot and
 fails closed on incomplete current authority, protocol/domain/capacity drift,
 unbalanced placement, duplicate authority, or ownership changes outside an

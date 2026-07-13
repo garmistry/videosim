@@ -319,6 +319,12 @@ The production overlay does not publish app TCP 8080, PostgreSQL 5432, or NATS
 checks the proxy secret and identity headers. Use a managed CA/secret store and
 VM firewall in production.
 
+Keep `VIDEOSIM_WORKER_FRESHNESS_SECONDS=30` on the control plane and
+`VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS=5` on every worker for the F5
+candidate. The same configured freshness controls durable membership and lease
+offer/ack expiry. Any timing override requires a new retained domain-loss run;
+do not claim the 45/90-second gate from configuration alone.
+
 The overlay also starts single-instance PostgreSQL and NATS JetStream services.
 `postgres-role-init` converges the non-owner runtime roles before `migrate`;
 `postgres-role-grants` must then complete before `app`, `outbox-publisher`, or
@@ -467,13 +473,13 @@ Workers auto-negotiate by storage mode. The default SQLite trusted-lab path uses
 `videosim.worker/v2`: one process-incarnation UUID, offered/acknowledged durable
 leases, immutable report IDs, per-epoch sequences, and DB-fenced probe plus
 catalog-monitor results committed with the direct PostgreSQL alarm projection.
-Workers send an independent heartbeat every 20 seconds; in v2 it refreshes
+Workers send an independent heartbeat every five seconds; in v2 it refreshes
 membership and extends only active leases for the same incarnation. Keep the
-interval safely below the current 60-second TTL:
+interval safely below the configured 30-second freshness boundary:
 
 ```sh
 python3 -m videosim worker --control-plane-url http://127.0.0.1:8080 \
-  --worker-id local-worker --heartbeat-interval-seconds 15
+  --worker-id local-worker --heartbeat-interval-seconds 5
 ```
 
 In PostgreSQL mode, `--max-streams N` advertises a static admission limit for
@@ -558,14 +564,15 @@ incarnation and its live leases `draining`; the same incarnation cannot be
 reactivated by a late heartbeat, and another worker receives a higher lease
 epoch immediately. A hard-killed worker still relies on lease expiry; queued
 reports remain encrypted on the worker volume for replay or fenced discard.
-With the defaults, reassignment begins on a survivor poll after the 60-second
+With the defaults, reassignment begins on a survivor poll after the 30-second
 database freshness/lease boundary. The integration suite exercises the same
-path with a one-second test TTL; production partition timing remains an
-environment gate:
+configured store path with a one-second test TTL. Exact synthetic PostgreSQL
+evidence recovered at 29.888-second p95, while physical partition timing remains
+an environment gate:
 
 ```sh
 VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest \
-  tests.test_worker_v2.DurableWorkerV2ApiIntegrationTest.test_hard_kill_reassigns_only_after_database_ttl_expiry
+  tests.test_worker_v2.DurableWorkerV2ApiIntegrationTest.test_hard_kill_reassigns_only_after_configured_database_ttl_expiry
 ```
 
 Strict versioned reports are the default. During a controlled same-host upgrade,
@@ -800,7 +807,7 @@ python3 -m videosim control-plane-load \
   --database-url "$VIDEOSIM_LOAD_DATABASE_URL" \
   --workload scale/workloads/f5-1000-candidate.json \
   --duration 24h --tick-seconds 20 \
-  --worker-freshness-seconds 60 \
+  --worker-freshness-seconds 30 \
   --output artifacts/control-plane-load.json
 ```
 
@@ -825,8 +832,9 @@ seconds. A run that reaches the event but cannot recover before its duration
 fails. A shorter run records `not_reached` and proves no failure behavior.
 
 `--worker-freshness-seconds` must equal the candidate deployment's actual
-freshness setting. The current control-plane default is 60 seconds, which
-cannot satisfy the 45-second p95 gate; do not lower only the harness value to
+freshness setting. The production and worker-domain Compose defaults are 30
+seconds and five-second heartbeats. A retained exact control-plane run measured
+29.888/29.889-second p95/p99 recovery; do not lower only the harness value to
 manufacture a pass. The P0 integration test uses one second solely to compress
 wall-clock test time.
 

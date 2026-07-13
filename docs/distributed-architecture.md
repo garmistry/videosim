@@ -60,7 +60,7 @@ VideoSim should split into a master control plane and many worker nodes:
 - Generated SRT workers use `--srt-host` to reach listener feeds through the master/app container host name.
 - Worker contract `videosim.worker/v1` adds process-restart, generation, and assignment-token fencing. HTTP 409 causes a bounded assignment refetch instead of silently applying stale state.
 - Reports are server-scoped: caller-supplied stream IDs cannot grant ownership, retained state is pruned on workers, and malformed/out-of-scope state cannot replace another worker's alarms.
-- Workers heartbeat independently of serial probe batches; the default interval is 20 seconds versus the current 60-second registry TTL.
+- Workers heartbeat independently of serial probe batches; the candidate default is five seconds against a configurable 30-second registry/lease freshness boundary.
 - Durable workers may advertise `capacity.maxStreams` with `--max-streams`; the
   scheduler refuses new assignments beyond aggregate advertised capacity and
   reports the shortfall instead of silently over-admitting a worker.

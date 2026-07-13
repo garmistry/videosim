@@ -62,7 +62,7 @@
 | Read/open stream. | GUI state exposes the selected stream detail, endpoint, status, logs, validation output, and `/feeds/<stream-id>` deep link. |
 | Update stream. | GUI can change selected stream name, protocol, or mode. |
 | Delete stream. | GUI can stop and remove a selected stream record. |
-| List streams. | GUI payload and the active-feed table expose all configured stream records. |
+| List streams. | SQLite GUI state exposes local records; PostgreSQL GUI state pages the shared catalog in 100-row keyset pages with a 200-row API maximum. |
 | Separate create from detail. | `/` exposes the create/list workflow; selected feed detail pages omit the create-feed form. |
 | Run multiple streams. | Unit tests prove separate stream records launch independent feed subprocesses. |
 | Start empty. | Fresh GUI state has no configured streams, no endpoint, and no running feed until the user creates one. |

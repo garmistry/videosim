@@ -171,12 +171,14 @@ present without applying mode or frame-rate expectations.
 Use Download diagnostics to export status, mode, endpoint, last error,
 validation output, and recent logs as text.
 
-The React GUI polls `/state.json` every second and shows per-feed estimated bit
-rate, outbound total data, uptime, and generated video frame count. These are
-runtime estimates derived from the configured media tracks and elapsed time;
-feed detail pages keep a rolling five-minute in-browser window and plot bit
-rate plus outbound data in real time. Use Validate to prove actual
-receiver-visible stream state.
+In SQLite lab mode, the React GUI polls `/state.json` every second and shows
+per-feed estimated bit rate, outbound total data, uptime, and generated video
+frame count. In PostgreSQL mode, the root pages 100 feed configurations at a
+time through `/api/operator/feeds`, polls `/api/operator/overview`, and polls
+one selected feed through `/api/operator/feeds/<feed-id>`. Runtime estimates
+and five-minute traffic graphs are available only when the serving process has
+current local runtime state. Use Validate to prove actual receiver-visible
+stream state.
 
 For a bounded durable feed-catalog read, page the operator API instead of
 loading every feed through `/state.json`:
@@ -184,12 +186,17 @@ loading every feed through `/state.json`:
 ```sh
 curl -fsS 'http://127.0.0.1:8080/api/operator/feeds?limit=200'
 curl -fsS 'http://127.0.0.1:8080/api/operator/feeds?limit=200&cursor=stream-0200'
+curl -fsS 'http://127.0.0.1:8080/api/operator/overview'
+curl -fsS 'http://127.0.0.1:8080/api/operator/feeds/stream-0201'
 ```
 
 Follow `nextCursor` while `hasMore` is true. The maximum and default limits are
 200 and 100. Production requests use the same OIDC viewer authorization as the
-GUI. This endpoint returns persisted configuration/config versions only; it is
-not a generated-runtime status API, and the React GUI does not consume it yet.
+GUI. Catalog rows return persisted configuration/config versions only. Detail
+returns exactly one feed and stream-scoped monitor data. A replica without a
+matching local config version returns that feed with `operatorReadOnly=true`
+and `runtimeKnown=false`; route mutations to the owning process until the
+remaining mutation-routing work is complete.
 
 Video-present modes include a running clock overlay in the encoded video so
 receivers can visually prove live motion and timing.

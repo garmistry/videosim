@@ -112,6 +112,12 @@ VideoSim should split into a master control plane and many worker nodes:
   PostgreSQL feed catalog. It uses an ID cursor, defaults to 100 rows, caps a
   page at 200, returns config versions, and fails closed on an invalid durable
   row. SQLite lab mode provides the same bounded response from local state.
+- Durable GUI bootstrap embeds only the first 100 catalog rows and no process
+  stream array. `GET /api/operator/overview` returns capped alarms/events/
+  pending rows and worker summaries without per-stream probe metrics. `GET
+  /api/operator/feeds/<id>` reads one current configuration directly, scopes
+  monitor rows to that feed, and marks runtime unknown/read-only when the
+  serving replica lacks a matching local config version.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete
@@ -176,9 +182,10 @@ VideoSim should split into a master control plane and many worker nodes:
 - The SQLite worker v1 registry, assignment generation, and tokens remain
   process-local transition fences. Production PostgreSQL uses v2 durable
   leases, a transaction-consistent external-feed catalog, and database
-  transaction-scoped scheduler leadership. A bounded operator feed-config read
-  can use any API replica, but GUI selection/runtime state, operator mutations,
-  and generated-feed process ownership remain local to one API process; no
+  transaction-scoped scheduler leadership. Bounded GUI catalog, overview, and
+  single-feed reads can use any API replica. Runtime state remains known only
+  to a process with the matching local config version; operator mutations and
+  generated-feed process ownership remain local to one API process. No
   continuously elected scheduler or replicated API deployment exists.
 - PostgreSQL assignment is capacity-aware for workers advertising total or
   SRT/DASH protocol limits; unconfigured workers use compatibility round-robin.
@@ -215,9 +222,9 @@ VideoSim should split into a master control plane and many worker nodes:
 
 ## Next Upgrade Points
 
-- Move the React feed list/detail reads to the durable paginated operator API,
-  then add client-supplied config-version preconditions and collision-safe ID
-  allocation before routing mutations across API replicas.
+- Add client-supplied config-version preconditions, collision-safe ID
+  allocation, and runtime-owner routing before enabling mutations across API
+  replicas.
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/utilization metadata, bounded concurrent execution,

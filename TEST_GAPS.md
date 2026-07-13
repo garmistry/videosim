@@ -202,13 +202,15 @@ implementation and must pass before those milestones advance.
   and eventual empty spools. Sustained report saturation, lock-wait/deadlock
   metrics, persistent leadership, replicated deployment, and sustained
   1,000-stream poll cadence remain open.
-- `GET /api/operator/feeds` now provides an authenticated, versioned,
-  fail-closed PostgreSQL catalog read with a 200-row maximum and ID cursor. A
-  local alternating two-API walk returned all 1,320 post-start rows exactly
-  once in seven pages while both process caches stayed empty. The cursor is not
-  a cross-request database snapshot, and the React GUI still polls unbounded
-  process-local `/state.json`; feed-detail/runtime reads, concurrent create-ID
-  allocation, load-balanced update/delete, and generated runtime ownership are
+- The authenticated operator read model now combines a fail-closed 200-row
+  maximum keyset catalog, a lightweight overview without stream/probe arrays,
+  and one-feed scoped detail. The React root uses 100-row pages instead of
+  durable `/state.json`; a local alternating two-API walk returned all 1,320
+  post-start rows exactly once in 14 pages while both process caches stayed
+  empty. The cursor is not a cross-request database snapshot, runtime is known
+  only on a replica with a matching local config version, and remote detail is
+  deliberately read-only. Concurrent create-ID allocation, config-version
+  mutation preconditions/routing, generated runtime ownership, and HA remain
   open F4 gates.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A

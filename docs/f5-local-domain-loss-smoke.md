@@ -350,13 +350,62 @@ SQLite paging, bounds, viewer authorization, post-start create/update/delete
 visibility from a stale-cache replica, and fail-closed malformed/overlong-row
 behavior.
 
-This is a read-only configuration API, not a completed operator read model.
-The cursor does not hold a database snapshot across requests, the React GUI
-still polls unbounded process-local `/state.json`, and feed-detail/runtime
-state, concurrent create-ID allocation, load-balanced mutations, generated
-runtime ownership, a real load balancer, HA storage, and F5 admission remain
-open. The live page scan used security-off direct HTTP; authorization evidence
-is from the trusted-proxy HTTP regression.
+The cursor does not hold a database snapshot across requests. The follow-up
+below moves React list/detail reads onto this bounded API, but concurrent
+create-ID allocation, load-balanced mutations, generated runtime ownership, a
+real load balancer, HA storage, and F5 admission remain open. The live page
+scan used security-off direct HTTP; authorization evidence is from the
+trusted-proxy HTTP regression.
+
+## Bounded React Operator Follow-Up
+
+Two direct API processes started against a fresh PostgreSQL 17 database before
+any feed was seeded. Both `/state.json` process caches and both operator
+catalogs initially contained zero feeds. PostgreSQL was then seeded with 1,320
+external placeholders split 660 SRT/660 DASH.
+
+The durable root embedded no process stream array and only the first 100
+catalog rows. React uses the same 100-row cursor pages, polls a lightweight
+overview without per-stream probe rows, and reads one selected feed through
+`GET /api/operator/feeds/<id>`. The last feed, created after both replicas
+started, rendered from each replica as one read-only config with runtime
+unknown.
+
+| Check | Result |
+|---|---:|
+| Unique catalog feeds | 1,320/1,320 |
+| SRT/DASH feeds | 660/660 |
+| Pages | 14 |
+| Page sizes | 13 x 100, then 20 |
+| Page latency p50/p95/max | 0.001925/0.002256/0.002276 seconds |
+| Maximum catalog page | 37,609 bytes |
+| Root bootstrap streams/catalog rows | 0/100 |
+| Root response | 96,469 bytes |
+| Overview response/probe metrics | 9,133 bytes/empty |
+| Detail response/stream rows | 21,022 bytes/1 |
+| Process-cache streams after scan | 0/0 |
+
+All IDs were globally ordered and unique. Both API processes stayed healthy
+and emitted no request-path log error during the measured window. PostgreSQL
+logged no runtime error for the run. One direct host process was stopped with
+Ctrl-C after capture and emitted a Python 3.14 `KeyboardInterrupt`/pool-finalizer
+trace during teardown; that output is not request-path evidence.
+
+The in-app browser runtime exposed no browser instance, so interactive browser
+automation was skipped and the requested API validation path was used. The
+marked no-build startup integration passed in 11.984 seconds. A retained rerun
+passed readiness, worker registration, create/start, real normal-SRT
+video/audio/captions validation, stop, Compose-state capture, and Docker-log
+capture in 8.281 seconds. Hashes for `gui.py`, `postgres_store.py`, and both
+static bundles matched the cached app/worker image overlays. Logs had no
+traceback, fatal error, or validation failure; the existing non-fatal caption
+framerate negotiation warning remained before validation passed.
+
+This removes feed-count growth from durable root/detail payloads, not the
+remaining F4 or F5 gates. Config-version mutation preconditions, collision-safe
+ID allocation, owner routing, generated media ownership, HA API/database/
+broker deployment, independent media capacity, and the 24-hour admission bundle
+remain open.
 
 ## Validation
 
@@ -405,6 +454,11 @@ is from the trusted-proxy HTTP regression.
   passed 77 durable store/worker-v2 tests with 4 runtime-role skips in 19.812
   seconds. Hash-verified exact app/worker source overlays passed the no-build
   startup API/media/log workflow in 11.915 seconds.
+- Bounded React operator follow-up: exact task-only unit discovery passed 396
+  tests with 91 environment-gated skips in 26.894 seconds; a fresh PostgreSQL
+  database passed 77 durable store/worker-v2 tests with 4 runtime-role skips in
+  18.727 seconds. The marked startup integration passed in 11.984 seconds and
+  the retained API/media/log artifact run passed in 8.281 seconds.
 - Documentation contract: 4 passed.
 
 ## Remaining Gates

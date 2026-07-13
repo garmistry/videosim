@@ -82,10 +82,11 @@ implementation and must pass before those milestones advance.
   representative scenario result has been committed or admitted.
 - The manifest-driven DASH and SRT fixture fleets have unit and one-cycle Linux
   coverage for healthy, slow, dead, and malformed endpoints. The
-  deterministic mixed composer has unit and one-cycle bounded-worker coverage
-  at 1,000 logical streams, but reuses eight physical endpoints. Independent
-  endpoints, the generated/external source cross-product, storm scheduling, and
-  long-run fixture reliability remain open.
+  deterministic mixed composer can consume multiple URLs per behavior and
+  derives whether any are shared. The checked-in 1,000-logical-stream states
+  still reuse eight endpoints; independent services, the generated/external
+  source cross-product, storm scheduling, and long-run fixture reliability
+  remain open.
 - The worker benchmark can require and report unique validation-start coverage
   plus repeated cadence. A 250-cycle Linux run covered all 1,000 mixed logical
   streams twice with eight admissions per cycle; full first coverage and the

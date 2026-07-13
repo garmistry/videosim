@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import random
+from collections import Counter
 from pathlib import Path
 
 from .control_plane import MAX_REPORT_STREAMS
@@ -87,16 +88,25 @@ def load_protocol_fixture_state(path: str | Path, protocol: str) -> tuple[dict, 
     streams = state.get("streams")
     if not isinstance(streams, list):
         raise ValueError(f"{protocol} fixture state must contain a streams array")
-    by_id = {
-        stream.get("id"): stream
-        for stream in streams
-        if isinstance(stream, dict) and isinstance(stream.get("id"), str)
-    }
-    fixtures = {}
-    for behavior in BEHAVIORS:
-        stream = by_id.get(f"{protocol}-{behavior}")
+    fixtures = {behavior: [] for behavior in BEHAVIORS}
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+        behavior = stream.get("fixtureBehavior")
+        if behavior not in BEHAVIORS:
+            behavior = next(
+                (
+                    item
+                    for item in BEHAVIORS
+                    if stream.get("id") == f"{protocol}-{item}"
+                ),
+                None,
+            )
+        if behavior is None:
+            continue
         if (
-            not isinstance(stream, dict)
+            not isinstance(stream.get("id"), str)
+            or not stream["id"]
             or stream.get("protocol") != protocol
             or stream.get("source") != "external"
             or stream.get("status") != "running"
@@ -106,14 +116,20 @@ def load_protocol_fixture_state(path: str | Path, protocol: str) -> tuple[dict, 
             raise ValueError(
                 f"{protocol} fixture state must contain running external {behavior}"
             )
-        fixtures[behavior] = stream
+        fixtures[behavior].append(stream)
+    for behavior in BEHAVIORS:
+        if not fixtures[behavior]:
+            raise ValueError(
+                f"{protocol} fixture state must contain running external {behavior}"
+            )
+        fixtures[behavior].sort(key=lambda stream: stream["id"])
     return fixtures, digest
 
 
 def compose_fixture_scenario(
     manifest: dict,
     manifest_sha256: str,
-    fixtures: dict[str, dict[str, dict]],
+    fixtures: dict[str, dict[str, list[dict]]],
     fixture_digests: dict[str, str],
 ) -> dict:
     protocol_counts = _allocate(
@@ -127,27 +143,34 @@ def compose_fixture_scenario(
         )
         for behavior in BEHAVIORS:
             behavior_counts[behavior] += counts[behavior]
-            for _index in range(counts[behavior]):
-                stream = dict(fixtures[protocol][behavior])
-                stream.update(
-                    {
-                        "fixtureBehavior": behavior,
-                        "fixtureEndpointShared": True,
-                    }
-                )
+            candidates = fixtures[protocol][behavior]
+            for index in range(counts[behavior]):
+                stream = dict(candidates[index % len(candidates)])
+                stream["fixtureBehavior"] = behavior
                 streams.append(stream)
     random.Random(manifest["randomSeed"]).shuffle(streams)
+    endpoint_counts = Counter(
+        (stream["protocol"], stream["endpoint"]) for stream in streams
+    )
     for index, stream in enumerate(streams, start=1):
+        stream["fixtureEndpointShared"] = (
+            endpoint_counts[(stream["protocol"], stream["endpoint"])] > 1
+        )
         stream["id"] = f"fixture-{index:05d}"
         stream["name"] = f"Fixture {index:05d} ({stream['protocol']} {stream['fixtureBehavior']})"
+    shared_endpoints = any(count > 1 for count in endpoint_counts.values())
     return {
         "schemaVersion": "videosim.fixture-scenario-state/v1",
         "fixtureScenarioSha256": manifest_sha256,
         "fixtureStateSha256": fixture_digests,
-        "logicalStreamsShareEndpoints": True,
+        "logicalStreamsShareEndpoints": shared_endpoints,
         "scenarioLimitations": [
-            "Logical streams reuse eight physical endpoints.",
-            "This scenario tests bounded worker behavior and does not certify media capacity.",
+            (
+                f"Logical streams reuse {len(endpoint_counts)} protocol endpoints."
+                if shared_endpoints
+                else "Each logical stream uses a distinct protocol endpoint URL."
+            ),
+            "Endpoint URL uniqueness does not certify independent media generation or capacity.",
         ],
         "protocolCounts": protocol_counts,
         "behaviorCounts": behavior_counts,

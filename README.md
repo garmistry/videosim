@@ -319,17 +319,22 @@ requires retained alarm transitions, and fails on result/current-state drift,
 an unexplained clear, malformed alarm events, or a missing/mismatched outbox
 record. It is a consistency gate, not the missing multi-host 24-hour run.
 
-Render one 11-worker domain before deployment with:
+Boot and validate one 11-worker domain with:
 
 ```sh
 cp .env.worker-domain.example .env.worker-domain
-docker compose --env-file .env.worker-domain \
-  -f docker-compose.worker-domain.yml config --quiet
+set -a
+. ./.env.worker-domain
+set +a
+python3 scripts/worker-domain-startup.py
 ```
 
 Use the same file on three separate hosts with distinct failure-domain names,
-worker certificates, and spool storage. The runbook contains the boot,
-Chrome/API, failure-injection, and Docker-log checks.
+worker certificates, and spool storage. The command validates the candidate
+zone and all 11 certificate identities, immutable image resolution, host and
+worker-path health APIs, process stability, and Docker logs, then retains the
+evidence directory without stopping the workers. The runbook contains the
+cross-domain Chrome/API, failure-injection, and admission checks.
 
 ## Documentation
 

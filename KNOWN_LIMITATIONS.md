@@ -104,9 +104,11 @@
   a 33-worker/three-domain candidate sized to retain those 22 survivors, but no
   measured multi-host deployment to replace that failed run.
 - The reusable worker-domain Compose file renders 11 uniquely identified,
-  capacity-bounded workers per host. It has only config-level validation; no
-  three-host boot, certificate set, remote control-plane path, host sizing, or
-  domain-loss execution has validated it.
+  capacity-bounded workers per host. A host-local startup workflow validates
+  certificates, image/process identity, two health API paths, restart counts,
+  and Docker logs; a local durable HTTP run registered all 11 workers. No
+  production immutable image over the remote HTTPS/mTLS path, three-host boot,
+  host sizing, media load, or physical domain-loss execution has passed.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

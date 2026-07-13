@@ -194,11 +194,14 @@ implementation and must pass before those milestones advance.
   partitions, representative media probes, or separate infrastructure hosts.
 - `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
   with unique mTLS identities and the candidate's exact admission/concurrency
-  limits. Three instances were booted on one local Docker host and exercised
-  through mTLS API plus Docker-log checks. It has not been booted on three
-  independent hosts, and no production image digest, certificates, network
-  path, or host sizing evidence exists. The local smoke is not deployment or
-  capacity admission evidence.
+  limits. `worker-domain-startup.py` now validates one host's candidate zone,
+  11 certificate CN/key pairs, private-file modes, immutable image reference,
+  host and worker-path health APIs, exact stable process set, image identity,
+  restart counts, and Docker logs. A marked local PostgreSQL-backed run passed
+  all startup checks with 11 active 60/30/30 workers and clean spools, but used
+  a mutable local image and HTTP control path. The domain has not run with a
+  production digest and HTTPS/mTLS path on three independent hosts; host sizing,
+  media load, physical domain loss, and admission evidence remain open.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

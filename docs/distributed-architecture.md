@@ -54,8 +54,10 @@ VideoSim should split into a master control plane and many worker nodes:
 - `docker-compose.worker-domain.yml` renders 11 uniquely identified mTLS
   workers for one Compose/VM failure domain. Run the same immutable image on
   three separate hosts with distinct domain names, certificates, and spool
-  storage for the checked-in F5 candidate; config rendering is not deployment
-  evidence.
+  storage for the checked-in F5 candidate. `worker-domain-startup.py` validates
+  the candidate zone/certificate set, immutable image and container identity,
+  host plus worker-path health APIs, zero-restart process stability, and logs;
+  one local run is not three-host deployment evidence.
 - Generated DASH assignments include a master HTTP `monitorEndpoint` so workers do not need a shared DASH volume.
 - Generated SRT workers use `--srt-host` to reach listener feeds through the master/app container host name.
 - Worker contract `videosim.worker/v1` adds process-restart, generation, and assignment-token fencing. HTTP 409 causes a bounded assignment refetch instead of silently applying stale state.
@@ -234,10 +236,11 @@ VideoSim should split into a master control plane and many worker nodes:
 - Durable tenant keys exist, but authorization grants and tenant-isolation behavior are not implemented.
 - The app, PostgreSQL, and NATS deployments remain single instances. Replicated
   API routing, persistent scheduler leadership, and HA storage are not implemented.
-- The candidate worker-domain Compose file is not deployed or host-sized.
-  Same-host three-domain loss/partition and two-API assignment smokes exist,
-  but no independent-host deployment, production load balancer, HA storage, or
-  production recovery artifact exists.
+- The candidate worker-domain startup path has passed locally against a durable
+  API with 11 active workers, but it used a mutable local image and HTTP path
+  and is not host-sized. Same-host three-domain loss/partition and two-API
+  assignment smokes exist, but no independent-host HTTPS/mTLS deployment,
+  production load balancer, HA storage, or production recovery artifact exists.
 - The fixture-domain Compose contract and sampled startup path are implemented,
   but the 220+220 shape has not run on three hosts. Each shard still shares one
   media generator per protocol, so independent-source and capacity evidence

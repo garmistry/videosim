@@ -752,28 +752,25 @@ Provision `server-ca.crt`, `worker-spool.key`, and 11 worker certificate/key
 pairs whose CN and filename stem exactly match that host's worker IDs. Create
 the configured data directory before startup.
 
-Render, boot, and capture the domain state:
+Boot and capture the domain state:
 
 ```sh
 set -a
 . ./.env.worker-domain
 set +a
-mkdir -p artifacts
-docker compose --env-file .env.worker-domain \
-  -f docker-compose.worker-domain.yml config --quiet
-docker compose --env-file .env.worker-domain \
-  -f docker-compose.worker-domain.yml pull
-docker compose --env-file .env.worker-domain \
-  -f docker-compose.worker-domain.yml up -d
-docker compose --env-file .env.worker-domain \
-  -f docker-compose.worker-domain.yml ps > artifacts/worker-domain-ps.txt
-curl --fail --silent --show-error \
-  --cacert "$VIDEOSIM_WORKER_CERT_DIR/server-ca.crt" \
-  "$VIDEOSIM_CONTROL_PLANE_HEALTH_URL" > artifacts/control-plane-health.txt
-docker compose --env-file .env.worker-domain \
-  -f docker-compose.worker-domain.yml logs --no-color \
-  > artifacts/worker-domain-docker.log
+python3 scripts/worker-domain-startup.py
 ```
+
+The command fails unless the failure-domain name and 11 worker IDs match the
+candidate workload, every certificate CN and private key pair matches, private
+files are mode `0600` or stricter, the spool key is valid, and the image uses
+an immutable digest. It renders and converges the existing Compose project,
+checks the control-plane health API from the host and from `worker-01`, then
+requires the exact 11-service set to stay up on one resolved image with zero
+restarts and no critical Docker-log marker. It leaves the domain running.
+Retain `result.json`, `certificate-inventory.json`, `compose-config.json`,
+`compose-ps.txt`, `container-state.json`, `control-plane-health.json`, and
+`docker.log` from `VIDEOSIM_WORKER_STARTUP_ARTIFACT_DIR`.
 
 Repeat on all three hosts. In an OIDC-authenticated Chrome session, open the
 operator `/state.json` endpoint and verify 33 unique candidate worker IDs,
@@ -781,6 +778,18 @@ operator `/state.json` endpoint and verify 33 unique candidate worker IDs,
 blocked spool. Retain that response. Treat a restarting container, worker API
 authentication error, assignment shortfall, traceback, or fatal Docker-log
 entry as a failed startup.
+
+On a configured candidate host, run the marked startup contract with:
+
+```sh
+VIDEOSIM_WORKER_DOMAIN_STARTUP_INTEGRATION=1 \
+  python3 -m unittest \
+  tests.test_worker_domain_startup.WorkerDomainStartupIntegrationTest
+```
+
+The marked test invokes the same script and leaves the worker domain running.
+It is not independent-host, media-load, domain-loss, or soak evidence by
+itself.
 
 From a coordinator with read access to the same PostgreSQL database, set
 `VIDEOSIM_DATABASE_URL` and retain the converged authority baseline:

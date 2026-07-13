@@ -2142,6 +2142,31 @@ def durable_control_store(state: GuiState) -> PostgresControlPlaneStore | None:
     return state.feed_store if isinstance(state.feed_store, PostgresControlPlaneStore) else None
 
 
+def durable_assignment_streams(
+    state: GuiState,
+    store: PostgresControlPlaneStore,
+    connection,
+) -> list[FeedRecord]:
+    streams = []
+    for registration in store.load(_connection=connection):
+        if registration.get("source") == "external":
+            try:
+                stream = FeedRecord(**registration)
+                state.security.validate_external_endpoint(stream.external_url)
+            except (EndpointPolicyError, TypeError, ValueError) as exc:
+                feed_id = registration.get("id", "<unknown>")
+                raise PostgresStoreError(
+                    f"invalid durable feed configuration: {feed_id}"
+                ) from exc
+        else:
+            stream = state.streams.get(registration.get("id"))
+            if stream is None or stream.config_version != registration["config_version"]:
+                continue
+        if stream.status == "running":
+            streams.append(stream)
+    return sorted(streams, key=lambda item: item.id)
+
+
 def worker_assignments_payload(
     state: GuiState,
     worker_id: str,
@@ -2167,10 +2192,7 @@ def worker_assignments_payload(
             worker_ids = [item["id"] for item in worker_records]
             if worker_id not in worker_ids:
                 raise WorkerReportConflict("worker is not fresh and active")
-            running_streams = sorted(
-                (stream for stream in state.streams.values() if stream.status == "running"),
-                key=lambda item: item.id,
-            )
+            running_streams = durable_assignment_streams(state, store, connection)
             assignments, capacity_shortfall = capacity_aware_assignments(
                 worker_records,
                 running_streams,

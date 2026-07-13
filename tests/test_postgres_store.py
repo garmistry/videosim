@@ -313,6 +313,39 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         finally:
             replica.close()
 
+    def test_scheduler_catalog_snapshot_locks_feed_versions(self):
+        from psycopg import OperationalError
+
+        feed_id = f"scheduler-catalog-{uuid.uuid4()}"
+        registration = feed(feed_id)
+        self.store.upsert(registration)
+        replica = PostgresControlPlaneStore(
+            DATABASE_URL, min_pool_size=1, max_pool_size=2
+        )
+        try:
+            with self.store.assignment_scheduler_transaction() as connection:
+                loaded = self.store.load(_connection=connection)
+                self.assertIn(feed_id, {item["id"] for item in loaded})
+                with replica._pool.connection() as replica_connection:
+                    with self.assertRaises(OperationalError):
+                        with replica_connection.transaction():
+                            replica_connection.execute(
+                                "SET LOCAL lock_timeout = '100ms'"
+                            )
+                            replica_connection.execute(
+                                """
+                                UPDATE feeds
+                                SET updated_at = clock_timestamp()
+                                WHERE tenant_id = %s AND id = %s
+                                """,
+                                (self.store.tenant_id, feed_id),
+                            )
+
+            registration["name"] = "Updated after scheduler snapshot"
+            self.assertEqual(replica.upsert_versioned(registration, 1), 2)
+        finally:
+            replica.close()
+
     def test_batch_lease_reconcile_is_ordered_and_atomic(self):
         feed_ids = [f"batch-a-{uuid.uuid4()}", f"batch-b-{uuid.uuid4()}"]
         for feed_id in feed_ids:

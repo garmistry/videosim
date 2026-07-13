@@ -118,10 +118,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.store.close()
         self.monitor_directory.cleanup()
 
-    def get_json(self, path, query, expected_status=200, headers=None):
+    def get_json(self, path, query, expected_status=200, headers=None, base_url=None):
         try:
             request = Request(
-                f"{self.base_url}{path}?{urlencode(query)}",
+                f"{base_url or self.base_url}{path}?{urlencode(query)}",
                 headers=headers or {},
                 method="GET",
             )
@@ -137,11 +137,11 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(status, expected_status, body)
         return status, body
 
-    def post_json(self, path, payload, expected_status=200, headers=None):
+    def post_json(self, path, payload, expected_status=200, headers=None, base_url=None):
         request_headers = {"Content-Type": "application/json"}
         request_headers.update(headers or {})
         request = Request(
-            f"{self.base_url}{path}",
+            f"{base_url or self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
             headers=request_headers,
             method="POST",
@@ -1206,6 +1206,90 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         )
         self.assertTrue(alarm["active"])
         self.assertEqual(alarm["message"], "Feed is unreachable")
+
+    def test_assignment_replica_reads_current_external_catalog(self):
+        replica_store = PostgresControlPlaneStore(
+            DATABASE_URL,
+            tenant_id=self.tenant_id,
+            min_pool_size=1,
+            max_pool_size=4,
+        )
+        replica_state = GuiState(
+            feed_store=replica_store,
+            monitor_state_path=os.path.join(
+                self.monitor_directory.name, "replica-monitor.json"
+            ),
+        )
+        replica_handler = type(
+            "ReplicaDurableWorkerHandler", (GuiHandler,), {"state": replica_state}
+        )
+        replica_server = ThreadingHTTPServer(("127.0.0.1", 0), replica_handler)
+        replica_thread = threading.Thread(
+            target=replica_server.serve_forever, daemon=True
+        )
+        replica_thread.start()
+        replica_url = f"http://127.0.0.1:{replica_server.server_port}"
+        try:
+            created = self.state.create_stream(
+                name="Post-start replica feed",
+                source="external",
+                external_url="srt://example.test:9001?mode=caller",
+            )
+            self.assertNotIn(created.id, replica_state.streams)
+            worker_id = "worker-v2-replica-catalog"
+            incarnation = uuid.uuid4()
+            query = {
+                "worker_id": worker_id,
+                "worker_incarnation_id": str(incarnation),
+            }
+
+            _, assignment = self.get_json(
+                "/api/workers/assignments", query, base_url=replica_url
+            )
+            by_id = {stream["id"]: stream for stream in assignment["streams"]}
+            self.assertEqual(set(by_id), {self.stream_id, created.id})
+            self.assertEqual(
+                by_id[created.id]["endpoint"],
+                "srt://example.test:9001?mode=caller",
+            )
+
+            self.assertTrue(
+                self.state.update_stream(
+                    created.id,
+                    mode="video_only",
+                    external_url="srt://example.test:9002?mode=caller",
+                )
+            )
+            _, updated = self.get_json(
+                "/api/workers/assignments", query, base_url=replica_url
+            )
+            updated_feed = next(
+                stream for stream in updated["streams"] if stream["id"] == created.id
+            )
+            self.assertEqual(updated_feed["mode"], "video_only")
+            self.assertEqual(
+                updated_feed["endpoint"],
+                "srt://example.test:9002?mode=caller",
+            )
+            self.assertEqual(
+                updated_feed["lease"]["configVersion"],
+                self.state.streams[created.id].config_version,
+            )
+
+            self.assertTrue(self.state.delete_stream(created.id))
+            _, deleted = self.get_json(
+                "/api/workers/assignments", query, base_url=replica_url
+            )
+            self.assertEqual(
+                [stream["id"] for stream in deleted["streams"]],
+                [self.stream_id],
+            )
+            self.assertEqual(set(replica_state.streams), {self.stream_id})
+        finally:
+            replica_server.shutdown()
+            replica_server.server_close()
+            replica_thread.join(timeout=2)
+            replica_store.close()
 
     def test_concurrent_v2_assignment_polls_partition_streams_once(self):
         second_stream = self.state.create_stream(

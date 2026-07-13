@@ -205,12 +205,20 @@ class PostgresControlPlaneStore:
                 yield connection
 
     # FeedRegistrationStore compatibility.
-    def load(self) -> list[dict]:
-        with self._pool.connection() as connection:
-            rows = connection.execute(
-                "SELECT config, config_version FROM feeds WHERE tenant_id = %s ORDER BY created_at, id",
-                (self.tenant_id,),
-            ).fetchall()
+    def load(self, *, _connection=None) -> list[dict]:
+        if _connection is None:
+            with self._pool.connection() as connection:
+                return self.load(_connection=connection)
+        rows = _connection.execute(
+            """
+            SELECT config, config_version
+            FROM feeds
+            WHERE tenant_id = %s
+            ORDER BY created_at, id
+            FOR SHARE
+            """,
+            (self.tenant_id,),
+        ).fetchall()
         feeds = []
         for row in rows:
             config = dict(row["config"])

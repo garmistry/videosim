@@ -80,8 +80,11 @@ implementation and must pass before those milestones advance.
   has not run on independent hosts or passed media/headroom/24-hour admission.
   The initial local smoke moved only the failed domain's 440 streams. A
   report-ingestion follow-up moved all 440 failed-domain streams plus one of
-  880 healthy-domain streams, so repeated zero-churn recovery is not proven.
-  Neither local smoke is the missing approved evidence bundle.
+  880 healthy-domain streams. A recovery-preservation regression and clean
+  rerun then moved all 440 failed-domain streams with zero owner/incarnation/
+  epoch changes across the 880 healthy streams in 65.565 seconds. Repeated
+  zero-churn loss and partition recovery are still not proven, and none of the
+  local smokes is the missing approved evidence bundle.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
@@ -140,9 +143,11 @@ implementation and must pass before those milestones advance.
   move. A local PostgreSQL/33-container hard-kill smoke reproduced that exact
   result, with the final replacement acknowledged in 64.709 seconds and no
   survivor restart. A report-ingestion follow-up recovered in 66.396 seconds
-  but also moved one healthy stream. This still does not exercise repeated
-  loss, network partitions, representative media probes, or separate
-  infrastructure hosts.
+  but also moved one healthy stream. The subsequent recovery-floor fix retained
+  all 880 healthy owner/incarnation/epoch tuples while replacing 440 failed
+  leases in 65.565 seconds. This still does not exercise repeated loss,
+  network partitions, representative media probes, or separate infrastructure
+  hosts.
 - `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
   with unique mTLS identities and the candidate's exact admission/concurrency
   limits. Three instances were booted on one local Docker host and exercised

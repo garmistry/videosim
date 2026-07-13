@@ -22,8 +22,10 @@ VideoSim should split into a master control plane and many worker nodes:
 3. Workers call the assignment API with a process UUID incarnation.
 4. SQLite trusted-lab mode returns worker v1 process-instance/generation/token
    fencing. PostgreSQL mode returns worker v2 durable offered/active lease
-   assignments with lease epoch, config version, and expiry. Workers that
-   advertise `capacity.maxStreams` receive capacity-aware assignments;
+   assignments with lease epoch, config version, and expiry. Each durable poll
+   reads the current external-feed catalog from PostgreSQL inside the scheduler
+   transaction rather than trusting one API process's startup cache. Workers
+   that advertise `capacity.maxStreams` receive capacity-aware assignments;
    unconfigured workers retain deterministic round-robin compatibility.
 5. V2 workers acknowledge exact offered lease tuples before probing. An
    independent authenticated heartbeat refreshes worker membership and extends
@@ -100,10 +102,12 @@ VideoSim should split into a master control plane and many worker nodes:
   PostgreSQL transaction, and each lease-acknowledgement array commits in one
   transaction after full request validation. Stream locks use stable ID order;
   single-lease helpers retain the same epoch/config fences.
-- Durable assignment now takes a tenant-scoped PostgreSQL advisory leadership
-  lock and performs worker/owner reads, offer/renew, and revocation in that same
-  transaction. A concurrent replica fails retryably; loss of the database
-  session rolls back the decision before another replica can acquire the lock.
+- Durable assignment takes a tenant-scoped PostgreSQL advisory leadership lock,
+  reads and locks the current feed catalog, and performs worker/owner reads,
+  offer/renew, and revocation in that same transaction. Concurrent replicas
+  wait for the transaction lock instead of returning avoidable contention
+  errors; loss of the database session rolls back the decision and releases the
+  lock for the next replica.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete
@@ -167,7 +171,9 @@ VideoSim should split into a master control plane and many worker nodes:
 
 - The SQLite worker v1 registry, assignment generation, and tokens remain
   process-local transition fences. Production PostgreSQL uses v2 durable
-  leases and transaction-scoped database scheduler leadership, but no
+  leases, a transaction-consistent external-feed catalog, and database
+  transaction-scoped scheduler leadership. Operator feed-list/selection state
+  and generated-feed process ownership remain local to one API process, and no
   continuously elected scheduler or replicated API deployment exists.
 - PostgreSQL assignment is capacity-aware for workers advertising total or
   SRT/DASH protocol limits; unconfigured workers use compatibility round-robin.
@@ -197,9 +203,10 @@ VideoSim should split into a master control plane and many worker nodes:
 - Durable tenant keys exist, but authorization grants and tenant-isolation behavior are not implemented.
 - The app, PostgreSQL, and NATS deployments remain single instances. Replicated
   API routing, persistent scheduler leadership, and HA storage are not implemented.
-- The candidate worker-domain Compose file is not deployed or host-sized. No
-  three-host worker boot, network partition, domain loss, or recovery artifact
-  exists yet.
+- The candidate worker-domain Compose file is not deployed or host-sized.
+  Same-host three-domain loss/partition and two-API assignment smokes exist,
+  but no independent-host deployment, production load balancer, HA storage, or
+  production recovery artifact exists.
 
 ## Next Upgrade Points
 

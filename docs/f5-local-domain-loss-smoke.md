@@ -279,6 +279,45 @@ This closes the same-host whole-domain assignment-transport partition gap. It
 does not prove independent-host partitions, immutable production deployment,
 representative media throughput, HA, or F5 admission.
 
+## Two-API Catalog Follow-Up
+
+Two direct HTTP API processes were started against one fresh PostgreSQL 17
+database before any feeds were seeded. Both `/state.json` process caches held
+zero streams before and after 1,320 external placeholders were inserted. This
+forces durable worker assignment to use the shared catalog rather than either
+replica's startup state.
+
+The first fail-fast advisory-lock run was rejected: it produced 219 scheduler
+contention retries, and 27 assignment requests needed at least the worker's
+default five-attempt retry window. The scheduler transaction now waits on the
+tenant advisory lock. The accepted rerun produced:
+
+| Check | Result |
+|---|---:|
+| Unique assigned streams | 1,320/1,320 |
+| Workers | 33 |
+| Streams per worker | 40 |
+| SRT/DASH per worker | 20/20 |
+| Assignment streams served by API A/API B | 680/640 |
+| Scheduler contention retries | 0 |
+| Requests beyond the worker retry window | 0 |
+| Cross-replica ownership changes | 0 |
+| Assignment latency p50/p95/p99/max | 0.2674/0.5144/1.5733/1.5733 seconds |
+
+Each worker's assignment was then fetched through the opposite API process;
+every owner stayed unchanged and every lease remained active. PostgreSQL held
+33 fresh active workers plus 1,320 acknowledged, active, unexpired leases, with
+no non-active lease. Both API containers and PostgreSQL stayed running at zero
+restarts, both health/readiness APIs returned HTTP 200, and application logs
+contained no error or traceback.
+
+This is local shared-catalog and scheduler-serialization evidence only. The
+feeds were non-probed placeholders, security was disabled, requests targeted
+the replicas directly without a load balancer, and PostgreSQL was a single
+instance. Replicated operator state, generated-feed ownership, authenticated
+rolling/failover behavior, HA storage, media capacity, and F5 admission remain
+open.
+
 ## Validation
 
 - `python3 -m unittest tests.test_cert_script`: 1 passed.
@@ -313,6 +352,14 @@ representative media throughput, HA, or F5 admission.
   environment-gated skips in 24.329 seconds.
 - Exact `worker.py` hash was overlaid on the existing local worker image; the
   no-build startup API/media/log workflow passed in 11.909 seconds.
+- Shared-catalog follow-up: exact task-only unit discovery passed 389 tests with
+  89 environment-gated skips; a fresh PostgreSQL database passed 74 durable
+  store/worker-v2 tests with 4 runtime-role skips.
+- Hash-verified exact app/worker source overlays passed the marked no-build
+  startup API/media/log workflow in 12.038 seconds. A retained artifact rerun
+  passed API readiness, worker registration, feed create/start, normal SRT
+  video/audio/captions validation, stop, Compose-state capture, and Docker-log
+  capture in 8.318 seconds.
 - Documentation contract: 4 passed.
 
 ## Remaining Gates

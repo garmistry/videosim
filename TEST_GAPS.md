@@ -187,9 +187,15 @@ implementation and must pass before those milestones advance.
   remain open.
 - Lease offer/renew and acknowledgement arrays now use a worker-fence query and
   one set-based PostgreSQL lease statement per request while retaining atomic
-  rollback. Tenant-scoped PostgreSQL transaction leadership still serializes
-  assignment decisions and rolls back on scheduler-session loss. The first
-  local fault window recorded 33 client timeouts, mostly report uploads,
+  rollback. Tenant-scoped PostgreSQL transaction leadership queues concurrent
+  assignment decisions and rolls back on scheduler-session loss. Two local API
+  processes started with empty caches, then assigned a post-start 1,320-feed
+  PostgreSQL catalog exactly once across 33 workers with zero scheduler retries
+  and zero cross-replica ownership changes. This covers external-feed worker
+  assignment only: operator stream state, generated-feed process ownership, a
+  production load balancer, bounded lock-wait telemetry/timeouts, and API/DB HA
+  remain open. An earlier local fault window recorded 33 client timeouts,
+  mostly report uploads,
   despite successful spool recovery. Probe-report ingestion now bulk-reads its
   fences and batch-writes mutable projections; a same-shape follow-up recorded
   zero HTTP 499/5xx, one stale-authority 409, 1.3693-second report commit p95,

@@ -114,6 +114,15 @@ class DurableFixtureStartupIntegrationTest(unittest.TestCase):
             evidence = json.loads(
                 (artifact_dir / "result.json").read_text(encoding="utf-8")
             )
+            container_state = json.loads(
+                (artifact_dir / "container-state.json").read_text(encoding="utf-8")
+            )
+            stats = [
+                json.loads(line)
+                for line in (artifact_dir / "docker-stats.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(evidence["passed"])
@@ -124,6 +133,12 @@ class DurableFixtureStartupIntegrationTest(unittest.TestCase):
         self.assertIn("operator_api_catalog_validated", evidence["checks"])
         self.assertIn("docker_state_stats_logs_captured", evidence["checks"])
         self.assertEqual(evidence["apiCatalog"]["feedCount"], 8)
+        fixture_services = {
+            item["Config"]["Labels"].get("com.docker.compose.service")
+            for item in container_state
+        }
+        self.assertTrue({"srt", "dash"}.issubset(fixture_services))
+        self.assertEqual(len(stats), 6)
 
 
 if __name__ == "__main__":

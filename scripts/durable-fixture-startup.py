@@ -630,6 +630,21 @@ class DurableFixtureStartup:
     def capture_docker_artifacts(self) -> list[str]:
         errors = []
         names = [self.postgres_name, self.app_name, *self.worker_names]
+        fixture_ps = self.compose_fixture(
+            "ps",
+            "--all",
+            "--quiet",
+            "srt",
+            "dash",
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+        )
+        fixture_ids = [line for line in fixture_ps.stdout.splitlines() if line]
+        if fixture_ps.returncode or len(fixture_ids) != 2:
+            errors.append("fixture container discovery failed")
+        names.extend(fixture_ids)
         inspect = self.run_command(
             ["docker", "inspect", *names],
             check=False,

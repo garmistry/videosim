@@ -75,13 +75,14 @@ checks within each stream remain ordered.
 Use `--stream-budget-seconds N` to stop starting lower-priority checks after a
 stream exhausts its budget. Built-in media subprocess and DASH polling waits
 are capped by the remaining budget.
-Use `--deep-check-interval-seconds N` to keep validation on every worker cycle
-while staggering TR-101, frame-rate, and loudness analysis across that cadence.
-Zero retains the every-cycle behavior.
-Use `--batch-budget-seconds N` to defer the deep phase when validation has
-already consumed that aggregate worker-cycle budget. Pair it with the deep-check
-cadence to spread deferred retries; this is a soft pressure guard, not queue
-backpressure or capacity evidence.
+Use `--deep-check-interval-seconds N` to stagger TR-101, frame-rate, and loudness
+analysis while validation continues each cycle when the batch budget allows.
+Zero retains every-cycle deep checks.
+Use `--batch-budget-seconds N` to submit validation and deep work in
+`--max-concurrent-checks`-sized windows. After the budget is consumed, the worker
+stops starting validation windows, records deferred streams as inconclusive,
+rotates them to the front of the next cycle, and skips the deep phase. This
+bounds the local executor queue, not media capacity or a durable fleet queue.
 Worker API v2 can enable an authenticated-encrypted write-ahead report spool
 with `--report-spool-dir`, `--report-spool-key-file`, and
 `--report-spool-max-bytes`. All three are required. Pending reports replay

@@ -67,13 +67,15 @@ VideoSim should split into a master control plane and many worker nodes:
   timeout and does not start its remaining lower-priority checks. Existing
   alarms remain active on inconclusive timeout/error observations. The same
   budget caps built-in GStreamer, FFmpeg, FFprobe, and DASH polling/socket waits.
-- Concurrent workers use one bounded two-phase pool: all assigned streams finish
-  validation before TR-101, frame-rate, or loudness checks start. Validation
-  results and original per-stream deadlines carry into the deep-check phase.
-- `--batch-budget-seconds` measures the aggregate two-phase cycle and defers due
-  deep checks when validation alone consumes the budget. Deferral emits no
-  health observation, preserves alarms, and uses the configured stable cadence
-  for retry scheduling. It is a soft phase guard, not queue backpressure.
+- Concurrent workers use one bounded two-phase pool and submit at most one
+  concurrency-sized window at a time. Admitted validation finishes before
+  TR-101, frame-rate, or loudness checks start; validation results and original
+  per-stream deadlines carry into the deep-check phase.
+- `--batch-budget-seconds` stops new validation windows after a completed window
+  exhausts the aggregate cycle budget. Deferred validation is inconclusive,
+  preserves alarms, and rotates to the front of the next worker cycle; the deep
+  phase also defers. This bounds the local executor queue, but in-flight probes
+  still use their per-stream deadline and no durable fleet queue exists.
 - Worker API v2 can write each exact fenced report to a Fernet-authenticated,
   fsynced local spool before send. A byte quota bounds disk use; blocked replay
   pauses new probes, startup replay precedes incarnation registration, accepted
@@ -124,12 +126,12 @@ VideoSim should split into a master control plane and many worker nodes:
   These are static admission counts, not weighted cost or media capacity.
 - Worker concurrency and built-in probe waits are bounded when configured, but
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
-  HTTP preemption, weighted check-cost/tenant tokens, validation-phase bounds,
-  fleet pressure/recovery telemetry, spool key rotation/repair, and full
-  probe-queue backpressure remain open. Workers can keep validation on every
-  cycle, shed the deep phase
-  when validation exhausts an aggregate budget, and stagger retries at stable
-  per-stream offsets. Graceful workers finish the current report, stop
+  HTTP preemption, weighted check-cost/tenant tokens, fleet pressure/recovery
+  telemetry, spool key rotation/repair, and durable fleet-queue backpressure
+  remain open. Workers bound local probe submissions to one concurrency window,
+  rotate validation deferred by aggregate budget pressure, shed the deep phase,
+  and stagger deep retries at stable per-stream offsets. Graceful workers finish
+  the current report, stop
   heartbeats, and transition their fenced incarnation/leases to `draining` for
   immediate higher-epoch reassignment; hard kills still rely on lease expiry.
 - The default trusted-lab path accepts caller-supplied worker identity. The production proxy path verifies mTLS certificate identity. Strict versioned reports are the default; `--allow-legacy-worker-reports` remains unsuitable for production.
@@ -148,8 +150,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/utilization metadata, bounded concurrent execution,
-  cancellation, spool key rotation/repair, full probe-queue backpressure, and
-  scheduling beyond the current static capacity and soft batch-pressure controls.
+  cancellation, spool key rotation/repair, durable fleet-queue backpressure, and
+  scheduling beyond the current static capacity and local batch-pressure controls.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

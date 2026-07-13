@@ -90,19 +90,22 @@
   Workers can advertise a static `capacity.maxStreams` limit, but unconfigured
   workers still use compatibility round-robin scheduling and execution remains
   serial unless `--max-concurrent-checks` is configured. The pool is bounded
-  stream-level concurrency, not measured media capacity or backpressure.
+  stream-level concurrency; with `--batch-budget-seconds`, probe submissions are
+  also bounded to one concurrency-sized window. This is not measured capacity
+  or a durable fleet queue.
   `--max-srt-streams` and `--max-dash-streams` add static protocol admission
   caps, but they are operator counts rather than measured weighted check costs
   and do not provide tenant fairness or separate runtime pools.
   `--stream-budget-seconds` defers remaining checks after budget exhaustion but
   now caps built-in media subprocess and DASH polling/socket waits. Arbitrary
   injected checker code and a trickling HTTP response are not preempted.
-  Concurrent workers run validation for every stream before deep standards
-  checks. `--deep-check-interval-seconds` can stagger TR-101, frame-rate, and
-  loudness work while retaining every-cycle validation, but the interval is an
-  operator setting. `--batch-budget-seconds` dynamically defers the deep phase
-  when validation consumes the configured cycle budget, but does not bound the
-  validation phase or provide probe-cost fairness. Worker API v2 has an
+  Concurrent workers finish each admitted validation window before deep
+  standards checks. `--deep-check-interval-seconds` can stagger TR-101,
+  frame-rate, and loudness work, but the interval is an operator setting.
+  `--batch-budget-seconds` stops new validation windows after budget exhaustion
+  and rotates skipped streams, but in-flight probes can still consume their
+  per-stream deadlines and there is no durable queue or probe-cost fairness.
+  Worker API v2 has an
   authenticated-encrypted, fsynced, byte-bounded report spool that pauses new
   probes behind undelivered reports. It has transition logs but no fleet health
   metric, automatic key rotation, quarantine/repair tool, priority eviction, or

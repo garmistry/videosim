@@ -318,6 +318,7 @@ class WorkerTest(unittest.TestCase):
                         "streams": [],
                     },
                     "deepCheckSchedule": {"stream-1": 200.0},
+                    "validationCursor": 2,
                 },
                 assignments,
                 worker_incarnation_id="00000000-0000-0000-0000-000000000001",
@@ -331,6 +332,7 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(ack_payload["leases"][0]["configVersion"], 2)
         self.assertEqual(report_payload["sequence"], 9)
         self.assertNotIn("deepCheckSchedule", report_payload["state"])
+        self.assertNotIn("validationCursor", report_payload["state"])
         self.assertEqual(report_payload["leases"][0]["epoch"], ack_payload["leases"][0]["epoch"])
         self.assertEqual(
             report_payload["leases"][0]["configVersion"],

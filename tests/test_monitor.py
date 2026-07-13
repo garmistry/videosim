@@ -79,6 +79,58 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(set(bins), set(range(12)))
         self.assertLessEqual(max(bins.values()), 125)
 
+    def test_1000_stream_batch_pressure_starts_one_validation_window(self):
+        streams = [
+            stream()
+            | {
+                "id": f"stream-{index:04d}",
+                "endpoint": f"srt://127.0.0.1:{9000 + index}?mode=caller",
+            }
+            for index in range(1000)
+        ]
+        clock = [0.0]
+        validated_ports = []
+        lock = threading.Lock()
+
+        def validator(config):
+            with lock:
+                validated_ports.append(config.port)
+                if len(validated_ports) == 8:
+                    clock[0] = 10.0
+            return ValidationReport(
+                endpoint=config.endpoint,
+                reachable=True,
+                video_present=True,
+                audio_present=True,
+                captions_present=True,
+            )
+
+        def should_not_run(*_args):
+            raise AssertionError("deep check ran after batch budget exhaustion")
+
+        result = run_monitor_once(
+            {"streams": streams},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=should_not_run,
+            loudness_checker=should_not_run,
+            frame_rate_checker=should_not_run,
+            monotonic=lambda: clock[0],
+            max_concurrency=8,
+            batch_budget_seconds=5,
+        )
+
+        self.assertEqual(set(validated_ports), set(range(9000, 9008)))
+        self.assertEqual(result["validationCursor"], 8)
+        self.assertEqual(
+            result["probeMetrics"]["outcomes"],
+            {"success": 8, "skipped": 1992},
+        )
+
     def test_stream_budget_cancels_srt_transport_sample(self):
         process = Mock()
         process.communicate.side_effect = [
@@ -298,6 +350,90 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(len(set(result["deepCheckSchedule"].values())), 2)
         self.assertEqual(len(result["alarms"]), 2)
         self.assertTrue(all(alarm["active"] for alarm in result["alarms"]))
+
+    def test_batch_budget_bounds_validation_starts_and_rotates_deferred_streams(self):
+        streams = [
+            stream()
+            | {
+                "id": f"stream-{index}",
+                "endpoint": f"srt://127.0.0.1:{9000 + index}?mode=caller",
+            }
+            for index in (1, 2, 3, 4)
+        ]
+        state = apply_issues(
+            empty_monitor_state(),
+            [issue(streams[3], "essence_video_present", "missing video")],
+            now=90,
+            repeat_seconds=5,
+            history_limit=20,
+        )
+
+        def monitor(previous):
+            clock = [0.0]
+            validated_ports = []
+            lock = threading.Lock()
+
+            def validator(config):
+                with lock:
+                    validated_ports.append(config.port)
+                    if len(validated_ports) == 2:
+                        clock[0] = 10.0
+                return ValidationReport(
+                    endpoint=config.endpoint,
+                    reachable=True,
+                    video_present=True,
+                    audio_present=True,
+                    captions_present=True,
+                )
+
+            def should_not_run(*_args):
+                raise AssertionError("deep check ran after batch budget exhaustion")
+
+            result = run_monitor_once(
+                {"streams": streams},
+                previous,
+                now=100,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                validator=validator,
+                tr101_checker=should_not_run,
+                loudness_checker=should_not_run,
+                frame_rate_checker=should_not_run,
+                monotonic=lambda: clock[0],
+                max_concurrency=2,
+                batch_budget_seconds=5,
+            )
+            return result, validated_ports
+
+        first, first_ports = monitor(state)
+        second, second_ports = monitor(first)
+
+        self.assertEqual(first_ports, [9001, 9002])
+        self.assertEqual(second_ports, [9003, 9004])
+        self.assertEqual(first["validationCursor"], 2)
+        self.assertEqual(second["validationCursor"], 0)
+        self.assertEqual(first["probeMetrics"]["outcomes"], {"success": 2, "skipped": 6})
+        self.assertTrue(
+            next(
+                alarm
+                for alarm in first["alarms"]
+                if alarm["id"] == "stream-4:essence_video_present"
+            )["active"]
+        )
+        deferred_validation = {
+            item["streamId"]
+            for item in first["probeMetrics"]["streams"]
+            if item["check"] == "validation" and item["outcome"] == "skipped"
+        }
+        self.assertEqual(deferred_validation, {"stream-3", "stream-4"})
+        self.assertTrue(
+            all(
+                item["status"] == "skipped"
+                for item in first["monitorObservations"]
+                if item["streamId"] in deferred_validation
+            )
+        )
 
     def test_concurrent_deep_checks_use_staggered_cadence_without_false_clear(self):
         streams = [

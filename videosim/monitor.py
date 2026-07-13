@@ -79,6 +79,7 @@ def empty_monitor_state() -> dict:
         "monitorObservations": [],
         "monitors": monitor_catalog_payload(),
         "deepCheckSchedule": {},
+        "validationCursor": 0,
     }
 
 
@@ -137,6 +138,7 @@ def load_monitor_state(path: str | Path) -> dict:
     payload.setdefault("pending", [])
     payload.setdefault("monitorObservations", [])
     payload.setdefault("deepCheckSchedule", {})
+    payload.setdefault("validationCursor", 0)
     payload["monitors"] = monitor_catalog_payload()
     return payload
 
@@ -602,6 +604,7 @@ def _run_monitor_concurrent(
         *,
         validation_only: bool = False,
         probe_contexts: dict | None = None,
+        defer_validation_reason: str = "",
         defer_deep_reason: str = "",
     ) -> dict:
         return run_monitor_once(
@@ -620,14 +623,50 @@ def _run_monitor_concurrent(
             deep_check_interval_seconds=deep_check_interval_seconds,
             _validation_only=validation_only,
             _probe_contexts=probe_contexts,
+            _defer_validation_reason=defer_validation_reason,
             _defer_deep_reason=defer_deep_reason,
         )
 
-    # ponytail: two bounded phases protect core validation freshness; add more cost
-    # tiers only when production measurements justify them.
+    cursor = state.get("validationCursor", 0)
+    if type(cursor) is not int or cursor < 0:
+        cursor = 0
+    cursor %= len(streams)
+    validation_order = streams[cursor:] + streams[:cursor]
+    validation_results = []
+    validated_count = 0
+    defer_validation_reason = ""
+
+    # ponytail: concurrency-sized windows bound queued probe work; add a durable
+    # queue only when multi-process workers require it.
     with ThreadPoolExecutor(max_workers=min(max_concurrency, len(streams))) as pool:
-        validation_results = list(
-            pool.map(lambda stream: monitor_stream(stream, state, validation_only=True), streams)
+        for offset in range(0, len(validation_order), max_concurrency):
+            if (
+                offset
+                and batch_budget_seconds
+                and monotonic() - started >= batch_budget_seconds
+            ):
+                defer_validation_reason = "validation phase exhausted batch budget"
+                break
+            batch = validation_order[offset : offset + max_concurrency]
+            validation_results.extend(
+                pool.map(
+                    lambda stream: monitor_stream(
+                        stream, state, validation_only=True
+                    ),
+                    batch,
+                )
+            )
+            validated_count += len(batch)
+
+        deferred_streams = validation_order[validated_count:]
+        validation_results.extend(
+            monitor_stream(
+                stream,
+                state,
+                validation_only=True,
+                defer_validation_reason=defer_validation_reason,
+            )
+            for stream in deferred_streams
         )
         validation_state = _merge_monitor_results(
             state,
@@ -638,27 +677,35 @@ def _run_monitor_concurrent(
             started,
             monotonic,
         )
+        validation_state["validationCursor"] = (
+            (cursor + validated_count) % len(streams)
+            if deferred_streams
+            else cursor
+        )
         probe_contexts = {
             stream_id: context
             for result in validation_results
             for stream_id, context in result.get("_probeContexts", {}).items()
         }
-        defer_deep_reason = (
+        defer_deep_reason = defer_validation_reason or (
             "validation phase exhausted batch budget"
             if batch_budget_seconds and monotonic() - started >= batch_budget_seconds
             else ""
         )
-        deep_results = list(
-            pool.map(
-                lambda stream: monitor_stream(
-                    stream,
-                    validation_state,
-                    probe_contexts=probe_contexts,
-                    defer_deep_reason=defer_deep_reason,
-                ),
-                streams,
+        deep_results = []
+        for offset in range(0, len(streams), max_concurrency):
+            batch = streams[offset : offset + max_concurrency]
+            deep_results.extend(
+                pool.map(
+                    lambda stream: monitor_stream(
+                        stream,
+                        validation_state,
+                        probe_contexts=probe_contexts,
+                        defer_deep_reason=defer_deep_reason,
+                    ),
+                    batch,
+                )
             )
-        )
 
     return _merge_monitor_results(
         validation_state,
@@ -692,6 +739,7 @@ def run_monitor_once(
     batch_budget_seconds: float = 0,
     _validation_only: bool = False,
     _probe_contexts: dict | None = None,
+    _defer_validation_reason: str = "",
     _defer_deep_reason: str = "",
 ) -> dict:
     if max_concurrency < 1:
@@ -818,23 +866,38 @@ def run_monitor_once(
         validation_issues = []
         if probe_context is None:
             validation_started = monotonic()
-            try:
-                config = config_for_stream(stream, srt_host)
-                with use_probe_deadline(media_deadline):
-                    report = validator(config)
-                check_budget()
-                validation_issues = issues_for_report(stream, report)
-                issues_by_id = {item.monitor_id: item for item in validation_issues}
+            if _defer_validation_reason:
                 for monitor_id in validation_monitor_ids(stream):
-                    item = issues_by_id.get(monitor_id)
-                    observe(stream, monitor_id, "unhealthy" if item else "healthy", item.message if item else "")
-                record(stream, "validation", "issue" if validation_issues else "success", validation_started)
-            except Exception as exc:  # ponytail: keep the batch alive; probe crashes stay inconclusive instead of becoming feed alarms.
-                report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
-                outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
-                for monitor_id in validation_monitor_ids(stream):
-                    observe(stream, monitor_id, outcome, str(exc))
-                record(stream, "validation", outcome, validation_started, str(exc))
+                    observe(
+                        stream,
+                        monitor_id,
+                        "skipped",
+                        _defer_validation_reason,
+                    )
+                record(
+                    stream,
+                    "validation",
+                    "skipped",
+                    detail=_defer_validation_reason,
+                )
+            else:
+                try:
+                    config = config_for_stream(stream, srt_host)
+                    with use_probe_deadline(media_deadline):
+                        report = validator(config)
+                    check_budget()
+                    validation_issues = issues_for_report(stream, report)
+                    issues_by_id = {item.monitor_id: item for item in validation_issues}
+                    for monitor_id in validation_monitor_ids(stream):
+                        item = issues_by_id.get(monitor_id)
+                        observe(stream, monitor_id, "unhealthy" if item else "healthy", item.message if item else "")
+                    record(stream, "validation", "issue" if validation_issues else "success", validation_started)
+                except Exception as exc:  # ponytail: keep the batch alive; probe crashes stay inconclusive instead of becoming feed alarms.
+                    report = ValidationReport(endpoint=stream.get("endpoint", ""), errors=[str(exc)])
+                    outcome = "timeout" if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) else "error"
+                    for monitor_id in validation_monitor_ids(stream):
+                        observe(stream, monitor_id, outcome, str(exc))
+                    record(stream, "validation", outcome, validation_started, str(exc))
         issues.extend(validation_issues)
         if _validation_only:
             next_probe_contexts[stream["id"]] = (

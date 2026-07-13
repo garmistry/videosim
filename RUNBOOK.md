@@ -452,31 +452,30 @@ cap. Mixed workloads that exceed either cap remain unassigned and increase
 `capacityShortfall`. Zero leaves that dimension unbounded; select all limits
 from representative SRT/DASH measurements.
 Use `--max-concurrent-checks N` to bound simultaneous stream checks. This is a
-local execution bound, not a deadline, backpressure, or capacity certification.
+local execution bound; combine it with the batch budget below to bound queued
+probe starts. It is not a deadline or capacity certification.
 Use `--stream-budget-seconds N` to classify an over-budget stream as timed out
 and defer its remaining checks. Built-in GStreamer, FFmpeg, FFprobe, and DASH
 polling waits use the remaining budget; this is not cost-tier fairness,
 backpressure, or capacity certification.
-Use `--deep-check-interval-seconds N` to validate every assigned stream on each
-worker cycle but run TR-101, frame-rate, and loudness checks once per configured
-cadence. The worker stores the next due time with its retained assignment state
+Use `--deep-check-interval-seconds N` to run TR-101, frame-rate, and loudness
+checks once per configured cadence while validation continues each cycle when
+the batch budget allows. The worker stores the next due time with retained state
 and derives a stable per-stream offset, so subsequent deep checks are spread
 across the interval. A deferred deep phase emits one `deep_checks=skipped`
 probe metric and no health observation, preserving existing deep-check alarms.
 Zero keeps the existing every-cycle deep checks. Select the interval from
 measured freshness and worker-capacity evidence; this control is deterministic
 load shedding, not dynamic backpressure or capacity certification.
-Use `--batch-budget-seconds N` to finish validation for every assignment and
-defer the due deep phase when validation has consumed that aggregate cycle
-budget. The skipped phase remains inconclusive and does not clear alarms. With
-`--deep-check-interval-seconds`, deferred work moves to the stream's next stable
-cadence offset; without a cadence it is retried on the next worker cycle. This
-is a soft phase guard and does not bound validation duration, persist reports,
-or provide probe-cost fairness. Report delivery pressure is handled separately
-by the encrypted spool below.
-When `--max-concurrent-checks` is greater than one, the worker validates every
-assigned stream before starting TR-101, frame-rate, and loudness checks. This
-protects core validation freshness but is not protocol- or tenant-cost fairness.
+Use `--batch-budget-seconds N` to submit at most one
+`--max-concurrent-checks`-sized validation window at a time. Once a completed
+window exhausts the aggregate cycle budget, no more validation probes start:
+the remaining streams emit inconclusive `validation=skipped` observations,
+retain prior alarms, rotate to the front of the next cycle, and the whole deep
+phase defers. In-flight checks still run to their per-stream deadline. This
+bounds the local executor queue but is not a durable queue, measured capacity,
+or protocol/tenant cost fairness. Report delivery pressure is handled by the
+encrypted spool below.
 
 For worker API v2, configure all three spool controls together:
 

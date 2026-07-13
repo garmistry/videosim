@@ -240,7 +240,11 @@ def build_report_payload(
     report_id: str = "",
     lease_sequences: dict[str, int] | None = None,
 ) -> dict:
-    state = {key: value for key, value in state.items() if key != "deepCheckSchedule"}
+    state = {
+        key: value
+        for key, value in state.items()
+        if key not in {"deepCheckSchedule", "validationCursor"}
+    }
     if assignment and assignment.get("apiVersion") == WORKER_API_VERSION_V2:
         if not worker_incarnation_id or sequence < 1 or not report_id:
             raise ValueError("worker API v2 report identity and sequence are required")

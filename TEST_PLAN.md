@@ -260,6 +260,10 @@ Milestone 2 weighted coverage: 18 / 21 = 85.7%.
 | M3-P1-caption-text-updates-over-time | P1 | 3 | not implemented | tracked in `TEST_GAPS.md` |
 | M3-P1-caption-disabled-negative-test | P1 | 3 | implemented | `docker compose run --build --rm live-srt` |
 
+SRT caption detection requires extracted caption bytes. Unit coverage rejects a
+zero-byte successful receiver, and the live normal/video-only matrix proves
+caption bytes while no-caption remains absent.
+
 Milestone 3 weighted coverage: 18 / 21 = 85.7%.
 
 ## Milestone 4 Tests

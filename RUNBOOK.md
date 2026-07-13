@@ -257,7 +257,9 @@ The workflow uses the isolated Compose project `videosim-startup-validation`
 on HTTP port 18080 and feed port 19000 by default. It builds the app and worker,
 waits for `/readyz`, verifies worker registration through `/state.json`, creates
 and starts a normal SRT feed through the operator HTTP forms, invokes the real
-validator, requires reachable video/audio/captions, and stops the feed. It
+validator, requires reachable video/audio/captions, and stops the feed. SRT
+caption validation requires non-empty bytes from `h264ccextractor`; a successful
+GStreamer process with an idle caption branch is not accepted. The workflow
 always writes:
 
 - `artifacts/startup-validation/result.json`

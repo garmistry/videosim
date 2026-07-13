@@ -116,19 +116,21 @@
   sweep reached only 136/176 healthy paths and the next reached 0/176 while the
   relays stayed alive. Process isolation restored repeated reconnect progress
   at the cost of the higher process/memory shape measured before batching.
-- Healthy passive SRT validation now checks video, audio, and captions in one
-  receiver and can retry three five-second handshakes inside the existing
-  15-second stream budget. In the local 66-caller diagnostic this improved
-  healthy coverage from about 70% to 171/176, but it did not make the host an
-  all-path capacity pass.
+- Passive SRT validation uses independent typed video/audio probes and accepts
+  captions only when `h264ccextractor` emits bytes. Caption checks try bounded
+  receiver shapes with and without an audio drain so normal and video-only
+  feeds remain distinguishable inside the 15-second stream budget. This needs
+  multiple SRT handshakes. The earlier 171/176 combined-receiver diagnostic is
+  superseded because process success did not prove every requested branch.
 - The fail-closed durable startup workflow passed its marked eight-path,
   two-worker API/media/alarm/log test. An exploratory exact-440/11-worker run
   reached balanced 40-stream leases and all 440 latest results, but only
-  148/176 healthy SRT paths were conclusive; 28 timed out. It also produced
-  exact 176/176 healthy DASH, 44 expected malformed-DASH alarms, and zero false
-  black/frozen alarms. That exploratory database contained an inherited extra
-  migration, so the run is diagnostic negative evidence, not an admission
-  artifact.
+  148/176 healthy SRT paths were nominally healthy and 28 timed out, but that
+  run used the superseded combined receiver and did not require caption bytes.
+  It also produced exact 176/176 healthy DASH, 44 expected malformed-DASH
+  alarms, and zero false black/frozen alarms. The exploratory database contained
+  an inherited extra migration, so this is transport-only negative diagnosis,
+  not essence or admission evidence.
 - Correcting the budget does not make the current single-host environment
   sufficient. A 22-survivor, 12-token, 15-second run failed the 90-second gate
   on 14 workers and saturated local CPU/process capacity. This repository has

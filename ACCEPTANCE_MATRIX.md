@@ -91,7 +91,7 @@
 | 0 Repo and product contract | complete | Docs exist and contract test passes. |
 | 1 CLI SRT video feed | complete | CLI starts/stops/restarts a synthetic video SRT listener and Docker live test proves receiver video detection. |
 | 2 Add audio | complete | CLI emits audio/video SRT and Docker live test proves receiver consumes H.264 video plus AAC audio. |
-| 3 Add closed captions | complete | CLI inserts generated CEA-608 captions into H.264 and Docker live test extracts them; no-caption negative test passes. |
+| 3 Add closed captions | complete | CLI converts generated CEA-608 pairs to insertable CEA-708 `cc_data` in H.264; Docker live validation requires extracted bytes, and the no-caption negative test passes. |
 | 4 Feed profiles | complete | Flat YAML normal profile loads, validates schema version, maps to feed config, and drives CLI command generation. |
 | 5 Static outage profiles | complete | Six sample profiles validate live in Docker, including track absence, no captions, black frames, and frozen frames. |
 | 6 Automated validation tool | complete | `videosim validate` emits human/JSON reports and Docker live tests cover all modes plus stopped feed. |

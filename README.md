@@ -184,6 +184,21 @@ Each blocking fixture service exposes healthy, 30-second slow, unavailable,
 and malformed endpoints. Run the worker benchmark in a second terminal against
 the selected generated state file.
 
+After starting both protocol fleets, compose the deterministic 1,000-logical-
+stream scenario:
+
+```sh
+python3 -m videosim fixture-scenario \
+  --manifest scale/fixtures/mixed-1000.json \
+  --srt-state artifacts/srt-fixtures/state.json \
+  --dash-state artifacts/dash-fixtures/state.json \
+  --state-path artifacts/mixed-fixtures/state.json
+```
+
+The output has exact 50/50 protocol and 80/10/5/5 healthy/slow/dead/malformed
+counts, but reuses the eight physical fixture endpoints. It is a bounded-worker
+stress input, not independent-stream or capacity evidence.
+
 ```sh
 python3 -m videosim worker-benchmark \
   --scenario artifacts/dash-fixtures/state.json \

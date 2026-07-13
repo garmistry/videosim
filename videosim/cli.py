@@ -17,6 +17,7 @@ from .distributed_benchmark import (
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .feed_store import SqliteFeedStore, configured_database_url, default_feed_db_path, default_feed_store
 from .fixture_fleet import run_fixture_fleet
+from .fixture_scenario import run_fixture_scenario
 from .gui import GuiState, run_gui
 from .migrations import MigrationError, PostgresMigrator
 from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
@@ -221,6 +222,15 @@ def build_parser() -> argparse.ArgumentParser:
     fixture_fleet.add_argument("--manifest", required=True)
     fixture_fleet.add_argument("--state-path", required=True)
     fixture_fleet.add_argument("--advertised-host", default="")
+
+    fixture_scenario = subparsers.add_parser(
+        "fixture-scenario",
+        help="compose fixture states into a deterministic logical-stream scenario",
+    )
+    fixture_scenario.add_argument("--manifest", required=True)
+    fixture_scenario.add_argument("--srt-state", required=True)
+    fixture_scenario.add_argument("--dash-state", required=True)
+    fixture_scenario.add_argument("--state-path", required=True)
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -501,6 +511,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "fixture-fleet":
             return run_fixture_fleet(
                 args.manifest, args.state_path, args.advertised_host
+            )
+
+        if args.command == "fixture-scenario":
+            return run_fixture_scenario(
+                args.manifest, args.srt_state, args.dash_state, args.state_path
             )
 
         if args.command == "worker":

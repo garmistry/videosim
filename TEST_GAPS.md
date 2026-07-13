@@ -82,8 +82,10 @@ implementation and must pass before those milestones advance.
   representative scenario result has been committed or admitted.
 - The manifest-driven DASH and SRT fixture fleets have unit and one-cycle Linux
   coverage for healthy, slow, dead, and malformed endpoints. The
-  generated/external source cross-product, storm scheduling, and long-run
-  fixture reliability remain open.
+  deterministic mixed composer has unit and one-cycle bounded-worker coverage
+  at 1,000 logical streams, but reuses eight physical endpoints. Independent
+  endpoints, the generated/external source cross-product, storm scheduling, and
+  long-run fixture reliability remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

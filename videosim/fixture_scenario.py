@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import random
+from pathlib import Path
+
+from .control_plane import MAX_REPORT_STREAMS
+from .fixture_fleet import BEHAVIORS, write_fixture_state
+
+
+SCENARIO_SCHEMA = "videosim.fixture-scenario/v1"
+PROTOCOLS = ("srt", "dash")
+
+
+def _read_object(path: str | Path, label: str) -> tuple[dict, str]:
+    source = Path(path)
+    try:
+        raw = source.read_bytes()
+        value = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is invalid: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    return value, hashlib.sha256(raw).hexdigest()
+
+
+def _validate_mix(value: object, fields: tuple[str, ...], label: str) -> dict:
+    if not isinstance(value, dict) or set(value) != set(fields):
+        raise ValueError(f"{label} must contain exactly {', '.join(fields)}")
+    for field in fields:
+        percent = value[field]
+        if (
+            isinstance(percent, bool)
+            or not isinstance(percent, (int, float))
+            or not math.isfinite(percent)
+            or percent < 0
+        ):
+            raise ValueError(f"{label}.{field} must be a finite non-negative number")
+    if not math.isclose(sum(value.values()), 100, abs_tol=1e-6):
+        raise ValueError(f"{label} percentages must total 100")
+    return value
+
+
+def load_fixture_scenario_manifest(path: str | Path) -> tuple[dict, str]:
+    manifest, digest = _read_object(path, "fixture scenario manifest")
+    if manifest.get("schemaVersion") != SCENARIO_SCHEMA:
+        raise ValueError(f"fixture scenario schemaVersion must be {SCENARIO_SCHEMA}")
+    stream_count = manifest.get("streamCount")
+    if (
+        isinstance(stream_count, bool)
+        or not isinstance(stream_count, int)
+        or not 1 <= stream_count <= MAX_REPORT_STREAMS
+    ):
+        raise ValueError(
+            f"fixture scenario streamCount must be an integer from 1 to {MAX_REPORT_STREAMS}"
+        )
+    seed = manifest.get("randomSeed")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("fixture scenario randomSeed must be a non-negative integer")
+    _validate_mix(manifest.get("protocolPercent"), PROTOCOLS, "protocolPercent")
+    _validate_mix(
+        manifest.get("behaviorPercent"), BEHAVIORS, "behaviorPercent"
+    )
+    return manifest, digest
+
+
+def _allocate(total: int, percentages: dict, fields: tuple[str, ...]) -> dict[str, int]:
+    exact = {field: total * percentages[field] / 100 for field in fields}
+    counts = {field: math.floor(exact[field]) for field in fields}
+    remainder = total - sum(counts.values())
+    order = sorted(
+        fields,
+        key=lambda field: (exact[field] - counts[field], -fields.index(field)),
+        reverse=True,
+    )
+    for field in order[:remainder]:
+        counts[field] += 1
+    return counts
+
+
+def load_protocol_fixture_state(path: str | Path, protocol: str) -> tuple[dict, str]:
+    state, digest = _read_object(path, f"{protocol} fixture state")
+    if state.get("schemaVersion") != "videosim.fixture-state/v1":
+        raise ValueError(f"{protocol} fixture state has an unsupported schemaVersion")
+    streams = state.get("streams")
+    if not isinstance(streams, list):
+        raise ValueError(f"{protocol} fixture state must contain a streams array")
+    by_id = {
+        stream.get("id"): stream
+        for stream in streams
+        if isinstance(stream, dict) and isinstance(stream.get("id"), str)
+    }
+    fixtures = {}
+    for behavior in BEHAVIORS:
+        stream = by_id.get(f"{protocol}-{behavior}")
+        if (
+            not isinstance(stream, dict)
+            or stream.get("protocol") != protocol
+            or stream.get("source") != "external"
+            or stream.get("status") != "running"
+            or not isinstance(stream.get("endpoint"), str)
+            or not stream["endpoint"]
+        ):
+            raise ValueError(
+                f"{protocol} fixture state must contain running external {behavior}"
+            )
+        fixtures[behavior] = stream
+    return fixtures, digest
+
+
+def compose_fixture_scenario(
+    manifest: dict,
+    manifest_sha256: str,
+    fixtures: dict[str, dict[str, dict]],
+    fixture_digests: dict[str, str],
+) -> dict:
+    protocol_counts = _allocate(
+        manifest["streamCount"], manifest["protocolPercent"], PROTOCOLS
+    )
+    streams = []
+    behavior_counts = {behavior: 0 for behavior in BEHAVIORS}
+    for protocol in PROTOCOLS:
+        counts = _allocate(
+            protocol_counts[protocol], manifest["behaviorPercent"], BEHAVIORS
+        )
+        for behavior in BEHAVIORS:
+            behavior_counts[behavior] += counts[behavior]
+            for _index in range(counts[behavior]):
+                stream = dict(fixtures[protocol][behavior])
+                stream.update(
+                    {
+                        "fixtureBehavior": behavior,
+                        "fixtureEndpointShared": True,
+                    }
+                )
+                streams.append(stream)
+    random.Random(manifest["randomSeed"]).shuffle(streams)
+    for index, stream in enumerate(streams, start=1):
+        stream["id"] = f"fixture-{index:05d}"
+        stream["name"] = f"Fixture {index:05d} ({stream['protocol']} {stream['fixtureBehavior']})"
+    return {
+        "schemaVersion": "videosim.fixture-scenario-state/v1",
+        "fixtureScenarioSha256": manifest_sha256,
+        "fixtureStateSha256": fixture_digests,
+        "logicalStreamsShareEndpoints": True,
+        "scenarioLimitations": [
+            "Logical streams reuse eight physical endpoints.",
+            "This scenario tests bounded worker behavior and does not certify media capacity.",
+        ],
+        "protocolCounts": protocol_counts,
+        "behaviorCounts": behavior_counts,
+        "streams": streams,
+    }
+
+
+def run_fixture_scenario(
+    manifest_path: str, srt_state_path: str, dash_state_path: str, state_path: str
+) -> int:
+    manifest, manifest_digest = load_fixture_scenario_manifest(manifest_path)
+    fixtures = {}
+    digests = {}
+    for protocol, path in (("srt", srt_state_path), ("dash", dash_state_path)):
+        fixtures[protocol], digests[protocol] = load_protocol_fixture_state(
+            path, protocol
+        )
+    state = compose_fixture_scenario(manifest, manifest_digest, fixtures, digests)
+    write_fixture_state(state_path, state)
+    print(
+        f"Fixture scenario ready: streams={len(state['streams'])} state={state_path}",
+        flush=True,
+    )
+    return 0

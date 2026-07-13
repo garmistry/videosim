@@ -100,6 +100,10 @@ VideoSim should split into a master control plane and many worker nodes:
   deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
   It reuses the existing generators, a standard-library DASH HTTP service, and
   GStreamer SRT listeners.
+- `python -m videosim fixture-scenario` deterministically expands those states
+  into exact logical protocol/behavior mixes for bounded-worker tests. The
+  checked-in 1,000-stream scenario reuses eight endpoints and is not a capacity
+  workload.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

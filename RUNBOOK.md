@@ -576,6 +576,21 @@ listener emitting paced non-MPEG-TS bytes. Use the same `--advertised-host`
 override across containers. The process fails if any launched listener exits
 and stops all child pipelines on Ctrl-C.
 
+With both fleet processes running, compose the checked-in mixed scenario:
+
+```sh
+python3 -m videosim fixture-scenario \
+  --manifest scale/fixtures/mixed-1000.json \
+  --srt-state artifacts/srt-fixtures/state.json \
+  --dash-state artifacts/dash-fixtures/state.json \
+  --state-path artifacts/mixed-fixtures/state.json
+```
+
+The composer validates and hashes both fixture states, allocates exact protocol
+and behavior percentages, gives every logical stream a unique ID, and performs
+a seeded shuffle. The 1,000 streams share eight endpoints; use this only to test
+bounded scheduling/deferral and never as media-capacity evidence.
+
 To benchmark an existing app instead, capture its state:
 
 ```sh

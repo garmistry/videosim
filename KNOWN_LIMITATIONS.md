@@ -76,7 +76,9 @@
   runs real probes from a supplied state scenario, but measures one worker and
   does not provide fixtures, distributed load, failure injection, or a capacity
   decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
-  dead/malformed matrices, but not distributed load or capacity evidence.
+  dead/malformed matrices. `fixture-scenario` can expand them into 1,000 unique
+  logical streams, but those streams reuse eight physical endpoints and provide
+  neither distributed load nor capacity evidence.
 
 ## Monitoring
 

@@ -634,15 +634,20 @@ python3 -m videosim worker-benchmark \
   --max-concurrent-checks 8 --max-concurrent-deep-checks 2 \
   --stream-budget-seconds 0.03 --batch-budget-seconds 0.001 \
   --require-full-validation-coverage \
-  --max-validation-gap-cycles 125 --json
+  --max-validation-gap-cycles 125 \
+  --max-validation-gap-seconds 90 --json
 ```
 
-Require `validationAttemptedStreams=1000`, `validationCoveragePercent=100`, and
-`cyclesToFullValidationCoverage<=125`, `minimumValidationAttempts>=2`, and
-`maximumValidationGapCycles<=125`. The gap includes the initial and trailing
-measured windows, so early attempts followed by starvation fail. This proves
-bounded cursor service for the supplied logical assignments, not an approved
-wall-time freshness SLO, production probe budgets, or independent media
+Require `validationAttemptedStreams=1000`, `validationCoveragePercent=100`,
+`cyclesToFullValidationCoverage<=125`,
+`timeToFullValidationCoverageSecondsUpperBound<=90`,
+`minimumValidationAttempts>=2`, `maximumValidationGapCycles<=125`, and
+`maximumValidationGapSecondsUpperBound<=90`. The gaps include the initial and
+trailing measured windows, so early attempts followed by starvation fail. The
+seconds value conservatively spans cycle boundaries around each validation
+start; it is not an exact per-probe timestamp. This proves bounded cursor
+service for the supplied logical assignments under this test threshold, not an
+approved freshness SLO, production probe budgets, or independent media
 capacity.
 
 To benchmark an existing app instead, capture its state:

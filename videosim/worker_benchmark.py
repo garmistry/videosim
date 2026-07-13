@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import platform
 import statistics
 import sys
@@ -30,10 +31,14 @@ class WorkerBenchmarkReport:
     outcomes: dict[str, int]
     require_full_validation_coverage: bool
     max_validation_gap_cycles: int
+    max_validation_gap_seconds: float
     validation_attempted_streams: int
     cycles_to_full_validation_coverage: int | None
+    time_to_full_validation_coverage_seconds_upper_bound: float | None
     minimum_validation_attempts: int
     maximum_validation_gap_cycles: int | None
+    maximum_validation_gap_seconds_upper_bound: float | None
+    measured_duration_seconds: float
     process_peak_rss_bytes: int
     child_peak_rss_bytes: int
     open_file_descriptors: int | None
@@ -54,6 +59,15 @@ class WorkerBenchmarkReport:
                     and self.maximum_validation_gap_cycles is not None
                     and self.maximum_validation_gap_cycles
                     <= self.max_validation_gap_cycles
+                )
+            )
+            and (
+                self.max_validation_gap_seconds == 0
+                or (
+                    self.minimum_validation_attempts >= 2
+                    and self.maximum_validation_gap_seconds_upper_bound is not None
+                    and self.maximum_validation_gap_seconds_upper_bound
+                    <= self.max_validation_gap_seconds
                 )
             )
         )
@@ -79,6 +93,7 @@ class WorkerBenchmarkReport:
                 "warmupIterations": self.warmup_iterations,
                 "requireFullValidationCoverage": self.require_full_validation_coverage,
                 "maxValidationGapCycles": self.max_validation_gap_cycles,
+                "maxValidationGapSeconds": self.max_validation_gap_seconds,
             },
             "environment": {
                 "python": sys.version.split()[0],
@@ -93,15 +108,22 @@ class WorkerBenchmarkReport:
                 "validationAttemptedStreams": self.validation_attempted_streams,
                 "validationCoveragePercent": self.validation_coverage_percent,
                 "cyclesToFullValidationCoverage": self.cycles_to_full_validation_coverage,
+                "timeToFullValidationCoverageSecondsUpperBound": rounded(
+                    self.time_to_full_validation_coverage_seconds_upper_bound
+                ),
                 "minimumValidationAttempts": self.minimum_validation_attempts,
                 "maximumValidationGapCycles": self.maximum_validation_gap_cycles,
+                "maximumValidationGapSecondsUpperBound": rounded(
+                    self.maximum_validation_gap_seconds_upper_bound
+                ),
+                "measuredDurationSeconds": rounded(self.measured_duration_seconds),
                 "processPeakRssBytes": self.process_peak_rss_bytes,
                 "childPeakRssBytes": self.child_peak_rss_bytes,
                 "openFileDescriptors": self.open_file_descriptors,
             },
             "limitations": [
                 "Measures one worker against the supplied live endpoints.",
-                "Validation gap cycles are scheduler cadence, not an approved wall-time freshness SLO.",
+                "Wall-time freshness is a conservative cycle-boundary upper bound, not a per-probe timestamp.",
                 "Peak RSS values are cumulative single-process peaks, not aggregate concurrent child RSS.",
                 "Does not certify distributed capacity, headroom, HA, failure recovery, or soak duration.",
             ],
@@ -121,6 +143,10 @@ def summary(values: tuple[float, ...]) -> dict:
         "max": round(ordered[-1], 3),
         "mean": round(statistics.fmean(ordered), 3),
     }
+
+
+def rounded(value: float | None) -> float | None:
+    return None if value is None else round(value, 3)
 
 
 def load_scenario(path: str | Path) -> tuple[dict, str, int]:
@@ -165,6 +191,7 @@ def run_worker_benchmark(
     batch_budget_seconds: float,
     require_full_validation_coverage: bool = False,
     max_validation_gap_cycles: int = 0,
+    max_validation_gap_seconds: float = 0,
     *,
     monitor: Callable = run_monitor_once,
     resource_snapshot: Callable[[], dict] = worker_resource_snapshot,
@@ -174,6 +201,8 @@ def run_worker_benchmark(
         raise ValueError("iterations must be positive and warmup iterations non-negative")
     if max_validation_gap_cycles < 0:
         raise ValueError("max validation gap cycles must be non-negative")
+    if not math.isfinite(max_validation_gap_seconds) or max_validation_gap_seconds < 0:
+        raise ValueError("max validation gap seconds must be finite and non-negative")
     scenario, scenario_sha256, stream_count = load_scenario(scenario_path)
     state = empty_monitor_state()
     running_stream_ids = {
@@ -192,11 +221,18 @@ def run_worker_benchmark(
     validation_attempted_stream_ids = set()
     validation_attempt_counts = {stream_id: 0 for stream_id in running_stream_ids}
     last_validation_attempt_cycles = {}
+    last_validation_attempt_cycle_starts = {}
     maximum_validation_gap_cycles = None
+    maximum_validation_gap_seconds_upper_bound = None
     cycles_to_full_validation_coverage = None
+    time_to_full_validation_coverage_seconds_upper_bound = None
+    measured_started = None
+    measured_finished = None
     for cycle in range(iterations + warmup_iterations):
         before = resource_snapshot()
         started = monotonic()
+        if cycle == warmup_iterations:
+            measured_started = started
         state = monitor(
             scenario,
             state,
@@ -210,10 +246,12 @@ def run_worker_benchmark(
             deep_check_interval_seconds=deep_check_interval_seconds,
             batch_budget_seconds=batch_budget_seconds,
         )
-        elapsed_ms = max(0.0, (monotonic() - started) * 1000)
+        completed = monotonic()
+        elapsed_ms = max(0.0, (completed - started) * 1000)
         resources = worker_resource_pressure(before, resource_snapshot())
         if cycle < warmup_iterations:
             continue
+        measured_finished = completed
         metrics = state.get("probeMetrics")
         if not isinstance(metrics, dict):
             raise ValueError("worker benchmark monitor returned no probe metrics")
@@ -241,7 +279,16 @@ def run_worker_benchmark(
             maximum_validation_gap_cycles = max(
                 maximum_validation_gap_cycles or 0, gap
             )
+            previous_start = last_validation_attempt_cycle_starts.get(stream_id)
+            gap_seconds_upper_bound = completed - (
+                previous_start if previous_start is not None else measured_started
+            )
+            maximum_validation_gap_seconds_upper_bound = max(
+                maximum_validation_gap_seconds_upper_bound or 0,
+                gap_seconds_upper_bound,
+            )
             last_validation_attempt_cycles[stream_id] = measured_cycle
+            last_validation_attempt_cycle_starts[stream_id] = started
             validation_attempt_counts[stream_id] += 1
         validation_attempted_stream_ids.update(attempted_this_cycle)
         if (
@@ -249,6 +296,9 @@ def run_worker_benchmark(
             and validation_attempted_stream_ids == running_stream_ids
         ):
             cycles_to_full_validation_coverage = cycle - warmup_iterations + 1
+            time_to_full_validation_coverage_seconds_upper_bound = (
+                completed - measured_started
+            )
         for outcome, count in metrics.get("outcomes", {}).items():
             outcomes[str(outcome)] = outcomes.get(str(outcome), 0) + int(count)
         process_peak = max(process_peak, resources["processPeakRssBytes"])
@@ -263,6 +313,14 @@ def run_worker_benchmark(
         maximum_validation_gap_cycles = max(
             maximum_validation_gap_cycles or 0, trailing_gap
         )
+        last_start = last_validation_attempt_cycle_starts.get(stream_id)
+        trailing_seconds_upper_bound = measured_finished - (
+            last_start if last_start is not None else measured_started
+        )
+        maximum_validation_gap_seconds_upper_bound = max(
+            maximum_validation_gap_seconds_upper_bound or 0,
+            trailing_seconds_upper_bound,
+        )
     return WorkerBenchmarkReport(
         scenario=str(scenario_path),
         scenario_sha256=scenario_sha256,
@@ -276,10 +334,14 @@ def run_worker_benchmark(
         outcomes=outcomes,
         require_full_validation_coverage=require_full_validation_coverage,
         max_validation_gap_cycles=max_validation_gap_cycles,
+        max_validation_gap_seconds=max_validation_gap_seconds,
         validation_attempted_streams=len(validation_attempted_stream_ids),
         cycles_to_full_validation_coverage=cycles_to_full_validation_coverage,
+        time_to_full_validation_coverage_seconds_upper_bound=time_to_full_validation_coverage_seconds_upper_bound,
         minimum_validation_attempts=min(validation_attempt_counts.values()),
         maximum_validation_gap_cycles=maximum_validation_gap_cycles,
+        maximum_validation_gap_seconds_upper_bound=maximum_validation_gap_seconds_upper_bound,
+        measured_duration_seconds=measured_finished - measured_started,
         process_peak_rss_bytes=process_peak,
         child_peak_rss_bytes=child_peak,
         open_file_descriptors=open_fds,
@@ -297,6 +359,7 @@ def human_summary(report: WorkerBenchmarkReport) -> str:
             f"Streams: {report.stream_count}",
             f"Measured iterations: {report.iterations}",
             f"Validation minimum attempts/max gap: {report.minimum_validation_attempts}/{report.maximum_validation_gap_cycles} cycles",
+            f"Validation wall-time gap upper bound: {rounded(report.maximum_validation_gap_seconds_upper_bound)} seconds",
             f"Cycle p50/p95/p99: {duration['p50']}/{duration['p95']}/{duration['p99']} ms",
             f"CPU p50/p95/p99: {cpu['p50']}/{cpu['p95']}/{cpu['p99']} ms",
         ]

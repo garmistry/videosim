@@ -212,9 +212,13 @@ fault processes. The DASH URLs still share one generator/origin. These are load
 inputs, not capacity evidence, until the complete F5 gate passes.
 
 To fail unless cursor rotation starts validation for every logical stream, add
-`--require-full-validation-coverage` and run enough measured iterations. With
-eight validation tokens, the checked-in 1,000-stream scenario requires at least
-125 cycles when each aggregate budget admits one window.
+`--require-full-validation-coverage` and run enough measured iterations. Add
+`--max-validation-gap-cycles` and `--max-validation-gap-seconds` to require at
+least two starts per stream and bound the initial, repeat, and trailing service
+gaps. The wall-time value is a conservative cycle-boundary upper bound, not a
+per-probe timestamp. With eight validation tokens, the checked-in 1,000-stream
+scenario requires at least 125 cycles when each aggregate budget admits one
+window.
 
 ```sh
 python3 -m videosim worker-benchmark \

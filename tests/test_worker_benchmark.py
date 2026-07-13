@@ -147,6 +147,7 @@ class WorkerBenchmarkTest(unittest.TestCase):
                 1,
                 True,
                 2,
+                2.2,
                 monitor=monitor,
                 resource_snapshot=lambda: snapshot,
                 monotonic=iter((0, 0.1, 1, 1.1, 2, 2.1, 3, 3.1)).__next__,
@@ -157,9 +158,13 @@ class WorkerBenchmarkTest(unittest.TestCase):
         self.assertEqual(report.cycles_to_full_validation_coverage, 2)
         self.assertEqual(report.minimum_validation_attempts, 2)
         self.assertEqual(report.maximum_validation_gap_cycles, 2)
+        self.assertAlmostEqual(report.maximum_validation_gap_seconds_upper_bound, 2.1)
         self.assertFalse(replace(report, validation_attempted_streams=3).passed)
         self.assertFalse(replace(report, minimum_validation_attempts=1).passed)
         self.assertFalse(replace(report, maximum_validation_gap_cycles=3).passed)
+        self.assertFalse(
+            replace(report, maximum_validation_gap_seconds_upper_bound=2.3).passed
+        )
 
     def test_validation_gap_gate_counts_trailing_starvation(self):
         cycle = 0
@@ -206,6 +211,7 @@ class WorkerBenchmarkTest(unittest.TestCase):
                 1,
                 True,
                 3,
+                0.6,
                 monitor=monitor,
                 resource_snapshot=lambda: snapshot,
                 monotonic=iter(index / 10 for index in range(10)).__next__,
@@ -213,6 +219,7 @@ class WorkerBenchmarkTest(unittest.TestCase):
 
         self.assertEqual(report.minimum_validation_attempts, 2)
         self.assertEqual(report.maximum_validation_gap_cycles, 4)
+        self.assertAlmostEqual(report.maximum_validation_gap_seconds_upper_bound, 0.7)
         self.assertFalse(report.passed)
 
     def test_worker_benchmark_rejects_scenario_without_running_streams(self):
@@ -240,13 +247,15 @@ class WorkerBenchmarkTest(unittest.TestCase):
                         str(scenario),
                         "--max-validation-gap-cycles",
                         "2",
+                        "--max-validation-gap-seconds",
+                        "3.5",
                         "--json",
                     ]
                 )
 
         self.assertEqual(code, 0)
         self.assertEqual(output.call_args.args[0], '{"passed": true}')
-        self.assertEqual(benchmark.call_args.args[-1], 2)
+        self.assertEqual(benchmark.call_args.args[-2:], (2, 3.5))
 
 
 if __name__ == "__main__":

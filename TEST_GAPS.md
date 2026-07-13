@@ -79,7 +79,7 @@ implementation and must pass before those milestones advance.
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
   representative per-check baseline, or saturation curve yet. `worker-benchmark`
   can produce the single-worker real-probe report from an exported state, but no
-  representative scenario result has been committed or admitted.
+  representative independent-source result has been committed or admitted.
 - The manifest-driven DASH and SRT fixture fleets have unit and one-cycle Linux
   coverage for healthy, slow, dead, and malformed endpoints. The
   deterministic mixed composer can consume multiple URLs per behavior and
@@ -91,11 +91,15 @@ implementation and must pass before those milestones advance.
   reconnect cadence, independent sources, the generated/external cross-product,
   concurrent storms, and long-run fixture reliability remain open.
 - The worker benchmark can require and report unique validation-start coverage
-  plus repeated cadence. A 250-cycle Linux run covered all 1,000 mixed logical
-  streams twice with eight admissions per cycle; full first coverage and the
-  worst initial/repeat/trailing gap were both 125 cycles. Its 30 ms stream and
-  1 ms aggregate budgets are pressure controls, not approved freshness SLOs.
-  This remains shared-endpoint scheduler evidence, not a soak or capacity curve.
+  plus repeated cycle and wall-time cadence. A 250-cycle Linux run against 1,000
+  distinct SRT/DASH URLs covered every stream at least twice with eight
+  admissions per cycle. Full first coverage was bounded at 125 cycles and
+  87.426 seconds; the worst initial/repeat/trailing gap was bounded at 125 cycles
+  and 89.651 seconds, passing the configured 90-second gate. The seconds values
+  conservatively span cycle boundaries rather than timestamping each probe, and
+  the 30 ms stream, 1 ms aggregate, and 90-second limits are test criteria, not
+  approved freshness SLOs. Healthy URLs still share one source per protocol;
+  this is not independent media load, a soak, or a capacity curve.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

@@ -225,6 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="require two starts per stream and fail when a repeat gap exceeds this cycle count",
     )
+    worker_benchmark.add_argument(
+        "--max-validation-gap-seconds",
+        type=float,
+        default=0,
+        help="require two starts per stream and fail when the wall-time gap upper bound exceeds this value",
+    )
     worker_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     fixture_fleet = subparsers.add_parser(
@@ -519,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.batch_budget_seconds,
                 args.require_full_validation_coverage,
                 args.max_validation_gap_cycles,
+                args.max_validation_gap_seconds,
             )
             print(report.to_json() if args.json else worker_benchmark_summary(report))
             return 0 if report.passed else 1

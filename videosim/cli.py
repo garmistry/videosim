@@ -27,6 +27,7 @@ from .distributed_benchmark import (
 )
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .feed_store import SqliteFeedStore, configured_database_url, default_feed_db_path, default_feed_store
+from .fixture_catalog import run_fixture_catalog_import
 from .fixture_fleet import run_fixture_fleet
 from .fixture_scenario import run_fixture_scenario
 from .gui import GuiState, run_gui
@@ -65,6 +66,19 @@ def build_parser() -> argparse.ArgumentParser:
     import_sqlite = subparsers.add_parser("import-sqlite-feeds", help="idempotently import SQLite feed definitions into PostgreSQL")
     import_sqlite.add_argument("--database-url", default="")
     import_sqlite.add_argument("--sqlite-path", default=str(default_feed_db_path()))
+
+    import_fixture = subparsers.add_parser(
+        "import-fixture-scenario",
+        help="atomically import a fixture scenario into an exclusive PostgreSQL catalog",
+    )
+    import_fixture.add_argument("--database-url", default="")
+    import_fixture.add_argument("--state", required=True)
+    import_fixture.add_argument("--output", required=True)
+    import_fixture.add_argument(
+        "--allow-shared-endpoints",
+        action="store_true",
+        help="allow logical streams to reuse fixture endpoint URLs",
+    )
 
     nats_init = subparsers.add_parser("nats-init", help="provision the VideoSim JetStream event stream")
     nats_init.add_argument("--nats-url", default="nats://127.0.0.1:4222")
@@ -388,6 +402,18 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 target.close()
             print(f"Imported {changed} changed feed definitions; inspected {len(feeds)}")
+            return 0
+
+        if args.command == "import-fixture-scenario":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            run_fixture_catalog_import(
+                database_url,
+                args.state,
+                args.output,
+                require_distinct_endpoints=not args.allow_shared_endpoints,
+            )
             return 0
 
         if args.command == "nats-init":

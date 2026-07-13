@@ -1,10 +1,16 @@
+import json
 import os
+import tempfile
 import unittest
 import uuid
+from pathlib import Path
+from unittest.mock import patch
 
+from videosim.cli import main
+from videosim.fixture_catalog import run_fixture_catalog_import
+from videosim.gui import GuiState, worker_assignments_payload
 from videosim.migrations import PostgresMigrator
 from videosim.postgres_store import PostgresControlPlaneStore, PostgresStoreError
-from videosim.gui import GuiState, worker_assignments_payload
 
 
 DATABASE_URL = os.environ.get("VIDEOSIM_TEST_POSTGRES_URL", "")
@@ -28,6 +34,70 @@ def feed(feed_id: str) -> dict:
         "alert_enabled_ids": None,
         "alert_delay_seconds": 0,
     }
+
+
+def scenario_state() -> dict:
+    streams = []
+    for index, protocol in enumerate(("srt", "dash"), start=1):
+        endpoint = (
+            f"srt://fixture.example.test:{9000 + index}?mode=caller"
+            if protocol == "srt"
+            else f"https://fixture.example.test/{index}/manifest.mpd"
+        )
+        streams.append(
+            {
+                "id": f"fixture-{index:05d}",
+                "name": f"Fixture {index:05d}",
+                "protocol": protocol,
+                "source": "external",
+                "mode": "normal",
+                "status": "running",
+                "endpoint": endpoint,
+                "fixtureBehavior": "healthy",
+                "fixtureEndpointShared": False,
+                "width": 320,
+                "height": 180,
+                "framerate": "10",
+            }
+        )
+    return {
+        "schemaVersion": "videosim.fixture-scenario-state/v1",
+        "logicalStreamsShareEndpoints": False,
+        "protocolCounts": {"srt": 1, "dash": 1},
+        "behaviorCounts": {
+            "healthy": 2,
+            "slow": 0,
+            "dead": 0,
+            "malformed": 0,
+        },
+        "streams": streams,
+    }
+
+
+class FixtureCatalogCliTest(unittest.TestCase):
+    def test_cli_delegates_exclusive_distinct_import(self):
+        with patch(
+            "videosim.cli.run_fixture_catalog_import", return_value={"passed": True}
+        ) as run:
+            code = main(
+                [
+                    "import-fixture-scenario",
+                    "--database-url",
+                    "postgresql://fixture",
+                    "--state",
+                    "scenario.json",
+                    "--output",
+                    "import.json",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        run.assert_called_once_with(
+            "postgresql://fixture",
+            "scenario.json",
+            "import.json",
+            require_distinct_endpoints=True,
+        )
 
 
 @unittest.skipUnless(DATABASE_URL, "VIDEOSIM_TEST_POSTGRES_URL is not configured")
@@ -112,6 +182,35 @@ class FixtureCatalogPostgresIntegrationTest(unittest.TestCase):
             self.store.import_feeds_if_changed(
                 [feed("fixture-00001")], reject_unlisted=True
             )
+        self.assertEqual(len(self.store.load()), 2)
+
+    def test_marked_import_report_matches_persisted_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory, "scenario.json")
+            output_path = Path(directory, "import.json")
+            state_path.write_text(json.dumps(scenario_state()), encoding="utf-8")
+            imported_store = PostgresControlPlaneStore(
+                DATABASE_URL, tenant_id=self.tenant_id
+            )
+            with patch("builtins.print"):
+                report = run_fixture_catalog_import(
+                    DATABASE_URL,
+                    state_path,
+                    output_path,
+                    store_factory=lambda _url: imported_store,
+                )
+            persisted_report = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(report, persisted_report)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["streamsInspected"], 2)
+        self.assertEqual(report["feedsChanged"], 2)
+        self.assertEqual(report["protocolCounts"], {"srt": 1, "dash": 1})
+        self.assertTrue(report["allEndpointsDistinct"])
+        self.assertFalse(report["capacityCertified"])
+        self.assertFalse(report["allEndpointMediaValidated"])
+        self.assertEqual(len(report["sourceStateSha256"]), 64)
+        self.assertEqual(len(report["catalogConfigSha256"]), 64)
         self.assertEqual(len(self.store.load()), 2)
 
     def test_marked_batch_error_rolls_back_all_rows(self):

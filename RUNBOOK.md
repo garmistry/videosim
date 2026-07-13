@@ -752,26 +752,29 @@ shard still shares one encoder and each DASH shard one generator/origin, so
 this topology reduces shared fate without proving per-stream source
 independence.
 
-Before using a fixture host in a distributed run, exercise every SRT URL from a
-worker-capable Linux environment that can reach the advertised host:
+Before using a fixture host in a distributed run, exercise every SRT and DASH
+URL from a worker-capable Linux environment that can reach the advertised host:
 
 ```sh
-python3 -m videosim worker-benchmark \
-  --scenario "$VIDEOSIM_FIXTURE_STATE_DIR/srt-state.json" \
-  --iterations 14 --warmup-iterations 0 \
-  --max-concurrent-checks 16 --max-concurrent-deep-checks 2 \
-  --stream-budget-seconds 15 --batch-budget-seconds 0.001 \
-  --require-full-validation-coverage --json \
-  > "$VIDEOSIM_FIXTURE_STATE_DIR/srt-all-path-report.json"
+for protocol in srt dash; do
+  python3 -m videosim worker-benchmark \
+    --scenario "$VIDEOSIM_FIXTURE_STATE_DIR/$protocol-state.json" \
+    --iterations 14 --warmup-iterations 0 \
+    --max-concurrent-checks 16 --max-concurrent-deep-checks 2 \
+    --stream-budget-seconds 15 --batch-budget-seconds 0.001 \
+    --require-full-validation-coverage --json \
+    > "$VIDEOSIM_FIXTURE_STATE_DIR/$protocol-all-path-report.json"
+done
 ```
 
-Require `passed=true`, `mediaProbesExecuted=true`,
-`validationAttemptedStreams=220`, and `validationCoveragePercent=100`. Review
-outcomes against the manifest's healthy/slow/dead/malformed mix; full coverage
-means every path was attempted, not that fault fixtures returned success. Read
-the retained Docker logs and resource snapshots after the run. This host check
-does not exercise durable assignments, alarm transitions, DASH all-path load,
-domain loss, or fleet headroom.
+Require both reports to have `passed=true`, `mediaProbesExecuted=true`,
+`validationAttemptedStreams=220`, and `validationCoveragePercent=100`. Under
+`validationByFixtureBehavior`, require all declared streams to be attempted,
+healthy paths to have only success attempts, slow/dead paths to time out,
+malformed SRT paths to time out, and malformed DASH paths to report issues.
+Skipped counts are expected between rotating windows. Read the retained Docker
+logs and resource snapshots after the run. This host check does not exercise
+durable assignments, alarm transitions, domain loss, or fleet headroom.
 
 ### Load and validate the candidate catalog
 

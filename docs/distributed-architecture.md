@@ -139,9 +139,10 @@ VideoSim should split into a master control plane and many worker nodes:
   placement churn while explicitly disclaiming durable or media capacity.
 - `python -m videosim worker-benchmark` runs the real monitor/media-probe path
   for one worker from a hashed exported-state scenario. It reports cycle/CPU
-  percentiles, aggregate and per-protocol validation outcomes, unique
-  validation-start coverage, conservative cycle-boundary wall-time freshness
-  bounds, peak RSS, and descriptors, but makes no fleet-capacity claim.
+  percentiles, aggregate/per-protocol outcomes, bounded fixture-behavior
+  coverage and outcomes, unique validation-start coverage, conservative
+  cycle-boundary wall-time freshness bounds, peak RSS, and descriptors, but
+  makes no fleet-capacity claim.
 - `python -m videosim fixture-fleet` writes benchmark-state scenarios for
   deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
   It reuses the existing generators, a standard-library DASH HTTP service, and
@@ -257,11 +258,11 @@ VideoSim should split into a master control plane and many worker nodes:
   assignment smokes exist, but no independent-host HTTPS/mTLS deployment,
   production load balancer, HA storage, or production recovery artifact exists.
 - The fixture-domain Compose contract and sampled startup path are implemented;
-  one local Docker VM booted an exact 220+220 shard and one worker attempted all
-  220 distinct SRT paths. The shape has not run on three independent hosts or
-  under the full 1,320-stream worker/alarm load. Each shard still shares one
-  media generator per protocol, so independent-source and capacity evidence
-  remain open.
+  one local Docker VM booted an exact 220+220 shard and sequential one-worker
+  sweeps attempted all 220 distinct paths for each protocol with behavior-level
+  outcomes. The shape has not run on three independent hosts or under the full
+  1,320-stream worker/alarm load. Each shard still shares one media generator
+  per protocol, so independent-source and capacity evidence remain open.
 
 ## Next Upgrade Points
 

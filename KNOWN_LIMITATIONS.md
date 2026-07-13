@@ -32,12 +32,13 @@
 - The candidate fixture-domain deployment requires a Linux Docker engine with
   host networking. One local full-shape startup produced exact 220-SRT and
   220-DASH distinct endpoint inventories and sampled one healthy media path per
-  protocol. A physical stop/restart made both samples fail and recover. A later
-  one-worker run attempted all 220 distinct SRT URLs in 14 cycles, but did not
-  validate every DASH path or drive durable alarms, and it used one Docker VM.
-  Each host still shares one encoder or generator per protocol; this is not
-  independent-host, per-stream source independence, failure-domain headroom, or
-  1,000-stream capacity evidence.
+  protocol. A physical stop/restart made both samples fail and recover. Later
+  sequential one-worker runs attempted all 220 distinct SRT URLs and all 220
+  distinct DASH URLs with complete behavior-level coverage, but did not drive
+  durable assignments or alarms and used one Docker VM. Each host still shares
+  one encoder or generator per protocol; this is not independent-host,
+  per-stream source independence, failure-domain headroom, or 1,000-stream
+  capacity evidence.
 - The GUI preview is a local refreshed frame matching the active mode, not
   native browser SRT playback and not validation proof of the SRT output.
   Audio-only mode and external feeds have no video preview.
@@ -87,8 +88,9 @@
   leases and verify their outbox transitions, but it opens no endpoints and
   does not prove real source failure or recovery. `worker-benchmark`
   runs real probes from a supplied state scenario, but measures one worker and
-  does not provide fixtures, distributed load, failure injection, or a capacity
-  decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
+  does not provide distributed load, failure injection, or a capacity decision.
+  For fixture scenarios it reports bounded healthy/slow/dead/malformed coverage
+  and outcomes. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
   dead/malformed matrices. Legacy four-endpoint states still make 1,000 logical
   streams reuse eight URLs; the 500-URL manifests instead compose 1,000 unique
   URLs, but their healthy streams share one source per protocol and provide

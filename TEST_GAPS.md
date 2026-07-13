@@ -145,13 +145,17 @@ implementation and must pass before those milestones advance.
   samples one healthy URL per protocol and retains Docker resources/state/logs.
   One local exact-source image run booted a full 220+220 shard and recorded
   220 distinct endpoints per protocol with the exact 176/22/11/11 behavior
-  split. It sampled only two media paths and ran on one Docker VM; three
-  independent hosts and all-path media load remain open. A follow-up physically
-  stopped both full-shard source containers, observed sampled healthy SRT/DASH
-  paths become issues in 16.595 seconds, and recovered both in 3.446 seconds
-  after restart. That still proves only two paths on one VM, not all 440 worker
-  observations/alarms, per-stream source independence, concurrent reconnect
-  pressure, independent source-domain loss, or sustained capacity.
+  split. Later sequential sweeps attempted every SRT and DASH path with 100%
+  coverage per behavior: healthy paths succeeded, slow/dead paths timed out,
+  malformed SRT timed out, and malformed DASH returned issues. The sweeps ran
+  on one Docker VM without durable assignments or alarms; three independent
+  hosts and concurrent 1,320-path media/alarm load remain open. A follow-up
+  physically stopped both full-shard source containers, observed sampled
+  healthy SRT/DASH paths become issues in 16.595 seconds, and recovered both in
+  3.446 seconds after restart. That still proves only two faulted paths on one
+  VM, not all 440 durable worker observations/alarms, per-stream source
+  independence, concurrent reconnect pressure, independent source-domain loss,
+  or sustained capacity.
 - Composed fixture states can now be imported into an exclusive PostgreSQL feed
   catalog through the production feed-generation and lease semantics. The
   importer validates complete external-feed configs, rejects shared endpoints

@@ -219,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="fail unless every running stream starts validation during measured cycles",
     )
+    worker_benchmark.add_argument(
+        "--max-validation-gap-cycles",
+        type=int,
+        default=0,
+        help="require two starts per stream and fail when a repeat gap exceeds this cycle count",
+    )
     worker_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     fixture_fleet = subparsers.add_parser(
@@ -512,6 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.deep_check_interval_seconds,
                 args.batch_budget_seconds,
                 args.require_full_validation_coverage,
+                args.max_validation_gap_cycles,
             )
             print(report.to_json() if args.json else worker_benchmark_summary(report))
             return 0 if report.passed else 1

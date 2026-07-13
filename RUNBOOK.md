@@ -620,16 +620,20 @@ For a strict rotation run with eight admitted validations per cycle:
 ```sh
 python3 -m videosim worker-benchmark \
   --scenario artifacts/mixed-fixtures/state.json \
-  --iterations 125 --warmup-iterations 0 \
+  --iterations 250 --warmup-iterations 0 \
   --max-concurrent-checks 8 --max-concurrent-deep-checks 2 \
   --stream-budget-seconds 0.03 --batch-budget-seconds 0.001 \
-  --require-full-validation-coverage --json
+  --require-full-validation-coverage \
+  --max-validation-gap-cycles 125 --json
 ```
 
 Require `validationAttemptedStreams=1000`, `validationCoveragePercent=100`, and
-`cyclesToFullValidationCoverage<=125`. This proves bounded cursor service for
-the supplied logical assignments, not acceptable production probe budgets or
-independent media capacity.
+`cyclesToFullValidationCoverage<=125`, `minimumValidationAttempts>=2`, and
+`maximumValidationGapCycles<=125`. The gap includes the initial and trailing
+measured windows, so early attempts followed by starvation fail. This proves
+bounded cursor service for the supplied logical assignments, not an approved
+wall-time freshness SLO, production probe budgets, or independent media
+capacity.
 
 To benchmark an existing app instead, capture its state:
 

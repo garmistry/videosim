@@ -98,7 +98,7 @@ class WorkerBenchmarkTest(unittest.TestCase):
         def monitor(*_args, **_kwargs):
             nonlocal cycle
             cycle += 1
-            attempted = {1, 2} if cycle == 1 else {3, 4}
+            attempted = {1, 2} if cycle % 2 else {3, 4}
             streams = [
                 {
                     "streamId": f"stream-{index}",
@@ -137,7 +137,7 @@ class WorkerBenchmarkTest(unittest.TestCase):
             )
             report = run_worker_benchmark(
                 scenario,
-                2,
+                4,
                 0,
                 "127.0.0.1",
                 2,
@@ -146,15 +146,74 @@ class WorkerBenchmarkTest(unittest.TestCase):
                 0,
                 1,
                 True,
+                2,
                 monitor=monitor,
                 resource_snapshot=lambda: snapshot,
-                monotonic=iter((0, 0.1, 1, 1.1)).__next__,
+                monotonic=iter((0, 0.1, 1, 1.1, 2, 2.1, 3, 3.1)).__next__,
             )
 
         self.assertTrue(report.passed)
         self.assertEqual(report.validation_attempted_streams, 4)
         self.assertEqual(report.cycles_to_full_validation_coverage, 2)
+        self.assertEqual(report.minimum_validation_attempts, 2)
+        self.assertEqual(report.maximum_validation_gap_cycles, 2)
         self.assertFalse(replace(report, validation_attempted_streams=3).passed)
+        self.assertFalse(replace(report, minimum_validation_attempts=1).passed)
+        self.assertFalse(replace(report, maximum_validation_gap_cycles=3).passed)
+
+    def test_validation_gap_gate_counts_trailing_starvation(self):
+        cycle = 0
+
+        def monitor(*_args, **_kwargs):
+            nonlocal cycle
+            cycle += 1
+            attempted = cycle <= 2
+            return {
+                "probeMetrics": {
+                    "streamCount": 2,
+                    "checkCount": 2,
+                    "outcomes": {
+                        "success": 2 if attempted else 0,
+                        "skipped": 0 if attempted else 2,
+                    },
+                    "streams": [
+                        {
+                            "streamId": f"stream-{index}",
+                            "check": "validation",
+                            "outcome": "success" if attempted else "skipped",
+                        }
+                        for index in (1, 2)
+                    ],
+                }
+            }
+
+        snapshot = {
+            "totalCpuSeconds": 0,
+            "processPeakRssBytes": 10,
+            "childPeakRssBytes": 20,
+            "openFileDescriptors": 3,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_worker_benchmark(
+                self.write_scenario(directory),
+                5,
+                0,
+                "127.0.0.1",
+                2,
+                1,
+                1,
+                0,
+                1,
+                True,
+                3,
+                monitor=monitor,
+                resource_snapshot=lambda: snapshot,
+                monotonic=iter(index / 10 for index in range(10)).__next__,
+            )
+
+        self.assertEqual(report.minimum_validation_attempts, 2)
+        self.assertEqual(report.maximum_validation_gap_cycles, 4)
+        self.assertFalse(report.passed)
 
     def test_worker_benchmark_rejects_scenario_without_running_streams(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -175,11 +234,19 @@ class WorkerBenchmarkTest(unittest.TestCase):
                     to_json=lambda: '{"passed": true}',
                 )
                 code = main(
-                    ["worker-benchmark", "--scenario", str(scenario), "--json"]
+                    [
+                        "worker-benchmark",
+                        "--scenario",
+                        str(scenario),
+                        "--max-validation-gap-cycles",
+                        "2",
+                        "--json",
+                    ]
                 )
 
         self.assertEqual(code, 0)
         self.assertEqual(output.call_args.args[0], '{"passed": true}')
+        self.assertEqual(benchmark.call_args.args[-1], 2)
 
 
 if __name__ == "__main__":

@@ -29,8 +29,11 @@ class WorkerBenchmarkReport:
     check_counts: tuple[int, ...]
     outcomes: dict[str, int]
     require_full_validation_coverage: bool
+    max_validation_gap_cycles: int
     validation_attempted_streams: int
     cycles_to_full_validation_coverage: int | None
+    minimum_validation_attempts: int
+    maximum_validation_gap_cycles: int | None
     process_peak_rss_bytes: int
     child_peak_rss_bytes: int
     open_file_descriptors: int | None
@@ -43,6 +46,15 @@ class WorkerBenchmarkReport:
             and (
                 not self.require_full_validation_coverage
                 or self.validation_attempted_streams == self.stream_count
+            )
+            and (
+                self.max_validation_gap_cycles == 0
+                or (
+                    self.minimum_validation_attempts >= 2
+                    and self.maximum_validation_gap_cycles is not None
+                    and self.maximum_validation_gap_cycles
+                    <= self.max_validation_gap_cycles
+                )
             )
         )
 
@@ -66,6 +78,7 @@ class WorkerBenchmarkReport:
                 "iterations": self.iterations,
                 "warmupIterations": self.warmup_iterations,
                 "requireFullValidationCoverage": self.require_full_validation_coverage,
+                "maxValidationGapCycles": self.max_validation_gap_cycles,
             },
             "environment": {
                 "python": sys.version.split()[0],
@@ -80,12 +93,15 @@ class WorkerBenchmarkReport:
                 "validationAttemptedStreams": self.validation_attempted_streams,
                 "validationCoveragePercent": self.validation_coverage_percent,
                 "cyclesToFullValidationCoverage": self.cycles_to_full_validation_coverage,
+                "minimumValidationAttempts": self.minimum_validation_attempts,
+                "maximumValidationGapCycles": self.maximum_validation_gap_cycles,
                 "processPeakRssBytes": self.process_peak_rss_bytes,
                 "childPeakRssBytes": self.child_peak_rss_bytes,
                 "openFileDescriptors": self.open_file_descriptors,
             },
             "limitations": [
                 "Measures one worker against the supplied live endpoints.",
+                "Validation gap cycles are scheduler cadence, not an approved wall-time freshness SLO.",
                 "Peak RSS values are cumulative single-process peaks, not aggregate concurrent child RSS.",
                 "Does not certify distributed capacity, headroom, HA, failure recovery, or soak duration.",
             ],
@@ -148,6 +164,7 @@ def run_worker_benchmark(
     deep_check_interval_seconds: float,
     batch_budget_seconds: float,
     require_full_validation_coverage: bool = False,
+    max_validation_gap_cycles: int = 0,
     *,
     monitor: Callable = run_monitor_once,
     resource_snapshot: Callable[[], dict] = worker_resource_snapshot,
@@ -155,6 +172,8 @@ def run_worker_benchmark(
 ) -> WorkerBenchmarkReport:
     if iterations < 1 or warmup_iterations < 0:
         raise ValueError("iterations must be positive and warmup iterations non-negative")
+    if max_validation_gap_cycles < 0:
+        raise ValueError("max validation gap cycles must be non-negative")
     scenario, scenario_sha256, stream_count = load_scenario(scenario_path)
     state = empty_monitor_state()
     running_stream_ids = {
@@ -171,6 +190,9 @@ def run_worker_benchmark(
     child_peak = 0
     open_fds = None
     validation_attempted_stream_ids = set()
+    validation_attempt_counts = {stream_id: 0 for stream_id in running_stream_ids}
+    last_validation_attempt_cycles = {}
+    maximum_validation_gap_cycles = None
     cycles_to_full_validation_coverage = None
     for cycle in range(iterations + warmup_iterations):
         before = resource_snapshot()
@@ -199,6 +221,7 @@ def run_worker_benchmark(
         cpu.append(resources["lastBatchCpuMs"])
         stream_counts.append(int(metrics.get("streamCount", 0)))
         check_counts.append(int(metrics.get("checkCount", 0)))
+        attempted_this_cycle = set()
         for item in metrics.get("streams", []):
             if (
                 isinstance(item, dict)
@@ -206,7 +229,21 @@ def run_worker_benchmark(
                 and item.get("outcome") != "skipped"
                 and item.get("streamId") in running_stream_ids
             ):
-                validation_attempted_stream_ids.add(item["streamId"])
+                attempted_this_cycle.add(item["streamId"])
+        measured_cycle = cycle - warmup_iterations + 1
+        for stream_id in attempted_this_cycle:
+            previous_cycle = last_validation_attempt_cycles.get(stream_id)
+            gap = (
+                measured_cycle
+                if previous_cycle is None
+                else measured_cycle - previous_cycle
+            )
+            maximum_validation_gap_cycles = max(
+                maximum_validation_gap_cycles or 0, gap
+            )
+            last_validation_attempt_cycles[stream_id] = measured_cycle
+            validation_attempt_counts[stream_id] += 1
+        validation_attempted_stream_ids.update(attempted_this_cycle)
         if (
             cycles_to_full_validation_coverage is None
             and validation_attempted_stream_ids == running_stream_ids
@@ -218,6 +255,14 @@ def run_worker_benchmark(
         child_peak = max(child_peak, resources["childPeakRssBytes"])
         if "openFileDescriptors" in resources:
             open_fds = max(open_fds or 0, resources["openFileDescriptors"])
+    for stream_id in running_stream_ids:
+        last_cycle = last_validation_attempt_cycles.get(stream_id)
+        trailing_gap = (
+            iterations + 1 if last_cycle is None else iterations - last_cycle + 1
+        )
+        maximum_validation_gap_cycles = max(
+            maximum_validation_gap_cycles or 0, trailing_gap
+        )
     return WorkerBenchmarkReport(
         scenario=str(scenario_path),
         scenario_sha256=scenario_sha256,
@@ -230,8 +275,11 @@ def run_worker_benchmark(
         check_counts=tuple(check_counts),
         outcomes=outcomes,
         require_full_validation_coverage=require_full_validation_coverage,
+        max_validation_gap_cycles=max_validation_gap_cycles,
         validation_attempted_streams=len(validation_attempted_stream_ids),
         cycles_to_full_validation_coverage=cycles_to_full_validation_coverage,
+        minimum_validation_attempts=min(validation_attempt_counts.values()),
+        maximum_validation_gap_cycles=maximum_validation_gap_cycles,
         process_peak_rss_bytes=process_peak,
         child_peak_rss_bytes=child_peak,
         open_file_descriptors=open_fds,
@@ -248,6 +296,7 @@ def human_summary(report: WorkerBenchmarkReport) -> str:
             "Scope: one worker with real media probes; no capacity certification",
             f"Streams: {report.stream_count}",
             f"Measured iterations: {report.iterations}",
+            f"Validation minimum attempts/max gap: {report.minimum_validation_attempts}/{report.maximum_validation_gap_cycles} cycles",
             f"Cycle p50/p95/p99: {duration['p50']}/{duration['p95']}/{duration['p99']} ms",
             f"CPU p50/p95/p99: {cpu['p50']}/{cpu['p95']}/{cpu['p99']} ms",
         ]

@@ -86,11 +86,12 @@ implementation and must pass before those milestones advance.
   at 1,000 logical streams, but reuses eight physical endpoints. Independent
   endpoints, the generated/external source cross-product, storm scheduling, and
   long-run fixture reliability remain open.
-- The worker benchmark can require and report unique validation-start coverage;
-  a 125-cycle Linux run covered all 1,000 mixed logical streams with eight
-  admissions per cycle. Its 30 ms stream and 1 ms aggregate budgets are pressure
-  controls, not approved freshness SLOs, and the run is not a soak or capacity
-  curve.
+- The worker benchmark can require and report unique validation-start coverage
+  plus repeated cadence. A 250-cycle Linux run covered all 1,000 mixed logical
+  streams twice with eight admissions per cycle; full first coverage and the
+  worst initial/repeat/trailing gap were both 125 cycles. Its 30 ms stream and
+  1 ms aggregate budgets are pressure controls, not approved freshness SLOs.
+  This remains shared-endpoint scheduler evidence, not a soak or capacity curve.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

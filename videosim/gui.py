@@ -327,7 +327,11 @@ class GuiState:
     def __post_init__(self):
         self.framerate = normalize_frame_rate(self.framerate)
         self.worker_base_url = validate_worker_base_url(self.worker_base_url, self.security)
-        if self.feed_store and not self.streams:
+        if (
+            self.feed_store
+            and not self.streams
+            and not isinstance(self.feed_store, PostgresControlPlaneStore)
+        ):
             self._load_streams_from_store()
         for stream in list(self.streams.values()):
             if stream.source == "external":
@@ -387,7 +391,11 @@ class GuiState:
         source = normalize_source(source)
         with self.control_plane_lock:
             stream_number = self._next_stream_number
-            stream_id = f"stream-{stream_number}"
+            stream_id = (
+                f"stream-{uuid.uuid4().hex}"
+                if isinstance(self.feed_store, PostgresControlPlaneStore)
+                else f"stream-{stream_number}"
+            )
             feed_port = feed_port or self.next_available_port()
             stream = FeedRecord(
                 id=stream_id,

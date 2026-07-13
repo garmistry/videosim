@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import tempfile
@@ -358,7 +359,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             },
             headers=headers,
         )
-        created_id = "stream-2"
+        created_id = next(
+            stream_id for stream_id in self.state.streams
+            if stream_id != self.stream_id
+        )
         self.post_form(
             "/streams/update",
             {
@@ -455,7 +459,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             },
             headers=self.operator_headers(),
         )
-        created = self.state.streams["stream-2"]
+        created = next(
+            stream for stream_id, stream in self.state.streams.items()
+            if stream_id != self.stream_id
+        )
         with self.store._pool.connection() as connection:
             audit_row = connection.execute(
                 """
@@ -618,6 +625,9 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             max_pool_size=2,
         )
         other_state = GuiState(feed_store=other_store)
+        other_state.streams[self.stream_id] = copy.copy(
+            self.state.streams[self.stream_id]
+        )
 
         def audit(action):
             return {
@@ -633,16 +643,19 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         try:
             self.assertEqual(self.state.streams[self.stream_id].config_version, 1)
             self.assertEqual(other_state.streams[self.stream_id].config_version, 1)
-            self.assertTrue(self.state.delete_stream(self.stream_id, audit=audit("feed.delete")))
-            recreated_state = GuiState(feed_store=other_store)
-            recreated = recreated_state.create_stream(
+            recreated_config = other_store.load_one(self.stream_id)
+            recreated_config.pop("config_version")
+            recreated_config.update(
                 name="Recreated feed",
-                source="external",
                 external_url="srt://example.test:9001?mode=caller",
-                audit=audit("feed.create"),
             )
-            self.assertEqual(recreated.id, self.stream_id)
-            self.assertEqual(recreated.config_version, 3)
+            self.assertTrue(self.state.delete_stream(self.stream_id, audit=audit("feed.delete")))
+            recreated_version = other_store.upsert_with_audit(
+                recreated_config,
+                audit("feed.create"),
+                expected_version=0,
+            )
+            self.assertEqual(recreated_version, 3)
             with self.assertRaises(OperatorMutationPersistenceError):
                 other_state.apply_mode(
                     "video_only",
@@ -685,6 +698,66 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             self.assertEqual(
                 [row["action"] for row in actions], ["feed.create", "feed.delete"]
             )
+        finally:
+            other_store.close()
+
+    def test_durable_replicas_start_empty_and_create_collision_safe_ids(self):
+        other_store = PostgresControlPlaneStore(
+            DATABASE_URL,
+            tenant_id=self.tenant_id,
+            min_pool_size=1,
+            max_pool_size=4,
+        )
+        other_state = GuiState(feed_store=other_store)
+        self.assertEqual(other_state.streams, {})
+
+        def create(item):
+            state, index = item
+            return state.create_stream(
+                name=f"Replica feed {index}",
+                source="external",
+                external_url=f"srt://example.test:{9100 + index}?mode=caller",
+                select=False,
+            )
+
+        items = [
+            (self.state if index % 2 == 0 else other_state, index)
+            for index in range(40)
+        ]
+        try:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                created = list(executor.map(create, items))
+            ids = {stream.id for stream in created}
+
+            self.assertEqual(len(ids), 40)
+            self.assertTrue(
+                all(
+                    stream_id.startswith("stream-") and len(stream_id) == 39
+                    for stream_id in ids
+                )
+            )
+            self.assertEqual(len(self.store.load_page(100)), 41)
+
+            with patch(
+                "videosim.gui.uuid.uuid4", return_value=uuid.UUID(int=1)
+            ):
+                winner = self.state.create_stream(
+                    name="Collision winner",
+                    source="external",
+                    external_url="srt://example.test:9200?mode=caller",
+                    select=False,
+                )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    other_state.create_stream(
+                        name="Collision loser",
+                        source="external",
+                        external_url="srt://example.test:9201?mode=caller",
+                        select=False,
+                    )
+            self.assertEqual(
+                other_store.load_one(winner.id)["name"], "Collision winner"
+            )
+            self.assertEqual(GuiState(feed_store=other_store).streams, {})
         finally:
             other_store.close()
 
@@ -1287,7 +1360,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 [stream["id"] for stream in deleted["streams"]],
                 [self.stream_id],
             )
-            self.assertEqual(set(replica_state.streams), {self.stream_id})
+            self.assertEqual(replica_state.streams, {})
         finally:
             replica_server.shutdown()
             replica_server.server_close()
@@ -1322,7 +1395,8 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 source="external",
                 external_url="srt://example.test:9002?mode=caller",
             )
-            self.assertEqual(set(replica_state.streams), {self.stream_id})
+            expected_ids = sorted([self.stream_id, second.id, third.id])
+            self.assertEqual(replica_state.streams, {})
 
             loaded = replica_store.load_one(second.id)
             self.assertIsNotNone(loaded)
@@ -1334,7 +1408,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             self.assertEqual(bootstrap["streams"], [])
             self.assertEqual(
                 [feed["id"] for feed in bootstrap["operatorCatalog"]["feeds"]],
-                [self.stream_id, second.id, third.id],
+                expected_ids,
             )
             _, overview = self.get_json(
                 "/api/operator/overview", {}, base_url=replica_url
@@ -1359,11 +1433,11 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             )
             self.assertEqual(
                 [feed["id"] for feed in first_page["feeds"]],
-                [self.stream_id, second.id],
+                expected_ids[:2],
             )
             self.assertTrue(first_page["hasMore"])
             self.assertEqual(
-                [feed["id"] for feed in second_page["feeds"]], [third.id]
+                [feed["id"] for feed in second_page["feeds"]], expected_ids[2:]
             )
 
             self.assertTrue(
@@ -1388,7 +1462,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 by_id[second.id]["configVersion"],
                 self.state.streams[second.id].config_version,
             )
-            self.assertEqual(set(replica_state.streams), {self.stream_id})
+            self.assertEqual(replica_state.streams, {})
         finally:
             replica_server.shutdown()
             replica_server.server_close()
@@ -1489,17 +1563,15 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         )
         self.acknowledge(worker_a, incarnation_a, assignment_a_before)
         assignment_b = self.assignment(worker_b, incarnation_b)
-        self.assertEqual(
-            [stream["id"] for stream in assignment_b["streams"]],
-            [second_stream.id],
-        )
+        handoff_id = assignment_b["streams"][0]["id"]
+        pickup_id = ({self.stream_id, second_stream.id} - {handoff_id}).pop()
         self.acknowledge(worker_b, incarnation_b, assignment_b)
         stale_a = self.report_payload(
             worker_a,
             incarnation_a,
             assignment_a_before,
             1,
-            stream_id=second_stream.id,
+            stream_id=handoff_id,
         )
         stale_response = self.post_json(
             "/api/workers/report", stale_a, expected_status=409
@@ -1517,7 +1589,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 incarnation_b,
                 assignment_b_after,
                 1,
-                stream_id=self.stream_id,
+                stream_id=pickup_id,
             ),
         )
 
@@ -1525,12 +1597,12 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         old_epoch = next(
             stream["lease"]["epoch"]
             for stream in assignment_a_before["streams"]
-            if stream["id"] == self.stream_id
+            if stream["id"] == pickup_id
         )
         new_epoch = next(
             stream["lease"]["epoch"]
             for stream in assignment_b_after["streams"]
-            if stream["id"] == self.stream_id
+            if stream["id"] == pickup_id
         )
         self.assertGreater(new_epoch, old_epoch)
         self.assertTrue(survivor["ok"])

@@ -98,7 +98,11 @@ PostgreSQL deployments use the versioned operator read model for the GUI:
 /api/operator/feeds/<feed-id>` returns one feed plus its scoped monitor state.
 Catalog pages default to 100 and cap at 200 rows. A feed that is not current in
 the serving process is shown read-only with runtime state marked unknown.
-Generated runtime ownership and operator mutations are not replica-safe yet.
+PostgreSQL-backed API processes do not preload the feed catalog at startup;
+durable creates use `stream-<32-hex-characters>` IDs and the existing
+version-zero insert fence rejects a collision instead of overwriting a row.
+Generated runtime ownership and update/delete mutations are not replica-safe
+yet.
 When a durable worker reports `spoolBlocked=true`, assignment excludes that
 worker and reports any resulting `capacityShortfall` instead of granting it new
 lease authority. This is fail-closed load shedding, not a durable fleet queue.

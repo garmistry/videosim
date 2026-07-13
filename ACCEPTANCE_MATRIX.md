@@ -58,7 +58,7 @@
 
 | Capability | Acceptance evidence |
 |---|---|
-| Create stream. | GUI state can add a named SRT or DASH stream record with an independent endpoint. |
+| Create stream. | GUI state can add a named SRT or DASH stream record with an independent endpoint; PostgreSQL replicas use UUID-backed IDs and fail closed on an ID collision. |
 | Read/open stream. | GUI state exposes the selected stream detail, endpoint, status, logs, validation output, and `/feeds/<stream-id>` deep link. |
 | Update stream. | GUI can change selected stream name, protocol, or mode. |
 | Delete stream. | GUI can stop and remove a selected stream record. |

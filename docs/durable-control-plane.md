@@ -199,6 +199,13 @@ the loaded feed `config_version` as an expected-version fence, so a stale proces
 cannot recreate a feed deleted by another process. This boundary does not make
 transient runtime start/stop/validate behavior durable.
 
+PostgreSQL-backed API processes do not preload the durable feed catalog into
+`GuiState` during startup. Operator reads and external-feed assignment use the
+bounded/direct database paths instead. New durable feeds use UUID-backed IDs;
+the existing expected-version-zero insert and primary key reject a forced
+collision without overwriting the committed row. SQLite keeps sequential IDs
+and startup reloads for the single-process lab path.
+
 `postgres-role-init` runs `scripts/postgres-runtime-role.sh prepare` before
 migrations. It resets `videosim_app`, `videosim_publisher`, and
 `videosim_pruner` to non-owner/no-membership roles, reassigns any accidental

@@ -180,6 +180,13 @@ and five-minute traffic graphs are available only when the serving process has
 current local runtime state. Use Validate to prove actual receiver-visible
 stream state.
 
+PostgreSQL API startup intentionally leaves the process feed cache empty even
+when the durable catalog already contains feeds. New durable feeds use UUID-
+backed `stream-<32-hex-characters>` IDs so independent replicas do not allocate
+the same sequential ID; PostgreSQL still rejects a forced collision through
+the existing expected-version insert fence. SQLite keeps sequential `stream-N`
+IDs and startup reload behavior.
+
 For a bounded durable feed-catalog read, page the operator API instead of
 loading every feed through `/state.json`:
 

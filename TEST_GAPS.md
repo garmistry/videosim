@@ -207,11 +207,13 @@ implementation and must pass before those milestones advance.
   and one-feed scoped detail. The React root uses 100-row pages instead of
   durable `/state.json`; a local alternating two-API walk returned all 1,320
   post-start rows exactly once in 14 pages while both process caches stayed
-  empty. The cursor is not a cross-request database snapshot, runtime is known
-  only on a replica with a matching local config version, and remote detail is
-  deliberately read-only. Concurrent create-ID allocation, config-version
-  mutation preconditions/routing, generated runtime ownership, and HA remain
-  open F4 gates.
+  empty. A follow-up started both replicas after all 1,320 rows existed; both
+  still cached zero feeds, and concurrent durable creates used distinct UUID-
+  backed IDs while a forced collision failed closed. The cursor is not a
+  cross-request database snapshot, runtime is known only on a replica with a
+  matching local config version, and remote detail is deliberately read-only.
+  Client-supplied config-version mutation preconditions, update/delete routing,
+  generated runtime ownership, and HA remain open F4 gates.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A
   configured cadence staggers deep work; aggregate budget exhaustion stops new

@@ -118,6 +118,10 @@ VideoSim should split into a master control plane and many worker nodes:
   /api/operator/feeds/<id>` reads one current configuration directly, scopes
   monitor rows to that feed, and marks runtime unknown/read-only when the
   serving replica lacks a matching local config version.
+- PostgreSQL API startup does not preload durable feed rows into process state.
+  Durable creates use UUID-backed feed IDs; the PostgreSQL primary key plus
+  expected-version-zero insert path rejects even a forced ID collision without
+  overwriting the winner. SQLite retains sequential IDs and startup reloads.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete
@@ -183,10 +187,12 @@ VideoSim should split into a master control plane and many worker nodes:
   process-local transition fences. Production PostgreSQL uses v2 durable
   leases, a transaction-consistent external-feed catalog, and database
   transaction-scoped scheduler leadership. Bounded GUI catalog, overview, and
-  single-feed reads can use any API replica. Runtime state remains known only
-  to a process with the matching local config version; operator mutations and
-  generated-feed process ownership remain local to one API process. No
-  continuously elected scheduler or replicated API deployment exists.
+  single-feed reads can use any API replica, API restart does not preload the
+  catalog, and durable create IDs do not depend on replica-local state. Runtime
+  state remains known only to a process with the matching local config version;
+  update/delete mutations and generated-feed process ownership remain local to
+  one API process. No continuously elected scheduler or replicated API
+  deployment exists.
 - PostgreSQL assignment is capacity-aware for workers advertising total or
   SRT/DASH protocol limits; unconfigured workers use compatibility round-robin.
   A current spool-blocked signal removes a worker from placement, but has no
@@ -222,9 +228,8 @@ VideoSim should split into a master control plane and many worker nodes:
 
 ## Next Upgrade Points
 
-- Add client-supplied config-version preconditions, collision-safe ID
-  allocation, and runtime-owner routing before enabling mutations across API
-  replicas.
+- Add client-supplied config-version preconditions and runtime-owner routing
+  before enabling update/delete mutations across API replicas.
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/utilization metadata, bounded concurrent execution,

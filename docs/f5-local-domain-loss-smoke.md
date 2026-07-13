@@ -401,11 +401,52 @@ static bundles matched the cached app/worker image overlays. Logs had no
 traceback, fatal error, or validation failure; the existing non-fatal caption
 framerate negotiation warning remained before validation passed.
 
-This removes feed-count growth from durable root/detail payloads, not the
-remaining F4 or F5 gates. Config-version mutation preconditions, collision-safe
-ID allocation, owner routing, generated media ownership, HA API/database/
-broker deployment, independent media capacity, and the 24-hour admission bundle
-remain open.
+At that point, feed-count growth was removed from durable root/detail payloads,
+but collision-safe allocation and the remaining F4/F5 gates were still open.
+The next follow-up closes allocation; config-version mutation preconditions,
+owner routing, generated media ownership, HA API/database/broker deployment,
+independent media capacity, and the 24-hour admission bundle remain open.
+
+## Post-Seed Replica Restart Follow-Up
+
+The previous read evidence started APIs before seeding. This follow-up reversed
+that order: a fresh PostgreSQL 17 database was migrated and seeded with all
+1,320 external rows before either API process started. PostgreSQL-backed
+`GuiState` no longer preloads those rows, and durable create IDs no longer come
+from a replica-local sequence.
+
+| Check | Result |
+|---|---:|
+| API process caches immediately after startup | 0/0 feeds |
+| Root bootstrap streams/catalog rows | 0/100 on both APIs |
+| Root/state response size | 96,869/19,977 bytes |
+| Catalog rows and uniqueness | 1,320/1,320 |
+| SRT/DASH feeds | 660/660 |
+| Pages | 14 (13 x 100, then 20) |
+| Page latency p50/p95/max | 0.001824/0.001980/0.002006 seconds |
+| Maximum catalog page | 37,809 bytes |
+| Seeded detail | 1 row, read-only, runtime unknown |
+
+Two form creates were then submitted concurrently, one to each API. They
+committed distinct 39-character `stream-<uuid-hex>` IDs; PostgreSQL contained
+1,322 rows and 1,322 distinct IDs. Each process cached only its own create, and
+the opposite replica returned the first create as read-only/runtime-unknown.
+The integration regression also creates 40 feeds across two replicas and
+forces both replicas to receive the same UUID; the second insert fails and the
+winner remains unchanged.
+
+Both API logs contained only their startup line during the measured window.
+PostgreSQL logged checkpoints and no runtime error. The marked no-build startup
+workflow passed in 11.956 seconds; a retained 8.312-second run passed API
+readiness, worker registration, create/start, real normal-SRT video/audio/
+captions validation, stop, Compose-state capture, and Docker-log review. Logs
+had no traceback, fatal error, or validation failure and retained the known
+non-fatal caption-framerate negotiation warning.
+
+This closes durable catalog preload and create-ID dependence on replica-local
+state. Client-supplied config-version preconditions, update/delete routing,
+generated runtime ownership, production load balancing/HA, independent media
+capacity, and the 24-hour F5 admission bundle remain open.
 
 ## Validation
 
@@ -459,6 +500,11 @@ remain open.
   database passed 77 durable store/worker-v2 tests with 4 runtime-role skips in
   18.727 seconds. The marked startup integration passed in 11.984 seconds and
   the retained API/media/log artifact run passed in 8.281 seconds.
+- Stateless durable restart follow-up: exact task-only unit discovery passed
+  397 tests with 92 environment-gated skips in 26.896 seconds; fresh PostgreSQL
+  passed 78 durable store/worker-v2 tests with 4 runtime-role skips in 19.748
+  seconds. The marked startup integration passed in 11.956 seconds and the
+  retained API/media/log artifact run passed in 8.312 seconds.
 - Documentation contract: 4 passed.
 
 ## Remaining Gates

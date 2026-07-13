@@ -166,9 +166,10 @@
 - PostgreSQL GUI list reads are bounded to a 100-row React page and a 200-row
   API maximum; overview omits per-stream probe rows and detail reads one feed.
   A replica without matching local runtime presents persisted configuration as
-  read-only with runtime unknown. Cursors are not cross-request snapshots, and
-  create-ID allocation, mutation preconditions/routing, and generated runtime
-  ownership are not replica-safe.
+  read-only with runtime unknown. Durable API startup does not preload feed
+  rows, and UUID-backed creates avoid replica-local sequential ID collisions.
+  Cursors are not cross-request snapshots, and update/delete preconditions and
+  routing plus generated runtime ownership are not replica-safe.
 - TR 101 290 PCR accuracy is estimated from the sampled packet rate. It is good
   for simulator regression alarms, not a replacement for calibrated lab
   measurement equipment.

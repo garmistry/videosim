@@ -113,6 +113,11 @@ class WorkerDomainStartupIntegrationTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(evidence["passed"])
+        self.assertEqual(
+            evidence["hostIdentity"]["schemaVersion"],
+            "videosim.docker-host-identity/v1",
+        )
+        self.assertTrue(evidence["hostIdentity"]["dockerEngineId"])
         self.assertEqual(len(evidence["expectedWorkerIds"]), 11)
         self.assertIn("control_plane_health_api", evidence["checks"])
         self.assertIn("worker_mtls_health_api", evidence["checks"])

@@ -23,6 +23,21 @@ def write_json(path: Path, value: dict) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def host_identity(engine_id: str, name: str) -> dict:
+    return {
+        "schemaVersion": "videosim.docker-host-identity/v1",
+        "dockerEngineId": engine_id,
+        "dockerName": name,
+        "osType": "linux",
+        "operatingSystem": "Example Linux",
+        "kernelVersion": "6.12.0",
+        "architecture": "x86_64",
+        "logicalCpus": 16,
+        "memoryBytes": 34359738368,
+        "serverVersion": "29.0.0",
+    }
+
+
 def fixture_state(protocol: str, host: str, domain: int) -> dict:
     streams = []
     number = 0
@@ -78,6 +93,9 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
                 "project": f"fixture-{index}",
                 "fixtureImage": IMAGE,
                 "immutableImage": True,
+                "hostIdentity": host_identity(
+                    f"fixture-engine-{index}", f"fixture-{index}"
+                ),
                 "fixtureInventory": inventory,
                 "checks": fixture_checks,
                 "errors": [],
@@ -100,6 +118,9 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
                 ],
                 "workerImage": IMAGE,
                 "immutableImage": True,
+                "hostIdentity": host_identity(
+                    f"worker-engine-{index}", f"worker-{index}"
+                ),
                 "resolvedImageId": IMAGE_ID,
                 "checks": worker_checks,
                 "errors": [],
@@ -143,6 +164,8 @@ class F5DomainPreflightTest(unittest.TestCase):
         self.assertEqual(report["workerCount"], 33)
         self.assertEqual(report["protocolCounts"], {"srt": 660, "dash": 660})
         self.assertEqual(len(report["advertisedHosts"]), 3)
+        self.assertEqual(report["dockerHostCount"], 6)
+        self.assertTrue(report["distinctDockerHostsValidated"])
         self.assertFalse(report["independentHostsCertified"])
         self.assertFalse(report["capacityCertified"])
 
@@ -172,6 +195,21 @@ class F5DomainPreflightTest(unittest.TestCase):
         )
         self.assertIn(
             "fixture and worker domains must use one immutable image digest",
+            report["errors"],
+        )
+
+    def test_rejects_reused_docker_engine(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = create_artifacts(Path(directory))
+            worker = json.loads(artifacts[3][0].read_text(encoding="utf-8"))
+            worker["hostIdentity"] = host_identity("fixture-engine-0", "worker-0")
+            write_json(artifacts[3][0], worker)
+            report = self.verify(artifacts)
+
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["distinctDockerHostsValidated"])
+        self.assertIn(
+            "domain startup artifacts must come from 6 distinct Docker engines",
             report["errors"],
         )
 

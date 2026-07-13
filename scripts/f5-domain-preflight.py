@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from videosim.fixture_fleet import BEHAVIORS
 from videosim.fixture_scenario import load_protocol_fixture_state
+from videosim.host_identity import validate_host_identity
 
 
 REPORT_SCHEMA = "videosim.f5-domain-preflight/v1"
@@ -108,6 +109,14 @@ def _expected_count(
         errors.append(f"{label} does not allocate an integer stream count")
         return 0
     return int(exact)
+
+
+def _result_host_identity(value: dict, label: str, errors: list[str]) -> dict | None:
+    try:
+        return validate_host_identity(value.get("hostIdentity"))
+    except ValueError as exc:
+        errors.append(f"{label}.hostIdentity is invalid: {exc}")
+        return None
 
 
 def verify_f5_domain_preflight(
@@ -221,6 +230,8 @@ def verify_f5_domain_preflight(
     fixture_projects = set()
     advertised_hosts = []
     image_digests = set()
+    docker_engine_ids = set()
+    host_identities = []
     endpoints = set()
     protocol_counts = Counter()
     behavior_counts = Counter()
@@ -245,6 +256,9 @@ def verify_f5_domain_preflight(
             digest = _image_digest(result.get("fixtureImage"), f"{label}.fixtureImage", errors)
             if digest:
                 image_digests.add(digest)
+            host_identity = _result_host_identity(result, label, errors)
+            if host_identity:
+                docker_engine_ids.add(host_identity["dockerEngineId"])
             checks = result.get("checks")
             if not isinstance(checks, list) or not FIXTURE_CHECKS.issubset(checks):
                 errors.append(f"{label} is missing required startup checks")
@@ -299,6 +313,11 @@ def verify_f5_domain_preflight(
                 errors.append(f"{label} SRT and DASH states must advertise the same host")
             else:
                 advertised_hosts.extend(domain_hosts)
+                if host_identity:
+                    host_identities.append(
+                        {"role": "fixture", "advertisedHost": next(iter(domain_hosts))}
+                        | host_identity
+                    )
 
     expected_protocol_counts = {
         protocol: _expected_count(
@@ -350,6 +369,9 @@ def verify_f5_domain_preflight(
             digest = _image_digest(result.get("workerImage"), f"{label}.workerImage", errors)
             if digest:
                 image_digests.add(digest)
+            host_identity = _result_host_identity(result, label, errors)
+            if host_identity:
+                docker_engine_ids.add(host_identity["dockerEngineId"])
             checks = result.get("checks")
             if not isinstance(checks, list) or not WORKER_CHECKS.issubset(checks):
                 errors.append(f"{label} is missing required startup checks")
@@ -361,6 +383,10 @@ def verify_f5_domain_preflight(
                 errors.append(f"worker failure domain is duplicated: {domain}")
                 continue
             worker_domains.add(domain)
+            if host_identity:
+                host_identities.append(
+                    {"role": "worker", "failureDomain": domain} | host_identity
+                )
             expected_ids = [
                 f"{domain}-worker-{number:02d}"
                 for number in range(1, domain_counts[zones.index(domain)] + 1)
@@ -386,6 +412,14 @@ def verify_f5_domain_preflight(
         errors.append("fixture and worker domains must use one immutable image digest")
     if len(resolved_image_ids) != 1:
         errors.append("worker domains must resolve one image ID")
+    expected_docker_hosts = failure_domains * 2
+    if len(docker_engine_ids) != expected_docker_hosts:
+        errors.append(
+            "domain startup artifacts must come from "
+            f"{expected_docker_hosts} distinct Docker engines"
+        )
+
+    distinct_docker_hosts = len(docker_engine_ids) == expected_docker_hosts
 
     return {
         "schemaVersion": REPORT_SCHEMA,
@@ -396,6 +430,7 @@ def verify_f5_domain_preflight(
                 "fixture_domain_artifacts_validated",
                 "worker_domain_artifacts_validated",
                 "cross_domain_identity_validated",
+                "distinct_docker_hosts_validated",
             ]
             if not errors
             else []
@@ -410,6 +445,11 @@ def verify_f5_domain_preflight(
         "behaviorCounts": {behavior: behavior_counts[behavior] for behavior in BEHAVIORS},
         "advertisedHosts": sorted(set(advertised_hosts)),
         "failureDomains": sorted(worker_domains),
+        "dockerHostCount": len(docker_engine_ids),
+        "hostIdentities": sorted(
+            host_identities,
+            key=lambda item: (item["role"], item["dockerEngineId"]),
+        ),
         "imageDigest": next(iter(image_digests)) if len(image_digests) == 1 else None,
         "resolvedWorkerImageId": (
             next(iter(resolved_image_ids)) if len(resolved_image_ids) == 1 else None
@@ -417,6 +457,7 @@ def verify_f5_domain_preflight(
         "startedAt": min(started_at).isoformat() if started_at else None,
         "endedAt": max(ended_at).isoformat() if ended_at else None,
         "inputSha256": input_sha256,
+        "distinctDockerHostsValidated": distinct_docker_hosts,
         "independentHostsCertified": False,
         "capacityCertified": False,
     }

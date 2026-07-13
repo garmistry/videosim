@@ -15,6 +15,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from videosim.host_identity import read_docker_host_identity
+
+
 COMPOSE_FILE = ROOT / "docker-compose.fixture-domain.yml"
 CRITICAL_LOG_MARKERS = (
     "traceback (most recent call last)",
@@ -317,15 +322,7 @@ class FixtureDomainStartup:
                     "VIDEOSIM_FIXTURE_IMAGE must use an immutable @sha256 digest"
                 )
             self.compose("version", timeout=30)
-            engine = subprocess.run(
-                ["docker", "info", "--format", "{{.OSType}}"],
-                text=True,
-                capture_output=True,
-                check=True,
-                timeout=30,
-            ).stdout.strip()
-            if engine != "linux":
-                raise RuntimeError("fixture domains require a Linux Docker engine")
+            result["hostIdentity"] = read_docker_host_identity()
             result["checks"].append("linux_docker_engine")
 
             for name in (

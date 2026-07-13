@@ -217,6 +217,11 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(fault_result.returncode, 0, fault_result.stdout)
         self.assertTrue(evidence["passed"])
+        self.assertEqual(
+            evidence["hostIdentity"]["schemaVersion"],
+            "videosim.docker-host-identity/v1",
+        )
+        self.assertTrue(evidence["hostIdentity"]["dockerEngineId"])
         self.assertIn("dash_health_api", evidence["checks"])
         self.assertIn("fixture_inventory_validated", evidence["checks"])
         self.assertIn("srt_dash_media_validated", evidence["checks"])

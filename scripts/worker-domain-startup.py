@@ -20,6 +20,11 @@ from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from videosim.host_identity import read_docker_host_identity
+
+
 COMPOSE_FILE = ROOT / "docker-compose.worker-domain.yml"
 WORKLOAD_FILE = ROOT / "scale/workloads/f5-1000-candidate.json"
 WORKER_COUNT = 11
@@ -368,15 +373,7 @@ class WorkerDomainStartup:
             result["checks"].append("worker_certificates_validated")
 
             self.compose("version", timeout=30)
-            engine = subprocess.run(
-                ["docker", "info", "--format", "{{.OSType}}"],
-                check=True,
-                text=True,
-                capture_output=True,
-                timeout=30,
-            ).stdout.strip()
-            if engine != "linux":
-                raise RuntimeError("worker domains require a Linux Docker engine")
+            result["hostIdentity"] = read_docker_host_identity()
             result["checks"].append("linux_docker_engine")
             self.compose("config", "--quiet", timeout=30)
             result["checks"].append("compose_rendered")

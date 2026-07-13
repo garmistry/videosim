@@ -82,9 +82,12 @@ implementation and must pass before those milestones advance.
   report-ingestion follow-up moved all 440 failed-domain streams plus one of
   880 healthy-domain streams. A recovery-preservation regression and clean
   rerun then moved all 440 failed-domain streams with zero owner/incarnation/
-  epoch changes across the 880 healthy streams in 65.565 seconds. Repeated
-  zero-churn loss and partition recovery are still not proven, and none of the
-  local smokes is the missing approved evidence bundle.
+  epoch changes across the 880 healthy streams in 65.565 seconds. A subsequent
+  same-host loss/rejoin/second-loss run recovered in 65.466 and 66.018 seconds
+  with zero healthy authority changes in both cycles. Network partitions,
+  independent-host repeated recovery, and a production churn SLO remain
+  unproven, and none of the local smokes is the missing approved evidence
+  bundle.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
@@ -145,7 +148,8 @@ implementation and must pass before those milestones advance.
   survivor restart. A report-ingestion follow-up recovered in 66.396 seconds
   but also moved one healthy stream. The subsequent recovery-floor fix retained
   all 880 healthy owner/incarnation/epoch tuples while replacing 440 failed
-  leases in 65.565 seconds. This still does not exercise repeated loss,
+  leases in 65.565 seconds. A second local run repeated that result across two
+  distinct domain losses separated by full rejoin. It still does not exercise
   network partitions, representative media probes, or separate infrastructure
   hosts.
 - `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
@@ -162,8 +166,9 @@ implementation and must pass before those milestones advance.
   required moves while preserving scale-out rebalance. A one-second DB-time
   HTTP test covers survivor heartbeat renewal, failed worker/lease expiry,
   higher-epoch reassignment, and stale-report rejection. The local 60-second
-  TTL hard-loss path recovered in 64.709 seconds. Partitions, multi-host timing,
-  and production failure-domain recovery remain open.
+  TTL hard-loss path recovered twice in 65.466/66.018 seconds around a full
+  domain rejoin. Partitions, multi-host timing, and production failure-domain
+  recovery remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

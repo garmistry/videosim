@@ -178,9 +178,51 @@ returned 22 workers, 60 streams, 30 SRT, 30 DASH, and zero shortfall. The
 worker listener returned HTTP 400 without a client certificate, and the
 operator health endpoint remained healthy.
 
-This run closes the reproduced single-run healthy-owner rounding defect. It
-does not prove repeated loss, partitions, multi-host recovery, media capacity,
-or F5 admission.
+This run closes the reproduced single-run healthy-owner rounding defect. The
+repeated same-host follow-up is recorded below; partitions, multi-host
+recovery, media capacity, and F5 admission remain open.
+
+## Repeated Recovery Follow-Up
+
+The checked-in F5 scheduler regression now covers zone-A loss, full 33-worker
+rejoin, and a second zone-B loss. The modeled fleet returns to exact 40/20/20
+placement after rejoin, then moves only the second failed domain's 440 leases
+and preserves every healthy owner.
+
+The same sequence was run against a fresh local control plane and 33 new
+zero-restart worker containers. The 1,320-feed catalog again used 660 SRT and
+660 DASH external placeholders, so this is control-plane evidence only.
+
+| Phase | First acknowledgement | Last acknowledgement | Failed moved | Healthy authority changes |
+|---|---:|---:|---:|---:|
+| Zone-A loss | 57.711 seconds | 65.466 seconds | 440/440 | 0/880 |
+| Zone-B loss after rejoin | 56.581 seconds | 66.018 seconds | 440/440 | 0/880 |
+
+Each loss left 22 fresh survivors at exactly 60 streams, 30 SRT, and 30 DASH.
+Each recovered authority map remained unchanged during its hold. Zone A then
+rejoined with new process incarnations, replayed 11 stale reports that were
+correctly fenced with HTTP 409, and returned the fleet to exact 33-worker
+40/20/20 balance. The first and last zone-A lease acknowledgements occurred
+0.256 and 164.119 seconds after the last container start. No rejoin SLO is
+claimed from that settling time.
+
+From the first loss through final API validation, Nginx recorded 7,225 HTTP
+200 responses, 11 expected stale-report HTTP 409 responses, one deliberate
+unauthenticated HTTP 400, and no HTTP 499 or 5xx response. Across 2,168
+committed reports, commit latency was 0.1785 seconds average, 0.6275 p95,
+1.6199 p99, and 5.3698 maximum. PostgreSQL, NATS, Nginx, the outbox publisher,
+the history pruner, and all 22 final survivors logged no critical error. The
+app logged one `BrokenPipeError` when a worker was hard-killed during a JSON
+response; the shared JSON response path now ignores that completed-request
+disconnect and has a focused regression.
+
+Direct mTLS checks in the final zone-A/zone-C survivor set returned 22 workers,
+60 assignments, 30 SRT, 30 DASH, and zero shortfall. Fleet pressure reported
+zero queued reports, zero spool bytes, and zero blocked workers; all survivor
+containers remained at `RestartCount=0`. One report remained on the killed
+zone-B disk and was discarded with the fixture rather than claimed as
+recovered. The unauthenticated worker request returned HTTP 400 and operator
+health remained healthy.
 
 ## Validation
 
@@ -205,6 +247,12 @@ or F5 admission.
   environment-gated skips in 24.760 seconds.
 - Recovery-preservation startup API/media/log workflow in no-build mode: 1
   passed in 13.502 seconds.
+- Repeated F5 model plus GUI focused suites: 90 passed.
+- Repeated-recovery project-image unit discovery: 386 passed with 87
+  environment-gated skips in 24.731 seconds.
+- Exact `gui.py` hash was overlaid on the existing local app image after Docker
+  Buildx again stopped at base-image metadata resolution; the no-build startup
+  API/media/log workflow then passed in 13.514 seconds.
 - Documentation contract: 4 passed.
 
 ## Remaining Gates
@@ -215,8 +263,8 @@ or F5 admission.
   and HA NATS.
 - Sustain representative report-ingestion load with lock-wait, deadlock,
   latency, timeout, and spool-recovery evidence.
-- Repeat clean domain-loss and partition runs to establish a zero-churn SLO or
-  define and admit an explicit churn budget.
+- Run repeated loss and partitions on independent hosts to establish a
+  production zero-churn SLO or define and admit an explicit churn budget.
 - Use independent media sources and prove validation freshness, resource
   headroom, alarm consistency, and backpressure during failure.
 - Produce the required clean, hashed, no-skip 24-hour evidence bundle and pass

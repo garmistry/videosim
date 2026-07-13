@@ -264,6 +264,92 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
 
         self.assertNotIn(feed_id, self.store.active_lease_owners())
 
+    def test_batch_lease_reconcile_is_ordered_and_atomic(self):
+        feed_ids = [f"batch-a-{uuid.uuid4()}", f"batch-b-{uuid.uuid4()}"]
+        for feed_id in feed_ids:
+            self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+
+        offered = self.store.reconcile_leases(
+            reversed(feed_ids), worker_id, incarnation, ttl_seconds=60
+        )
+        with self.assertRaisesRegex(LeaseConflict, "configuration changed"):
+            self.store.acknowledge_leases(
+                [
+                    (offered[1].stream_id, offered[1].epoch, offered[1].config_version),
+                    (offered[0].stream_id, offered[0].epoch, offered[0].config_version + 1),
+                ],
+                worker_id,
+                incarnation,
+                ttl_seconds=60,
+            )
+        self.assertTrue(
+            all(
+                lease.state == "offered"
+                for lease in self.store.leases_for_worker(worker_id, incarnation)
+            )
+        )
+        acknowledged = self.store.acknowledge_leases(
+            [
+                (lease.stream_id, lease.epoch, lease.config_version)
+                for lease in offered
+            ],
+            worker_id,
+            incarnation,
+            ttl_seconds=60,
+        )
+        renewed = self.store.reconcile_leases(
+            feed_ids, worker_id, incarnation, ttl_seconds=60
+        )
+        before = {lease.stream_id: lease for lease in renewed}
+
+        self.assertEqual([lease.stream_id for lease in offered], list(reversed(feed_ids)))
+        self.assertEqual(
+            [lease.stream_id for lease in acknowledged], list(reversed(feed_ids))
+        )
+        self.assertTrue(all(lease.state == "active" for lease in renewed))
+        with self.assertRaisesRegex(ValueError, "unique"):
+            self.store.reconcile_leases(
+                [feed_ids[0], feed_ids[0]],
+                worker_id,
+                incarnation,
+                ttl_seconds=60,
+            )
+
+        self.store.upsert(feed(feed_ids[0]) | {"name": "Changed"})
+        with self.store._pool.connection() as connection:
+            revoked_before = connection.execute(
+                """
+                SELECT epoch, config_version, state FROM leases
+                WHERE tenant_id = 'default' AND stream_id = %s
+                """,
+                (feed_ids[0],),
+            ).fetchone()
+        with self.assertRaisesRegex(LeaseConflict, "feed does not exist"):
+            self.store.reconcile_leases(
+                [feed_ids[0], f"zz-missing-{uuid.uuid4()}"],
+                worker_id,
+                incarnation,
+                ttl_seconds=60,
+            )
+
+        with self.store._pool.connection() as connection:
+            revoked_after = connection.execute(
+                """
+                SELECT epoch, config_version, state FROM leases
+                WHERE tenant_id = 'default' AND stream_id = %s
+                """,
+                (feed_ids[0],),
+            ).fetchone()
+        self.assertEqual(dict(revoked_after), dict(revoked_before))
+        self.assertEqual(revoked_after["epoch"], before[feed_ids[0]].epoch)
+        self.assertEqual(
+            revoked_after["config_version"],
+            before[feed_ids[0]].config_version,
+        )
+
     def test_new_epoch_resets_sequence_for_config_incarnation_expiry_and_restore(self):
         feed_id = f"feed-{uuid.uuid4()}"
         version = self.store.upsert(feed(feed_id))

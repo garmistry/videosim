@@ -91,6 +91,10 @@ VideoSim should split into a master control plane and many worker nodes:
   target, so worker loss moves only unavailable ownership while worker joins
   still rebalance. Insufficient or all-blocked capacity produces explicit
   shortfall instead of new authority on a worker that cannot deliver results.
+- Each worker assignment poll reconciles its complete offer/renew set in one
+  PostgreSQL transaction, and each lease-acknowledgement array commits in one
+  transaction after full request validation. Stream locks use stable ID order;
+  single-lease helpers retain the same epoch/config fences.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete

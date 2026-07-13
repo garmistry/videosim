@@ -704,8 +704,29 @@ class PostgresControlPlaneStore:
         New/changed authority remains ``offered`` until the worker explicitly
         acknowledges the exact incarnation/epoch/config tuple.
         """
+        return self.reconcile_leases(
+            (stream_id,),
+            worker_id,
+            worker_incarnation_id,
+            ttl_seconds=ttl_seconds,
+        )[0]
+
+    def reconcile_leases(
+        self,
+        stream_ids: Iterable[str],
+        worker_id: str,
+        worker_incarnation_id: uuid.UUID,
+        *,
+        ttl_seconds: int,
+    ) -> list[DurableLease]:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be greater than 0")
+        requested_stream_ids = list(stream_ids)
+        if len(requested_stream_ids) != len(set(requested_stream_ids)):
+            raise ValueError("stream_ids must be unique")
+        if not requested_stream_ids:
+            return []
+        leases = {}
         with self._pool.connection() as connection:
             with connection.transaction():
                 worker = connection.execute(
@@ -723,61 +744,79 @@ class PostgresControlPlaneStore:
                     raise LeaseConflict("worker incarnation is not active")
                 if not worker["heartbeat_fresh"]:
                     raise LeaseConflict("worker heartbeat is stale")
-                feed = connection.execute(
-                    "SELECT config_version FROM feeds WHERE tenant_id = %s AND id = %s FOR UPDATE",
-                    (self.tenant_id, stream_id),
-                ).fetchone()
-                if not feed:
-                    raise LeaseConflict("feed does not exist")
-                existing = connection.execute(
-                    """
-                    SELECT *, expires_at <= clock_timestamp() AS expired
-                    FROM leases WHERE tenant_id = %s AND stream_id = %s FOR UPDATE
-                    """,
-                    (self.tenant_id, stream_id),
-                ).fetchone()
-                config_version = int(feed["config_version"])
-                changed = (
-                    not existing
-                    or existing["worker_id"] != worker_id
-                    or existing["worker_incarnation_id"] != worker_incarnation_id
-                    or int(existing["config_version"]) != config_version
-                    or existing["state"] not in {"offered", "active"}
-                    or bool(existing["expired"])
-                )
-                epoch = 1 if not existing else int(existing["epoch"]) + (1 if changed else 0)
-                lease_state = "offered" if changed else existing["state"]
-                row = connection.execute(
-                    """
-                    INSERT INTO leases (
-                        tenant_id, stream_id, worker_id, worker_incarnation_id,
-                        epoch, config_version, expires_at, state
-                    ) VALUES (%s, %s, %s, %s, %s, %s,
-                              clock_timestamp() + (%s * interval '1 second'), %s)
-                    ON CONFLICT (tenant_id, stream_id) DO UPDATE SET
-                        worker_id = EXCLUDED.worker_id,
-                        worker_incarnation_id = EXCLUDED.worker_incarnation_id,
-                        epoch = EXCLUDED.epoch,
-                        config_version = EXCLUDED.config_version,
-                        issued_at = CASE WHEN leases.epoch <> EXCLUDED.epoch THEN clock_timestamp() ELSE leases.issued_at END,
-                        acknowledged_at = CASE WHEN leases.epoch <> EXCLUDED.epoch THEN NULL ELSE leases.acknowledged_at END,
-                        last_sequence = CASE WHEN leases.epoch <> EXCLUDED.epoch THEN 0 ELSE leases.last_sequence END,
-                        expires_at = EXCLUDED.expires_at,
-                        state = EXCLUDED.state
-                    RETURNING tenant_id, stream_id, worker_id, worker_incarnation_id,
-                              epoch, config_version, expires_at, state
-                    """,
-                    (
-                        self.tenant_id,
+                for stream_id in sorted(requested_stream_ids):
+                    leases[stream_id] = self._reconcile_lease_in_transaction(
+                        connection,
                         stream_id,
                         worker_id,
                         worker_incarnation_id,
-                        epoch,
-                        config_version,
                         ttl_seconds,
-                        lease_state,
-                    ),
-                ).fetchone()
+                    )
+        return [leases[stream_id] for stream_id in requested_stream_ids]
+
+    def _reconcile_lease_in_transaction(
+        self,
+        connection,
+        stream_id: str,
+        worker_id: str,
+        worker_incarnation_id: uuid.UUID,
+        ttl_seconds: int,
+    ) -> DurableLease:
+        feed = connection.execute(
+            "SELECT config_version FROM feeds WHERE tenant_id = %s AND id = %s FOR UPDATE",
+            (self.tenant_id, stream_id),
+        ).fetchone()
+        if not feed:
+            raise LeaseConflict("feed does not exist")
+        existing = connection.execute(
+            """
+            SELECT *, expires_at <= clock_timestamp() AS expired
+            FROM leases WHERE tenant_id = %s AND stream_id = %s FOR UPDATE
+            """,
+            (self.tenant_id, stream_id),
+        ).fetchone()
+        config_version = int(feed["config_version"])
+        changed = (
+            not existing
+            or existing["worker_id"] != worker_id
+            or existing["worker_incarnation_id"] != worker_incarnation_id
+            or int(existing["config_version"]) != config_version
+            or existing["state"] not in {"offered", "active"}
+            or bool(existing["expired"])
+        )
+        epoch = 1 if not existing else int(existing["epoch"]) + (1 if changed else 0)
+        lease_state = "offered" if changed else existing["state"]
+        row = connection.execute(
+            """
+            INSERT INTO leases (
+                tenant_id, stream_id, worker_id, worker_incarnation_id,
+                epoch, config_version, expires_at, state
+            ) VALUES (%s, %s, %s, %s, %s, %s,
+                      clock_timestamp() + (%s * interval '1 second'), %s)
+            ON CONFLICT (tenant_id, stream_id) DO UPDATE SET
+                worker_id = EXCLUDED.worker_id,
+                worker_incarnation_id = EXCLUDED.worker_incarnation_id,
+                epoch = EXCLUDED.epoch,
+                config_version = EXCLUDED.config_version,
+                issued_at = CASE WHEN leases.epoch <> EXCLUDED.epoch THEN clock_timestamp() ELSE leases.issued_at END,
+                acknowledged_at = CASE WHEN leases.epoch <> EXCLUDED.epoch THEN NULL ELSE leases.acknowledged_at END,
+                last_sequence = CASE WHEN leases.epoch <> EXCLUDED.epoch THEN 0 ELSE leases.last_sequence END,
+                expires_at = EXCLUDED.expires_at,
+                state = EXCLUDED.state
+            RETURNING tenant_id, stream_id, worker_id, worker_incarnation_id,
+                      epoch, config_version, expires_at, state
+            """,
+            (
+                self.tenant_id,
+                stream_id,
+                worker_id,
+                worker_incarnation_id,
+                epoch,
+                config_version,
+                ttl_seconds,
+                lease_state,
+            ),
+        ).fetchone()
         return _lease(row)
 
     def acknowledge_lease(
@@ -790,8 +829,30 @@ class PostgresControlPlaneStore:
         config_version: int,
         ttl_seconds: int,
     ) -> DurableLease:
+        return self.acknowledge_leases(
+            ((stream_id, epoch, config_version),),
+            worker_id,
+            worker_incarnation_id,
+            ttl_seconds=ttl_seconds,
+        )[0]
+
+    def acknowledge_leases(
+        self,
+        leases: Iterable[tuple[str, int, int]],
+        worker_id: str,
+        worker_incarnation_id: uuid.UUID,
+        *,
+        ttl_seconds: int,
+    ) -> list[DurableLease]:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be greater than 0")
+        requested = list(leases)
+        stream_ids = [stream_id for stream_id, _, _ in requested]
+        if len(stream_ids) != len(set(stream_ids)):
+            raise ValueError("lease stream IDs must be unique")
+        if not requested:
+            return []
+        acknowledged = {}
         with self._pool.connection() as connection:
             with connection.transaction():
                 worker = connection.execute(
@@ -812,38 +873,60 @@ class PostgresControlPlaneStore:
                     or not worker["heartbeat_fresh"]
                 ):
                     raise LeaseConflict("worker is not fresh and active")
-                feed = connection.execute(
-                    "SELECT config_version FROM feeds WHERE tenant_id = %s AND id = %s FOR SHARE",
-                    (self.tenant_id, stream_id),
-                ).fetchone()
-                if not feed or int(feed["config_version"]) != config_version:
-                    raise LeaseConflict("feed configuration changed before lease acknowledgement")
-                row = connection.execute(
-                    """
-                    UPDATE leases
-                    SET state = 'active',
-                        acknowledged_at = COALESCE(acknowledged_at, clock_timestamp()),
-                        expires_at = clock_timestamp() + (%s * interval '1 second')
-                    WHERE tenant_id = %s AND stream_id = %s
-                      AND worker_id = %s AND worker_incarnation_id = %s
-                      AND epoch = %s AND config_version = %s
-                      AND state IN ('offered', 'active')
-                      AND expires_at > clock_timestamp()
-                    RETURNING tenant_id, stream_id, worker_id, worker_incarnation_id,
-                              epoch, config_version, expires_at, state
-                    """,
-                    (
-                        ttl_seconds,
-                        self.tenant_id,
+                for stream_id, epoch, config_version in sorted(requested):
+                    acknowledged[stream_id] = self._acknowledge_lease_in_transaction(
+                        connection,
                         stream_id,
                         worker_id,
                         worker_incarnation_id,
                         epoch,
                         config_version,
-                    ),
-                ).fetchone()
-                if row is None:
-                    raise LeaseConflict("lease acknowledgement fence did not match")
+                        ttl_seconds,
+                    )
+        return [acknowledged[stream_id] for stream_id in stream_ids]
+
+    def _acknowledge_lease_in_transaction(
+        self,
+        connection,
+        stream_id: str,
+        worker_id: str,
+        worker_incarnation_id: uuid.UUID,
+        epoch: int,
+        config_version: int,
+        ttl_seconds: int,
+    ) -> DurableLease:
+        feed = connection.execute(
+            "SELECT config_version FROM feeds WHERE tenant_id = %s AND id = %s FOR SHARE",
+            (self.tenant_id, stream_id),
+        ).fetchone()
+        if not feed or int(feed["config_version"]) != config_version:
+            raise LeaseConflict("feed configuration changed before lease acknowledgement")
+        row = connection.execute(
+            """
+            UPDATE leases
+            SET state = 'active',
+                acknowledged_at = COALESCE(acknowledged_at, clock_timestamp()),
+                expires_at = clock_timestamp() + (%s * interval '1 second')
+            WHERE tenant_id = %s AND stream_id = %s
+              AND worker_id = %s AND worker_incarnation_id = %s
+              AND epoch = %s AND config_version = %s
+              AND state IN ('offered', 'active')
+              AND expires_at > clock_timestamp()
+            RETURNING tenant_id, stream_id, worker_id, worker_incarnation_id,
+                      epoch, config_version, expires_at, state
+            """,
+            (
+                ttl_seconds,
+                self.tenant_id,
+                stream_id,
+                worker_id,
+                worker_incarnation_id,
+                epoch,
+                config_version,
+            ),
+        ).fetchone()
+        if row is None:
+            raise LeaseConflict("lease acknowledgement fence did not match")
         return _lease(row)
 
     def revoke_unassigned_leases(

@@ -2176,14 +2176,18 @@ def worker_assignments_payload(
                 worker_incarnation_id,
                 (stream.id for stream in assigned_streams),
             )
-            streams = []
-            for stream in assigned_streams:
-                lease = store.reconcile_lease(
-                    stream.id,
+            leases = {
+                lease.stream_id: lease
+                for lease in store.reconcile_leases(
+                    (stream.id for stream in assigned_streams),
                     worker_id,
                     worker_incarnation_id,
                     ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
                 )
+            }
+            streams = []
+            for stream in assigned_streams:
+                lease = leases[stream.id]
                 stream_contract = control_plane_stream_payload(stream, base_url, worker_id)
                 stream_contract["lease"] = {
                     "epoch": lease.epoch,
@@ -2784,7 +2788,7 @@ def acknowledge_worker_leases(state: GuiState, worker_id: str, payload: dict) ->
         raise WorkerReportValidationError(
             f"leases must be an array of at most {MAX_REPORT_STREAMS} items"
         )
-    acknowledged = []
+    requested = []
     seen_streams = set()
     for index, item in enumerate(leases):
         if not isinstance(item, dict):
@@ -2808,23 +2812,22 @@ def acknowledge_worker_leases(state: GuiState, worker_id: str, payload: dict) ->
                 f"leases[{index}].configVersion must be a positive integer"
             )
         seen_streams.add(stream_id)
-        lease = store.acknowledge_lease(
-            stream_id,
+        requested.append((stream_id, epoch, config_version))
+    acknowledged = [
+        {
+            "streamId": lease.stream_id,
+            "epoch": lease.epoch,
+            "configVersion": lease.config_version,
+            "expiresAt": lease.expires_at.astimezone(timezone.utc).isoformat(),
+            "state": lease.state,
+        }
+        for lease in store.acknowledge_leases(
+            requested,
             worker_id,
             incarnation,
-            epoch=epoch,
-            config_version=config_version,
             ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
         )
-        acknowledged.append(
-            {
-                "streamId": stream_id,
-                "epoch": lease.epoch,
-                "configVersion": lease.config_version,
-                "expiresAt": lease.expires_at.astimezone(timezone.utc).isoformat(),
-                "state": lease.state,
-            }
-        )
+    ]
     return {
         "ok": True,
         "apiVersion": WORKER_API_VERSION_V2,

@@ -78,9 +78,10 @@ implementation and must pass before those milestones advance.
   total/SRT/DASH survivor tokens after one domain loss. `verify-assignments`
   now captures one consistent PostgreSQL assignment snapshot and verifies the
   exact baseline/survivor shape, single current authority, balance, and
-  baseline-bounded ownership movement. Its exact 1,320-stream proof is
-  synthetic and its live PostgreSQL proof is small; it does not replace the
-  missing independent-host capture, stale-report/latency evidence, or soak.
+  tenant-matched baseline-bounded ownership movement. Exact synthetic and
+  PostgreSQL-backed tests cover 1,320 streams, 33 baseline workers, 22
+  survivors, and 440 required moves; they do not replace the missing
+  independent-host capture, stale-report/latency evidence, or soak.
   Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
   has not run on independent hosts or passed media/headroom/24-hour admission.

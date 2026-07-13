@@ -662,13 +662,13 @@ benchmark can fail unless validation rotation covers every logical stream. The
 assignment command captures one read-only repeatable PostgreSQL snapshot and
 fails closed on incomplete current authority, protocol/domain/capacity drift,
 unbalanced placement, duplicate authority, or ownership changes outside an
-unavailable baseline domain. The capacity command checks JSON evidence/policy inputs against
+unavailable tenant-matched baseline domain. The capacity command checks JSON evidence/policy inputs against
 `scale/policies/f5-1000.json`. The checked-in F5 candidate places 33 workers
 evenly across three domains so any 22 survivors retain exact 1,320/660/660
 total/SRT/DASH tokens. Reusable Compose files render one 11-worker domain and
 one 220-SRT/220-DASH fixture shard, but neither shape has been booted on three
-independent hosts. The assignment verifier has exact synthetic 1,320-stream and
-small live-PostgreSQL integration coverage, but no three-host capture. Per-stream
+independent hosts. The assignment verifier has exact synthetic and
+PostgreSQL-backed 1,320-stream integration coverage, but no three-host capture. Per-stream
 independent sources, remaining proposed harnesses, and production-like evidence
 are not implemented; a valid candidate
 or deployment render is not scale admission.

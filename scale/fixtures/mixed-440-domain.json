@@ -1,0 +1,15 @@
+{
+  "behaviorPercent": {
+    "dead": 5,
+    "healthy": 80,
+    "malformed": 5,
+    "slow": 10
+  },
+  "protocolPercent": {
+    "dash": 50,
+    "srt": 50
+  },
+  "randomSeed": 17,
+  "schemaVersion": "videosim.fixture-scenario/v1",
+  "streamCount": 440
+}

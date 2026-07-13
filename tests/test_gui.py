@@ -393,6 +393,64 @@ class GuiTest(unittest.TestCase):
             [1, 1],
         )
 
+    def test_recovery_does_not_swap_healthy_protocol_ownership(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Recovery SRT {index}",
+                protocol="srt",
+                source="external",
+                external_url=f"srt://example.test:{15000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(3)
+        ] + [
+            state.create_stream(
+                name=f"Recovery DASH {index}",
+                protocol="dash",
+                source="external",
+                external_url=f"https://example.test/recovery/{index}/manifest.mpd",
+                select=False,
+            )
+            for index in range(3)
+        ]
+        workers = [
+            {
+                "id": worker_id,
+                "capacity": {
+                    "maxStreams": 3,
+                    "maxSrtStreams": 2,
+                    "maxDashStreams": 2,
+                },
+            }
+            for worker_id in ("worker-a", "worker-b")
+        ]
+        preferred_owners = {
+            streams[0].id: "worker-a",
+            streams[3].id: "worker-a",
+            streams[4].id: "worker-a",
+            streams[1].id: "worker-b",
+            streams[5].id: "worker-b",
+        }
+
+        assignments, shortfall = capacity_aware_assignments(
+            workers,
+            streams,
+            preferred_owners=preferred_owners,
+        )
+        owners = {
+            stream.id: worker_id
+            for worker_id, assigned in assignments.items()
+            for stream in assigned
+        }
+
+        self.assertEqual(shortfall, 0)
+        self.assertEqual(len(owners), len(streams))
+        self.assertEqual(
+            {stream_id: owners[stream_id] for stream_id in preferred_owners},
+            preferred_owners,
+        )
+
     def create_feed(self, state: GuiState, name: str = "Primary feed"):
         return state.create_stream(
             name=name,

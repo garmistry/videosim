@@ -2278,6 +2278,37 @@ def capacity_aware_assignments(
             }
             for worker_id, assigned in target_assignments.items()
         }
+        recovering_ownership = any(
+            preferred_owners.get(stream.id) not in schedulable_ids
+            for stream in streams
+        )
+        if recovering_ownership:
+            preferred_counts = {worker_id: 0 for worker_id in assignments}
+            preferred_protocol_counts = {
+                worker_id: {
+                    protocol: 0 for protocol in PROTOCOL_CAPACITY_FIELDS
+                }
+                for worker_id in assignments
+            }
+            for stream in streams:
+                preferred_worker_id = preferred_owners.get(stream.id)
+                if preferred_worker_id not in schedulable_ids:
+                    continue
+                preferred_counts[preferred_worker_id] += 1
+                if stream.protocol in PROTOCOL_CAPACITY_FIELDS:
+                    preferred_protocol_counts[preferred_worker_id][
+                        stream.protocol
+                    ] += 1
+            for worker_id in assignments:
+                preservation_targets[worker_id] = max(
+                    preservation_targets[worker_id],
+                    preferred_counts[worker_id],
+                )
+                for protocol in PROTOCOL_CAPACITY_FIELDS:
+                    preservation_protocol_targets[worker_id][protocol] = max(
+                        preservation_protocol_targets[worker_id][protocol],
+                        preferred_protocol_counts[worker_id][protocol],
+                    )
 
     def has_capacity(worker_id: str, stream: FeedRecord) -> bool:
         capacity = capacities[worker_id]

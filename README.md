@@ -283,9 +283,12 @@ real PostgreSQL expiry, the production scheduler, lease fencing, and survivor
 reports. The freshness value must match the deployed control plane. The current
 30-second default with five-second worker heartbeats recovered the exact
 1,320-stream control-plane shape at 29.888-second p95 in retained PostgreSQL
-evidence. The command runs no media probes, marks endpoint-fault storms
-`out_of_scope`, and always reports `capacityCertified=false`; the timing result
-is not physical-domain or media-capacity admission evidence.
+evidence. At the declared endpoint-fault offset it also commits separate
+synthetic `feed_reachable` unhealthy and healthy report windows, requiring
+exact raised, cleared, and alarm-outbox counts for all 1,320 streams. The
+command runs no media probes and always reports `capacityCertified=false`;
+neither synthetic event is physical-domain or media-capacity admission
+evidence.
 
 Verify a completed scale-evidence bundle against the fail-closed F5 policy:
 
@@ -317,7 +320,9 @@ python3 -m videosim verify-alarm-consistency \
 The command requires all 1,320 desired streams to have current check state,
 requires retained alarm transitions, and fails on result/current-state drift,
 an unexplained clear, malformed alarm events, or a missing/mismatched outbox
-record. It is a consistency gate, not the missing multi-host 24-hour run.
+record. Use `--tenant-id` with the `tenantId` emitted by `control-plane-load`
+when inspecting its disposable database. It is a consistency gate, not the
+missing multi-host 24-hour run.
 
 Boot and validate one 11-worker domain with:
 

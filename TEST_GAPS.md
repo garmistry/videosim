@@ -86,9 +86,13 @@ implementation and must pass before those milestones advance.
   pending/current alarms, retained transition payloads, and matching outbox rows
   from one read-only repeatable snapshot. Its P0 PostgreSQL test covers all
   1,320 desired streams, proves a timeout cannot explain an active-alarm clear,
-  and detects a deliberately unexplained false clear. No independent-host
-  endpoint-fault capture, transition-latency measurement, broker/consumer
-  delivery proof, retention-window soak, or 24-hour report exists yet.
+  and detects a deliberately unexplained false clear. The durable load harness
+  now commits a synthetic all-1,320 `feed_reachable` fault and recovery, checks
+  exact current/pending/raised/cleared state, and retains 2,640 matching alarm
+  outbox transitions. This is PostgreSQL projection pressure only: no
+  independent-host endpoint-fault capture, media-derived transition latency,
+  broker/consumer delivery proof, retention-window soak, or 24-hour report
+  exists yet.
   `control-plane-load` now drives the exact 1,320-stream/33-worker shape through
   real PostgreSQL lease, heartbeat, fenced-result, current-state, and result-
   outbox transactions in an empty disposable database. Its P0 integration test
@@ -100,7 +104,7 @@ implementation and must pass before those milestones advance.
   30-second freshness boundary with five-second heartbeats, and retained exact
   PostgreSQL evidence recovered at 29.888/29.889-second p95/p99. That synthetic
   result is not sustained or physical deployment-timing evidence. No 24-hour
-  run, worker HTTP/mTLS domain loss, broker consumption, endpoint-fault
+  run, worker HTTP/mTLS domain loss, broker consumption, real endpoint-fault
   behavior, media freshness, physical-domain timing, or independent-host
   resource curve has passed.
   Three local Compose

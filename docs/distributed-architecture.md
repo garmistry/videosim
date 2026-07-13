@@ -162,6 +162,11 @@ VideoSim should split into a master control plane and many worker nodes:
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,
   dirty or skipped runs, path escape, and SHA-256 drift; it runs no workload.
+- `python -m videosim control-plane-load` drives the exact candidate shape in
+  disposable PostgreSQL. Its declared endpoint storm commits separate
+  all-stream `feed_reachable` unhealthy and healthy windows and verifies alarm
+  plus outbox parity. Those inputs are synthetic and do not replace the
+  fixture-domain media fault required for admission.
 
 ## Implemented Compose/VM Security Boundary
 

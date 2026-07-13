@@ -77,7 +77,10 @@
   `docs/distributed-implementation-progress.md` for remaining blockers and
   gates. `capacity-check` now rejects incomplete or tampered F5 bundles. The
   checked-in three-domain candidate passes its workload contract, but no
-  production-like result exists for the verifier to admit. `worker-benchmark`
+  production-like result exists for the verifier to admit. `control-plane-load`
+  can raise and clear exact `feed_reachable` alarms for all 1,320 synthetic
+  leases and verify their outbox transitions, but it opens no endpoints and
+  does not prove real source failure or recovery. `worker-benchmark`
   runs real probes from a supplied state scenario, but measures one worker and
   does not provide fixtures, distributed load, failure injection, or a capacity
   decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/

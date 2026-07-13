@@ -844,8 +844,8 @@ fails. A shorter run records `not_reached` and proves no failure behavior.
 freshness setting. The production and worker-domain Compose defaults are 30
 seconds and five-second heartbeats. A retained exact control-plane run measured
 29.888/29.889-second p95/p99 recovery; do not lower only the harness value to
-manufacture a pass. The P0 integration test uses one second solely to compress
-wall-clock test time.
+manufacture a pass. The P0 integration test uses three seconds solely to
+compress wall-clock time while leaving enough room for its 33-report baseline.
 
 The command intentionally retains the synthetic tenant, worker reports, check
 results, current state, leases, and immutable outbox rows. Retain a database
@@ -854,17 +854,53 @@ do not selectively delete immutable evidence. `mediaProbesExecuted=false` and
 `capacityCertified=false` are permanent report fields. This harness measures
 the PostgreSQL control-plane path only and cannot replace worker HTTP/mTLS,
 broker-consumer, independent media, physical failure-domain, or 24-hour
-admission evidence. Declared endpoint-fault storms remain `out_of_scope`
-because they require real media probes.
+admission evidence. At the declared endpoint-fault offset, the harness commits
+one synthetic `feed_reachable=unhealthy` window and one separately committed
+`healthy` window for every current lease. Require the event to report
+`status=recovered`, `affectedStreams=1320`, exact 1,320 active/raised alarms at
+the peak, zero active alarms after recovery, 1,320 cleared events, 2,640 alarm
+outbox events, and no pending alarm. These checks prove the PostgreSQL alarm
+and outbox burst only; `syntheticControlPlaneOnly=true` keeps them out of media
+capacity evidence.
 
-After the declared endpoint-fault storm has raised and cleared alarms, retain a
-durable projection report:
+Run the real endpoint fault separately at the workload offset on one fixture
+host. With that host's `.env.fixture-domain` loaded, stop both source services:
 
 ```sh
+docker compose \
+  -p "${VIDEOSIM_FIXTURE_STARTUP_PROJECT:-videosim-fixture-startup}" \
+  -f docker-compose.fixture-domain.yml stop srt dash
+```
+
+Retain before/during process state and Docker logs. Hold the fault until the
+durable state contains a conclusive unreachable observation for every endpoint
+that was `feed_reachable=healthy` in that fixture shard's baseline; an elapsed
+offset alone is not evidence. Restart both services, require those same checks
+to return healthy and clear, rerun the fixture media validator, and retain the
+after state:
+
+```sh
+docker compose \
+  -p "${VIDEOSIM_FIXTURE_STARTUP_PROJECT:-videosim-fixture-startup}" \
+  -f docker-compose.fixture-domain.yml start srt dash
+```
+
+Stopping one same-host test project is useful workflow validation but is not
+independent fixture-host or 1,000-stream media evidence.
+
+After the declared endpoint-fault storm has raised and cleared alarms, retain a
+durable projection report. For the disposable load database, read its generated
+tenant from the load report:
+
+```sh
+LOAD_TENANT_ID="$(jq -r .tenantId artifacts/control-plane-load.json)"
 python3 -m videosim verify-alarm-consistency \
   --workload scale/workloads/f5-1000-candidate.json \
+  --tenant-id "$LOAD_TENANT_ID" \
   --output artifacts/alarm-consistency.json
 ```
+
+Omit `--tenant-id` only when verifying the default candidate tenant.
 
 Require `passed=true`, `expectedDesiredStreams=1320`,
 `desiredStreams=1320`, `observedDesiredStreams=1320`, at least one retained

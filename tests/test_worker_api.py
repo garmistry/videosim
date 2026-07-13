@@ -47,6 +47,10 @@ class WorkerApiTest(unittest.TestCase):
         ) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def operator_get(self, path):
+        with urlopen(f"{self.base_url}{path}", timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+
     def post(self, payload):
         request = Request(
             f"{self.base_url}/api/workers/report",
@@ -115,6 +119,23 @@ class WorkerApiTest(unittest.TestCase):
         with self.assertRaises(HTTPError) as raised:
             self.operator_catalog(cursor="x" * 513)
         self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
+
+    def test_operator_overview_and_feed_detail_are_bounded(self):
+        overview = self.operator_get("/api/operator/overview")
+        detail = self.operator_get("/api/operator/feeds/stream-1")
+
+        self.assertEqual(overview["apiVersion"], "videosim.operator/v1")
+        self.assertNotIn("streams", overview)
+        self.assertEqual(overview["monitor"]["probeMetrics"], {})
+        self.assertEqual(detail["apiVersion"], "videosim.operator/v1")
+        self.assertEqual(detail["selectedStreamId"], "stream-1")
+        self.assertEqual([feed["id"] for feed in detail["streams"]], ["stream-1"])
+        self.assertFalse(detail["operatorReadOnly"])
+
+        with self.assertRaises(HTTPError) as raised:
+            self.operator_get("/api/operator/feeds/missing")
+        self.assertEqual(raised.exception.code, 404)
         raised.exception.close()
 
     def test_worker_can_drain_after_registration(self):

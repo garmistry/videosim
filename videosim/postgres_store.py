@@ -244,6 +244,25 @@ class PostgresControlPlaneStore:
             feeds.append(config)
         return feeds
 
+    def load_one(self, feed_id: str) -> dict | None:
+        if not isinstance(feed_id, str) or not feed_id:
+            raise ValueError("feed ID must be a non-empty string")
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT id, config, config_version
+                FROM feeds
+                WHERE tenant_id = %s AND id = %s
+                """,
+                (self.tenant_id, feed_id),
+            ).fetchone()
+        if row is None:
+            return None
+        config = dict(row["config"])
+        config["id"] = row["id"]
+        config["config_version"] = int(row["config_version"])
+        return config
+
     def upsert(self, feed: Mapping) -> int:
         return self.import_feed_if_changed(feed)[1]
 
@@ -1099,67 +1118,77 @@ class PostgresControlPlaneStore:
         alarm_limit: int = 100,
         event_limit: int = 200,
         pending_limit: int = 100,
+        stream_id: str = "",
+        include_probe_metrics: bool = True,
     ) -> dict:
         if min(alarm_limit, event_limit, pending_limit) < 1:
             raise ValueError("monitor projection limits must be positive")
         if max(alarm_limit, event_limit, pending_limit) > 1000:
             raise ValueError("monitor projection limits must not exceed 1000")
+        if not isinstance(stream_id, str):
+            raise ValueError("monitor projection stream ID must be a string")
+        alarm_filter = " AND a.stream_id = %s" if stream_id else ""
+        event_filter = " AND e.stream_id = %s" if stream_id else ""
+        pending_filter = " AND p.stream_id = %s" if stream_id else ""
+        probe_filter = " AND c.stream_id = %s" if stream_id else ""
         with self._pool.connection() as connection:
             # All response collections must describe one authority snapshot.
             # READ COMMITTED would take a new PostgreSQL snapshot for each
             # query and could expose an alarm edge without its matching row.
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             alarms = connection.execute(
-                """
+                f"""
                 SELECT a.stream_id, COALESCE(f.config->>'name', a.stream_id) AS stream_name,
                        a.monitor_id, a.active, a.severity, a.message,
                        a.raised_at, a.cleared_at, a.last_event_at, a.updated_at
                 FROM current_alarms a
                 JOIN feeds f ON f.tenant_id = a.tenant_id AND f.id = a.stream_id
-                WHERE a.tenant_id = %s AND a.monitor_id = ANY(%s::text[])
+                WHERE a.tenant_id = %s AND a.monitor_id = ANY(%s::text[]){alarm_filter}
                 ORDER BY a.active DESC, a.updated_at DESC, a.stream_id, a.monitor_id
                 LIMIT %s
                 """,
-                (self.tenant_id, sorted(SPEC_BY_ID), alarm_limit),
+                (self.tenant_id, sorted(SPEC_BY_ID), *([stream_id] if stream_id else []), alarm_limit),
             ).fetchall()
             events = connection.execute(
-                """
+                f"""
                 SELECT e.event_id, e.stream_id,
                        COALESCE(f.config->>'name', e.stream_id) AS stream_name,
                        e.monitor_id, e.transition, e.payload, e.occurred_at
                 FROM alarm_events e
                 JOIN feeds f ON f.tenant_id = e.tenant_id AND f.id = e.stream_id
-                WHERE e.tenant_id = %s AND e.monitor_id = ANY(%s::text[])
+                WHERE e.tenant_id = %s AND e.monitor_id = ANY(%s::text[]){event_filter}
                 ORDER BY e.occurred_at DESC, e.event_id DESC
                 LIMIT %s
                 """,
-                (self.tenant_id, sorted(SPEC_BY_ID), event_limit),
+                (self.tenant_id, sorted(SPEC_BY_ID), *([stream_id] if stream_id else []), event_limit),
             ).fetchall()
             pending = connection.execute(
-                """
+                f"""
                 SELECT p.stream_id, COALESCE(f.config->>'name', p.stream_id) AS stream_name,
                        p.monitor_id, p.severity, p.message, p.first_seen_at, p.updated_at
                 FROM current_alarm_pending p
                 JOIN feeds f ON f.tenant_id = p.tenant_id AND f.id = p.stream_id
-                WHERE p.tenant_id = %s AND p.monitor_id = ANY(%s::text[])
+                WHERE p.tenant_id = %s AND p.monitor_id = ANY(%s::text[]){pending_filter}
                 ORDER BY p.updated_at DESC, p.stream_id, p.monitor_id
                 LIMIT %s
                 """,
-                (self.tenant_id, sorted(SPEC_BY_ID), pending_limit),
+                (self.tenant_id, sorted(SPEC_BY_ID), *([stream_id] if stream_id else []), pending_limit),
             ).fetchall()
-            probe_rows = connection.execute(
-                """
-                SELECT wr.worker_id, c.stream_id, c.check_id, c.status,
-                       c.observed_at, c.evidence
-                FROM current_check_state c
-                JOIN check_results r ON r.result_id = c.result_id
-                JOIN worker_reports wr ON wr.report_id = r.report_id
-                WHERE c.tenant_id = %s AND c.check_id LIKE 'probe.%%'
-                  AND c.expires_at > transaction_timestamp()
-                ORDER BY wr.worker_id, c.stream_id, c.check_id
-                """,
-                (self.tenant_id,),
-            ).fetchall()
+            probe_rows = []
+            if include_probe_metrics:
+                probe_rows = connection.execute(
+                    f"""
+                    SELECT wr.worker_id, c.stream_id, c.check_id, c.status,
+                           c.observed_at, c.evidence
+                    FROM current_check_state c
+                    JOIN check_results r ON r.result_id = c.result_id
+                    JOIN worker_reports wr ON wr.report_id = r.report_id
+                    WHERE c.tenant_id = %s AND c.check_id LIKE 'probe.%%'
+                      AND c.expires_at > transaction_timestamp(){probe_filter}
+                    ORDER BY wr.worker_id, c.stream_id, c.check_id
+                    """,
+                    (self.tenant_id, *([stream_id] if stream_id else [])),
+                ).fetchall()
             workers = connection.execute(
                 """
                 SELECT worker_id, last_heartbeat_at, capacity
@@ -1299,13 +1328,19 @@ class PostgresControlPlaneStore:
                 }
                 for row in workers
             ],
-            "probeMetrics": {
-                "streamCount": len({item["streamId"] for item in all_probe_streams}),
-                "checkCount": len(all_probe_streams),
-                "outcomes": all_outcomes,
-                "streams": all_probe_streams,
-            },
-            "workerProbeMetrics": worker_metrics,
+            "probeMetrics": (
+                {
+                    "streamCount": len(
+                        {item["streamId"] for item in all_probe_streams}
+                    ),
+                    "checkCount": len(all_probe_streams),
+                    "outcomes": all_outcomes,
+                    "streams": all_probe_streams,
+                }
+                if include_probe_metrics
+                else {}
+            ),
+            "workerProbeMetrics": worker_metrics if include_probe_metrics else {},
             "eventHistoryMutable": False,
             "connected": True,
         }

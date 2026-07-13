@@ -321,6 +321,7 @@ class GuiState:
     allow_legacy_worker_reports: bool = False
     deleting_stream_ids: set[str] = field(default_factory=set)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    operator_read_only: bool = False
     _next_stream_number: int = 1
 
     def __post_init__(self):
@@ -1289,6 +1290,9 @@ class GuiHandler(BaseHTTPRequestHandler):
             return
         if self._authorize_operator(write=False) is None:
             return
+        if path == "/api/operator/overview":
+            self._send_json(operator_overview_payload(self.state))
+            return
         if path == "/api/operator/feeds":
             params = parse_qs(parsed_request.query)
             try:
@@ -1322,6 +1326,24 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload)
             return
+        if path.startswith("/api/operator/feeds/"):
+            stream_id = unquote(path.removeprefix("/api/operator/feeds/").strip("/"))
+            if not stream_id or len(stream_id) > MAX_IDENTIFIER_LENGTH:
+                self._send_json(
+                    {"ok": False, "error": "feed ID must be bounded and non-empty"},
+                    status=400,
+                )
+                return
+            try:
+                payload = operator_feed_detail_payload(self.state, stream_id)
+            except PostgresStoreError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=503)
+                return
+            if payload is None:
+                self._send_json({"ok": False, "error": "feed not found"}, status=404)
+                return
+            self._send_json(payload)
+            return
         if path == "/diagnostics.txt":
             self._send_text(diagnostics_text(self.state))
             return
@@ -1344,6 +1366,17 @@ class GuiHandler(BaseHTTPRequestHandler):
             stream_id = unquote(path.removeprefix("/feeds/").strip("/"))
             if not stream_id:
                 self.send_error(404)
+                return
+            if durable_control_store(self.state) is not None:
+                try:
+                    view = operator_feed_detail_view(self.state, stream_id)
+                except PostgresStoreError:
+                    self.send_error(503)
+                    return
+                if view is None:
+                    self.send_error(404)
+                    return
+                self._send_html(render_page(view))
                 return
             if self.state.security.enabled:
                 with self.state.control_plane_lock:
@@ -1803,18 +1836,71 @@ class GuiHandler(BaseHTTPRequestHandler):
             return {}
 
 
-def request_state_view(state: GuiState, selected_stream_id: str) -> GuiState:
+def request_state_view(
+    state: GuiState,
+    selected_stream_id: str,
+    stream: FeedRecord | None = None,
+    *,
+    operator_read_only: bool = False,
+) -> GuiState:
     """Create a request-local shallow view without mutating shared selection."""
 
     view = copy.copy(state)
-    view.selected_stream_id = selected_stream_id if selected_stream_id in state.streams else ""
+    if stream is not None:
+        view.streams = {stream.id: stream}
+        view.selected_stream_id = stream.id
+    else:
+        view.selected_stream_id = (
+            selected_stream_id if selected_stream_id in state.streams else ""
+        )
+    view.operator_read_only = operator_read_only
     view._sync_from_active()
     return view
 
 
+def operator_feed_detail_view(state: GuiState, stream_id: str) -> GuiState | None:
+    store = durable_control_store(state)
+    if store is None:
+        if stream_id not in state.streams:
+            return None
+        return request_state_view(state, stream_id)
+    registration = store.load_one(stream_id)
+    if registration is None:
+        return None
+    persisted = durable_feed_record(state, registration)
+    local = state.streams.get(stream_id)
+    if local is not None and local.config_version == persisted.config_version:
+        return request_state_view(state, stream_id, local)
+    return request_state_view(
+        state, stream_id, persisted, operator_read_only=True
+    )
+
+
 def render_page(state: GuiState) -> str:
     active = state.active_stream
-    monitor = monitor_payload(state)
+    store = durable_control_store(state)
+    durable_root = store is not None and active is None
+    operator_catalog = None
+    if durable_root:
+        try:
+            operator_catalog = operator_feed_catalog_payload(
+                state, limit=DEFAULT_FEED_PAGE_SIZE
+            )
+        except PostgresStoreError as exc:
+            operator_catalog = {
+                "apiVersion": OPERATOR_API_VERSION,
+                "feeds": [],
+                "limit": DEFAULT_FEED_PAGE_SIZE,
+                "hasMore": False,
+                "nextCursor": None,
+                "error": str(exc),
+            }
+    monitor_stream_id = active.id if store is not None and active is not None else ""
+    monitor = monitor_payload(
+        state,
+        include_probe_metrics=not durable_root,
+        stream_id=monitor_stream_id,
+    )
     active_alarms = [alarm for alarm in monitor.get("alarms", []) if alarm.get("active")]
     alert_options = monitor.get("monitors", [])
     logs_source = state.logs or (active.logs if active else [])
@@ -1848,17 +1934,30 @@ def render_page(state: GuiState) -> str:
     )
     controls = controls_for_mode(active.mode if active else state.mode)
     checked = {field: " checked" if controls[field] else "" for field in CONTROL_FIELDS}
-    stream_rows = "\n".join(
-        f"""<tr>
-          <td><a href="{html.escape(feed_path(stream.id))}"><img alt="{html.escape(stream.name)} preview" src="{html.escape(feed_path(stream.id))}/preview.jpg" style="width:8.5rem;aspect-ratio:16/9;object-fit:cover;border-radius:0.45rem;background:#050505;"></a></td>
-          <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(SOURCE_OPTIONS[stream.source])} · {html.escape(stream.protocol.upper())}{'' if stream.source == "external" else ' · ' + html.escape(stream.mode)}</td>
-          <td>{html.escape(stream.status)}</td>
-          <td>{html.escape(stream.endpoint)}</td>
-          <td>{'' if stream.source == "external" else 'Frame rate: ' + html.escape(stream.framerate) + ' fps<br>'}Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
-          <td><a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a></td>
-        </tr>"""
-        for stream in state.streams.values()
-    )
+    if operator_catalog is None:
+        stream_rows = "\n".join(
+            f"""<tr>
+              <td><a href="{html.escape(feed_path(stream.id))}"><img alt="{html.escape(stream.name)} preview" src="{html.escape(feed_path(stream.id))}/preview.jpg" style="width:8.5rem;aspect-ratio:16/9;object-fit:cover;border-radius:0.45rem;background:#050505;"></a></td>
+              <td><strong>{html.escape(stream.name)}</strong><br>{html.escape(SOURCE_OPTIONS[stream.source])} · {html.escape(stream.protocol.upper())}{'' if stream.source == "external" else ' · ' + html.escape(stream.mode)}</td>
+              <td>{html.escape(stream.status)}</td>
+              <td>{html.escape(stream.endpoint)}</td>
+              <td>{'' if stream.source == "external" else 'Frame rate: ' + html.escape(stream.framerate) + ' fps<br>'}Bit rate (est.): {html.escape(stream.metrics()["bitrateLabel"])}<br>Outbound (est.): {html.escape(stream.metrics()["outboundLabel"])}<br>Uptime: {html.escape(str(stream.metrics()["uptimeSeconds"]))}s</td>
+              <td><a class="button secondary" href="{html.escape(feed_path(stream.id))}">Open</a></td>
+            </tr>"""
+            for stream in state.streams.values()
+        )
+    else:
+        stream_rows = "\n".join(
+            f"""<tr>
+              <td>Config</td>
+              <td><strong>{html.escape(feed['name'])}</strong><br>{html.escape(SOURCE_OPTIONS[feed['source']])} · {html.escape(feed['protocol'].upper())}{'' if feed['source'] == "external" else ' · ' + html.escape(feed['mode'])}</td>
+              <td>Runtime unknown</td>
+              <td>{html.escape(feed['endpoint'])}</td>
+              <td>Shared catalog</td>
+              <td><a class="button secondary" href="{html.escape(feed_path(feed['id']))}">Open</a></td>
+            </tr>"""
+            for feed in operator_catalog["feeds"]
+        )
     alarm_rows = "\n".join(
         f"""<tr>
           <td>{html.escape(alarm.get("streamName", ""))}</td>
@@ -1990,6 +2089,15 @@ def render_page(state: GuiState) -> str:
   {preview}
   <h2>Logs</h2>
   <pre>{logs}</pre>"""
+    initial_payload = state_payload(
+        state,
+        include_streams=not durable_root,
+        include_probe_metrics=not durable_root,
+        monitor_stream_id=monitor_stream_id,
+        monitor=monitor,
+    )
+    if operator_catalog is not None:
+        initial_payload["operatorCatalog"] = operator_catalog
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -2012,7 +2120,7 @@ def render_page(state: GuiState) -> str:
 </head>
 <body>
 <div id="app"></div>
-<script id="initial-state" type="application/json">{script_json(state_payload(state))}</script>
+<script id="initial-state" type="application/json">{script_json(initial_payload)}</script>
 <main>
   <div id="app-fallback" class="shell">
   <h1>Video Feed Simulator</h1>
@@ -2034,14 +2142,37 @@ def render_page(state: GuiState) -> str:
 </html>"""
 
 
-def state_payload(state: GuiState) -> dict:
+def state_payload(
+    state: GuiState,
+    *,
+    include_streams: bool = True,
+    include_probe_metrics: bool = True,
+    monitor_stream_id: str = "",
+    monitor: dict | None = None,
+) -> dict:
     active = state.active_stream
     controls = controls_for_mode(active.mode if active else state.mode)
-    monitor = monitor_payload(state)
+    if monitor is None:
+        monitor = monitor_payload(
+            state,
+            include_probe_metrics=include_probe_metrics,
+            stream_id=monitor_stream_id,
+        )
+    streams = (
+        [stream_payload(stream) for stream in state.streams.values()]
+        if include_streams
+        else []
+    )
+    if state.operator_read_only:
+        for stream in streams:
+            stream["runtimeKnown"] = False
     return {
+        "apiVersion": OPERATOR_API_VERSION,
         "selectedStreamId": state.selected_stream_id,
         "feedListUrl": "/",
-        "streams": [stream_payload(stream) for stream in state.streams.values()],
+        "streams": streams,
+        "durableOperatorReads": durable_control_store(state) is not None,
+        "operatorReadOnly": state.operator_read_only,
         "status": state.status,
         "protocol": state.protocol,
         "protocols": [{"value": value, "label": label} for value, label in PROTOCOL_OPTIONS.items()],
@@ -2109,6 +2240,20 @@ def operator_feed_payload(stream: FeedRecord) -> dict:
     }
 
 
+def operator_overview_payload(state: GuiState) -> dict:
+    return {
+        "apiVersion": OPERATOR_API_VERSION,
+        "monitor": monitor_payload(state, include_probe_metrics=False),
+    }
+
+
+def operator_feed_detail_payload(state: GuiState, stream_id: str) -> dict | None:
+    view = operator_feed_detail_view(state, stream_id)
+    if view is None:
+        return None
+    return state_payload(view, monitor_stream_id=stream_id)
+
+
 def stream_payload(stream: FeedRecord) -> dict:
     return {
         "id": stream.id,
@@ -2121,6 +2266,7 @@ def stream_payload(stream: FeedRecord) -> dict:
         "mode": stream.mode,
         "framerate": stream.framerate,
         "framerateLabel": f"{stream.framerate} fps",
+        "configVersion": stream.config_version,
         "alertProfile": alert_profile_payload(stream.alert_enabled_ids, stream.alert_delay_seconds),
         "status": stream.status,
         "endpoint": stream.endpoint,
@@ -2845,11 +2991,19 @@ def diagnostics_text(state: GuiState) -> str:
     )
 
 
-def monitor_payload(state: GuiState) -> dict:
+def monitor_payload(
+    state: GuiState,
+    *,
+    include_probe_metrics: bool = True,
+    stream_id: str = "",
+) -> dict:
     store = durable_control_store(state)
     if store is not None:
         try:
-            payload = store.monitor_projection_payload()
+            payload = store.monitor_projection_payload(
+                stream_id=stream_id,
+                include_probe_metrics=include_probe_metrics,
+            )
         except Exception as exc:
             state.log(f"Durable monitor projection read failed: {exc}")
             return {
@@ -2895,15 +3049,24 @@ def monitor_payload(state: GuiState) -> dict:
             "eventHistoryMutable": True,
             "connected": False,
         }
+    alarms = payload.get("alarms", [])
+    events = payload.get("events", [])
+    pending = payload.get("pending", [])
+    if stream_id:
+        alarms = [item for item in alarms if item.get("streamId") == stream_id]
+        events = [item for item in events if item.get("streamId") == stream_id]
+        pending = [item for item in pending if item.get("streamId") == stream_id]
     return {
         "updatedAt": payload.get("updatedAt", ""),
-        "alarms": payload.get("alarms", [])[-100:],
-        "events": payload.get("events", [])[-200:],
-        "pending": payload.get("pending", [])[-100:],
+        "alarms": alarms[-100:],
+        "events": events[-200:],
+        "pending": pending[-100:],
         "monitors": payload.get("monitors", []) or monitor_catalog_payload(),
         "workers": payload.get("workers", []),
-        "probeMetrics": payload.get("probeMetrics", {}),
-        "workerProbeMetrics": payload.get("workerProbeMetrics", {}),
+        "probeMetrics": payload.get("probeMetrics", {}) if include_probe_metrics else {},
+        "workerProbeMetrics": (
+            payload.get("workerProbeMetrics", {}) if include_probe_metrics else {}
+        ),
         "eventHistoryMutable": True,
         "connected": True,
     }

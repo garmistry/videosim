@@ -1324,6 +1324,31 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             )
             self.assertEqual(set(replica_state.streams), {self.stream_id})
 
+            loaded = replica_store.load_one(second.id)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded["name"], second.name)
+            with urlopen(f"{replica_url}/", timeout=5) as response:
+                page = response.read().decode("utf-8")
+            marker = '<script id="initial-state" type="application/json">'
+            bootstrap = json.loads(page.split(marker, 1)[1].split("</script>", 1)[0])
+            self.assertEqual(bootstrap["streams"], [])
+            self.assertEqual(
+                [feed["id"] for feed in bootstrap["operatorCatalog"]["feeds"]],
+                [self.stream_id, second.id, third.id],
+            )
+            _, overview = self.get_json(
+                "/api/operator/overview", {}, base_url=replica_url
+            )
+            _, detail = self.get_json(
+                f"/api/operator/feeds/{second.id}", {}, base_url=replica_url
+            )
+            self.assertEqual(overview["monitor"]["probeMetrics"], {})
+            self.assertEqual(detail["selectedStreamId"], second.id)
+            self.assertEqual([feed["id"] for feed in detail["streams"]], [second.id])
+            self.assertTrue(detail["operatorReadOnly"])
+            self.assertFalse(detail["streams"][0]["runtimeKnown"])
+            self.assertEqual(detail["streams"][0]["configVersion"], second.config_version)
+
             _, first_page = self.get_json(
                 "/api/operator/feeds", {"limit": "2"}, base_url=replica_url
             )

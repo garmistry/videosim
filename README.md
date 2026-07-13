@@ -163,6 +163,10 @@ python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterat
 ```
 
 This command runs no media probes and is not evidence of 1,000-stream monitoring capacity.
+Add `--fail-workers 1` to remove one process-local worker after warmup, require
+complete unique survivor coverage, and prove that its stale report is rejected.
+Use `--streams 1300` to model 30% logical headroom; reassignment counters expose
+placement churn but still provide no durable or media-capacity evidence.
 
 Measure one worker against live endpoints from an exported GUI state:
 

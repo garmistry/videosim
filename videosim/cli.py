@@ -190,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_benchmark.add_argument("--iterations", type=int, default=5)
     control_plane_benchmark.add_argument("--warmup-iterations", type=int, default=1)
     control_plane_benchmark.add_argument("--seed", type=int, default=1)
+    control_plane_benchmark.add_argument("--fail-workers", type=int, default=0)
     control_plane_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     capacity_check = subparsers.add_parser(
@@ -489,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.iterations,
                 args.warmup_iterations,
                 args.seed,
+                args.fail_workers,
             )
             print(report.to_json() if args.json else control_plane_benchmark_summary(report))
             return 0 if report.passed else 1

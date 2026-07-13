@@ -30,6 +30,32 @@ class DistributedBenchmarkTest(unittest.TestCase):
         self.assertEqual(payload["results"]["reportsAccepted"], 6)
         self.assertEqual(len(report.cycle_durations_ms), 2)
 
+    def test_benchmark_reassigns_after_worker_loss_and_rejects_stale_report(self):
+        report = run_control_plane_benchmark(
+            stream_count=130,
+            worker_count=10,
+            iterations=2,
+            warmup_iterations=1,
+            seed=17,
+            failed_worker_count=1,
+        )
+        payload = report.payload()
+
+        self.assertTrue(report.passed)
+        self.assertEqual(payload["workload"]["failedWorkers"], ["worker-1"])
+        self.assertEqual(payload["results"]["reportsAccepted"], 18)
+        self.assertEqual(payload["results"]["staleReportsRejected"], 1)
+        self.assertEqual(payload["results"]["minimumReassignments"], 13)
+        self.assertGreater(payload["results"]["excessReassignments"], 0)
+        self.assertEqual(
+            payload["results"]["reassignedStreams"],
+            payload["results"]["minimumReassignments"]
+            + payload["results"]["excessReassignments"],
+        )
+        self.assertGreaterEqual(payload["results"]["failoverDurationMs"], 0)
+        self.assertEqual(sum(payload["results"]["assignmentsPerWorker"].values()), 130)
+        self.assertNotIn("worker-1", payload["results"]["assignmentsPerWorker"])
+
     def test_assignment_invariant_rejects_duplicate_owner(self):
         assignments = {
             "worker-1": {

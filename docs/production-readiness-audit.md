@@ -662,6 +662,12 @@ command checks JSON evidence/policy inputs against
 remaining proposed harnesses, and production-like evidence are not implemented;
 harness availability is not scale admission.
 
+The control-plane benchmark also supports process-local worker removal. Its
+1,300-stream/ten-worker/one-loss run preserved complete unique ownership and
+rejected the failed worker's stale report, but moved 1,174 assignments where 130
+were minimally required. This is churn evidence against the current local
+round-robin scheduler, not durable lease, partition, HA, or capacity evidence.
+
 CI should run unit/contract/security fixture tests. Representative load, soak, failover, and DR run in a production-like scheduled environment and publish immutable reports tied to code, config, infrastructure version, and dataset.
 
 A workload manifest must include schema version, random seed, target scale, SRT/DASH and generated/external percentages, region/zone placement, check profiles and cadences, endpoint health/latency/malformed distributions, event-storm schedule, worker shape/count/concurrency, infrastructure versions, duration, and expected invariants. The immutable evidence manifest must include source commit, dirty-state declaration, container/image digests, infrastructure/config/workload hashes, start/end timestamps, command and exit status, raw artifact locations and SHA-256 hashes, summarized p50/p95/p99 metrics, acceptance-policy version, pass/fail per criterion, skipped checks with reasons, and approving owner. A verifier must fail closed when required fields or artifacts are absent.

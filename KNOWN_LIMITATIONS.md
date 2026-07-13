@@ -81,6 +81,10 @@
   neither distributed load nor capacity evidence. `worker-benchmark` can now
   fail unless every assignment starts validation across measured cycles; that
   proves cursor coverage, not detection freshness or sustained capacity.
+- The in-process control-plane benchmark can inject worker loss and proves
+  survivor coverage plus stale-report rejection. The current round-robin local
+  scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run
+  where only 130 moves were required; stable durable placement remains open.
 
 ## Monitoring
 

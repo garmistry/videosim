@@ -545,6 +545,21 @@ The report must say `scope=in_process_control_plane_only`,
 coverage, unique ownership, contract metadata, and report acceptance in one
 process. It does not run SRT/DASH media checks or satisfy a scale-admission gate.
 
+To inject one process-local worker loss against target plus 30% logical
+headroom:
+
+```sh
+python3 -m videosim control-plane-benchmark \
+  --streams 1300 --workers 10 --fail-workers 1 \
+  --iterations 3 --warmup-iterations 1 --seed 17 --json
+```
+
+Require complete assignments across the nine survivors and one
+`staleReportsRejected`. Compare `reassignedStreams` with
+`minimumReassignments`; `excessReassignments` is avoidable placement churn. This
+uses process-local worker removal and does not exercise PostgreSQL leases, TTL,
+network partitions, or infrastructure failure domains.
+
 Measure the real worker probe path against a captured state scenario:
 
 For the deterministic DASH matrix, start the blocking fixture service in one

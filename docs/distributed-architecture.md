@@ -91,7 +91,10 @@ VideoSim should split into a master control plane and many worker nodes:
   all-blocked capacity produces explicit shortfall instead of new authority on
   a worker that cannot deliver results.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
-- `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
+- `python -m videosim control-plane-benchmark` exercises deterministic in-process
+  assignment/report invariants and optional worker removal. It requires complete
+  survivor coverage, rejects failed-worker stale reports, and reports avoidable
+  placement churn while explicitly disclaiming durable or media capacity.
 - `python -m videosim worker-benchmark` runs the real monitor/media-probe path
   for one worker from a hashed exported-state scenario. It reports cycle/CPU
   percentiles, outcomes, unique validation-start coverage, peak RSS, and

@@ -91,6 +91,11 @@ implementation and must pass before those milestones advance.
   admissions per cycle. Its 30 ms stream and 1 ms aggregate budgets are pressure
   controls, not approved freshness SLOs, and the run is not a soak or capacity
   curve.
+- Process-local failure injection covers complete survivor assignment and stale
+  report rejection for 1,300 logical streams after one of ten workers is
+  removed. It also exposes 1,044 excess assignment moves above the 130 required;
+  stable durable placement, lease-TTL expiry, partitions, and real failure-domain
+  recovery remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

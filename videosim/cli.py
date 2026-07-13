@@ -246,8 +246,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="compose fixture states into a deterministic logical-stream scenario",
     )
     fixture_scenario.add_argument("--manifest", required=True)
-    fixture_scenario.add_argument("--srt-state", required=True)
-    fixture_scenario.add_argument("--dash-state", required=True)
+    fixture_scenario.add_argument("--srt-state", action="append", required=True)
+    fixture_scenario.add_argument("--dash-state", action="append", required=True)
     fixture_scenario.add_argument("--state-path", required=True)
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")

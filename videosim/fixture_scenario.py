@@ -5,6 +5,7 @@ import json
 import math
 import random
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 from .control_plane import MAX_REPORT_STREAMS
@@ -126,11 +127,48 @@ def load_protocol_fixture_state(path: str | Path, protocol: str) -> tuple[dict, 
     return fixtures, digest
 
 
+def load_protocol_fixture_states(
+    paths: str | Path | Sequence[str | Path], protocol: str
+) -> tuple[dict[str, list[dict]], tuple[str, ...]]:
+    state_paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
+    if not state_paths:
+        raise ValueError(f"{protocol} fixture states must not be empty")
+    combined = {behavior: [] for behavior in BEHAVIORS}
+    digests = []
+    prior_endpoints = set()
+    for path in state_paths:
+        fixtures, digest = load_protocol_fixture_state(path, protocol)
+        state_endpoints = {
+            stream["endpoint"]
+            for behavior in BEHAVIORS
+            for stream in fixtures[behavior]
+        }
+        overlap = prior_endpoints & state_endpoints
+        if overlap:
+            raise ValueError(
+                f"{protocol} fixture states contain duplicate endpoint {min(overlap)}"
+            )
+        prior_endpoints.update(state_endpoints)
+        digests.append(digest)
+        for behavior in BEHAVIORS:
+            combined[behavior].extend(fixtures[behavior])
+    for behavior in BEHAVIORS:
+        combined[behavior].sort(key=lambda stream: (stream["endpoint"], stream["id"]))
+    return combined, tuple(digests)
+
+
+def combined_fixture_digest(digests: tuple[str, ...]) -> str:
+    if len(digests) == 1:
+        return digests[0]
+    payload = json.dumps(digests, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def compose_fixture_scenario(
     manifest: dict,
     manifest_sha256: str,
     fixtures: dict[str, dict[str, list[dict]]],
-    fixture_digests: dict[str, str],
+    fixture_digests: dict[str, tuple[str, ...]],
 ) -> dict:
     protocol_counts = _allocate(
         manifest["streamCount"], manifest["protocolPercent"], PROTOCOLS
@@ -162,7 +200,16 @@ def compose_fixture_scenario(
     return {
         "schemaVersion": "videosim.fixture-scenario-state/v1",
         "fixtureScenarioSha256": manifest_sha256,
-        "fixtureStateSha256": fixture_digests,
+        "fixtureStateSha256": {
+            protocol: combined_fixture_digest(fixture_digests[protocol])
+            for protocol in PROTOCOLS
+        },
+        "fixtureStateSha256s": {
+            protocol: list(fixture_digests[protocol]) for protocol in PROTOCOLS
+        },
+        "fixtureStateCounts": {
+            protocol: len(fixture_digests[protocol]) for protocol in PROTOCOLS
+        },
         "logicalStreamsShareEndpoints": shared_endpoints,
         "scenarioLimitations": [
             (
@@ -179,14 +226,17 @@ def compose_fixture_scenario(
 
 
 def run_fixture_scenario(
-    manifest_path: str, srt_state_path: str, dash_state_path: str, state_path: str
+    manifest_path: str,
+    srt_state_paths: str | Path | Sequence[str | Path],
+    dash_state_paths: str | Path | Sequence[str | Path],
+    state_path: str,
 ) -> int:
     manifest, manifest_digest = load_fixture_scenario_manifest(manifest_path)
     fixtures = {}
     digests = {}
-    for protocol, path in (("srt", srt_state_path), ("dash", dash_state_path)):
-        fixtures[protocol], digests[protocol] = load_protocol_fixture_state(
-            path, protocol
+    for protocol, paths in (("srt", srt_state_paths), ("dash", dash_state_paths)):
+        fixtures[protocol], digests[protocol] = load_protocol_fixture_states(
+            paths, protocol
         )
     state = compose_fixture_scenario(manifest, manifest_digest, fixtures, digests)
     write_fixture_state(state_path, state)

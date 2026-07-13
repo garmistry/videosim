@@ -172,6 +172,69 @@ class FixtureScenarioTest(unittest.TestCase):
             "distinct protocol endpoint", scenario["scenarioLimitations"][0]
         )
 
+    def test_multiple_fixture_state_shards_compose_distinct_urls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            states = {protocol: [] for protocol in ("srt", "dash")}
+            for protocol in states:
+                for shard in range(3):
+                    manifest, digest = load_fixture_manifest(
+                        ROOT / f"scale/fixtures/{protocol}-matrix.json"
+                    )
+                    manifest["advertisedHost"] = f"{protocol}-{shard}.example.test"
+                    manifest["behaviorEndpointCounts"] = {
+                        behavior: 2
+                        for behavior in ("healthy", "slow", "dead", "malformed")
+                    }
+                    path = Path(directory) / f"{protocol}-{shard}.json"
+                    path.write_text(
+                        json.dumps(fixture_state(manifest, digest)), encoding="utf-8"
+                    )
+                    states[protocol].append(str(path))
+
+            manifest = json.loads(
+                (ROOT / "scale/fixtures/mixed-1000.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest["streamCount"] = 48
+            manifest["behaviorPercent"] = {
+                behavior: 25
+                for behavior in ("healthy", "slow", "dead", "malformed")
+            }
+            manifest_path = Path(directory) / "scenario.json"
+            output = Path(directory) / "output.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with patch("builtins.print"):
+                run_fixture_scenario(
+                    str(manifest_path), states["srt"], states["dash"], str(output)
+                )
+            scenario = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(scenario["fixtureStateCounts"], {"srt": 3, "dash": 3})
+        self.assertEqual(len(scenario["fixtureStateSha256s"]["srt"]), 3)
+        self.assertEqual(len(scenario["fixtureStateSha256s"]["dash"]), 3)
+        self.assertFalse(scenario["logicalStreamsShareEndpoints"])
+        self.assertEqual(len(scenario["streams"]), 48)
+        self.assertEqual(
+            len({stream["endpoint"] for stream in scenario["streams"]}), 48
+        )
+
+    def test_multiple_fixture_state_shards_reject_duplicate_endpoints(self):
+        with tempfile.TemporaryDirectory() as directory:
+            srt = self.write_fixture_state(directory, "srt")
+            duplicate = Path(directory) / "srt-duplicate.json"
+            duplicate.write_bytes(srt.read_bytes())
+            dash = self.write_fixture_state(directory, "dash")
+
+            with self.assertRaisesRegex(ValueError, "duplicate endpoint"):
+                run_fixture_scenario(
+                    str(ROOT / "scale/fixtures/mixed-1000.json"),
+                    [str(srt), str(duplicate)],
+                    [str(dash)],
+                    str(Path(directory) / "output.json"),
+                )
+
     def test_cli_delegates_fixture_scenario(self):
         with patch("videosim.cli.run_fixture_scenario", return_value=0) as run:
             code = main(
@@ -190,7 +253,7 @@ class FixtureScenarioTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         run.assert_called_once_with(
-            "scenario.json", "srt.json", "dash.json", "state.json"
+            "scenario.json", ["srt.json"], ["dash.json"], "state.json"
         )
 
 

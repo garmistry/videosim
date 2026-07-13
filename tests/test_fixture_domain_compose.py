@@ -1,5 +1,6 @@
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -7,12 +8,42 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from videosim.fixture_fleet import fixture_state, load_fixture_manifest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.fixture-domain.yml"
+STARTUP = runpy.run_path(str(ROOT / "scripts/fixture-domain-startup.py"))
 STARTUP_INTEGRATION = (
     os.environ.get("VIDEOSIM_FIXTURE_STARTUP_INTEGRATION") == "1"
 )
+
+
+class FixtureDomainStartupTest(unittest.TestCase):
+    def test_inventory_requires_every_declared_endpoint_to_be_distinct(self):
+        manifest_path = ROOT / "scale/fixtures/srt-endpoints-220-domain.json"
+        manifest, digest = load_fixture_manifest(manifest_path)
+        state = fixture_state(manifest, digest)
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "srt-state.json"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            inventory = STARTUP["validate_fixture_inventory"](
+                state_path, manifest_path, "srt"
+            )
+
+            self.assertEqual(inventory["streamCount"], 220)
+            self.assertEqual(inventory["distinctEndpointCount"], 220)
+            self.assertEqual(
+                inventory["behaviorEndpointCounts"],
+                {"healthy": 176, "slow": 22, "dead": 11, "malformed": 11},
+            )
+
+            state["streams"][1]["endpoint"] = state["streams"][0]["endpoint"]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "duplicate endpoints"):
+                STARTUP["validate_fixture_inventory"](
+                    state_path, manifest_path, "srt"
+                )
 
 
 @unittest.skipUnless(shutil.which("docker"), "Docker Compose is not installed")
@@ -106,6 +137,9 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
                 (artifact_dir / "result.json").read_text(encoding="utf-8")
             )
             docker_log = (artifact_dir / "docker.log").read_text(encoding="utf-8")
+            docker_stats = (artifact_dir / "docker-stats.json").read_text(
+                encoding="utf-8"
+            )
             compose_ps = (artifact_dir / "compose-ps.txt").read_text(
                 encoding="utf-8"
             )
@@ -113,9 +147,12 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(evidence["passed"])
         self.assertIn("dash_health_api", evidence["checks"])
+        self.assertIn("fixture_inventory_validated", evidence["checks"])
         self.assertIn("srt_dash_media_validated", evidence["checks"])
+        self.assertIn("docker_resources_captured", evidence["checks"])
         self.assertIn("docker_logs_clean", evidence["checks"])
         self.assertTrue(docker_log.strip())
+        self.assertTrue(docker_stats.strip())
         self.assertNotIn("Traceback (most recent call last)", docker_log)
         self.assertIn("srt", compose_ps)
         self.assertIn("dash", compose_ps)
@@ -123,6 +160,9 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
             evidence["validationOutcomesByProtocol"],
             {"dash": {"success": 1}, "srt": {"success": 1}},
         )
+        for inventory in evidence["fixtureInventory"].values():
+            self.assertEqual(inventory["streamCount"], 4)
+            self.assertEqual(inventory["distinctEndpointCount"], 4)
 
 
 if __name__ == "__main__":

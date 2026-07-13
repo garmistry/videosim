@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +20,67 @@ CRITICAL_LOG_MARKERS = (
     "traceback (most recent call last)",
     "fixture process exited",
 )
+FIXTURE_MANIFESTS = {
+    "srt": (
+        "VIDEOSIM_SRT_FIXTURE_MANIFEST",
+        "scale/fixtures/srt-endpoints-220-domain.json",
+    ),
+    "dash": (
+        "VIDEOSIM_DASH_FIXTURE_MANIFEST",
+        "scale/fixtures/dash-endpoints-220-domain.json",
+    ),
+}
+
+
+def validate_fixture_inventory(
+    state_path: Path, manifest_path: Path, protocol: str
+) -> dict:
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    state_bytes = state_path.read_bytes()
+    state = json.loads(state_bytes)
+    expected_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    expected_counts = manifest.get("behaviorEndpointCounts") or {
+        behavior: 1 for behavior in ("healthy", "slow", "dead", "malformed")
+    }
+    streams = state.get("streams")
+    if state.get("schemaVersion") != "videosim.fixture-state/v1":
+        raise RuntimeError(f"{protocol} fixture state has an invalid schema")
+    if state.get("fixtureManifestSha256") != expected_sha256:
+        raise RuntimeError(f"{protocol} fixture state does not match its manifest")
+    if not isinstance(streams, list):
+        raise RuntimeError(f"{protocol} fixture state streams must be an array")
+    actual_counts = Counter(stream.get("fixtureBehavior") for stream in streams)
+    if dict(actual_counts) != expected_counts:
+        raise RuntimeError(
+            f"{protocol} fixture behavior counts are {dict(actual_counts)}, "
+            f"expected {expected_counts}"
+        )
+    if state.get("behaviorEndpointCounts") != expected_counts:
+        raise RuntimeError(f"{protocol} fixture state reports incorrect behavior counts")
+    if any(
+        stream.get("protocol") != protocol
+        or stream.get("source") != "external"
+        or stream.get("status") != "running"
+        for stream in streams
+    ):
+        raise RuntimeError(f"{protocol} fixture state contains an invalid stream")
+    ids = [stream.get("id") for stream in streams]
+    endpoints = [stream.get("endpoint") for stream in streams]
+    if any(not isinstance(value, str) or not value for value in (*ids, *endpoints)):
+        raise RuntimeError(f"{protocol} fixture state contains an empty ID or endpoint")
+    if len(set(ids)) != len(ids):
+        raise RuntimeError(f"{protocol} fixture state contains duplicate stream IDs")
+    if len(set(endpoints)) != len(endpoints):
+        raise RuntimeError(f"{protocol} fixture state contains duplicate endpoints")
+    return {
+        "protocol": protocol,
+        "streamCount": len(streams),
+        "distinctEndpointCount": len(set(endpoints)),
+        "behaviorEndpointCounts": expected_counts,
+        "manifestSha256": expected_sha256,
+        "stateSha256": hashlib.sha256(state_bytes).hexdigest(),
+    }
 
 
 class FixtureDomainStartup:
@@ -108,6 +171,38 @@ class FixtureDomainStartup:
                     stderr=subprocess.STDOUT,
                     timeout=60,
                 )
+
+    def capture_resource_snapshot(self):
+        path = self.artifact_dir / "docker-stats.json"
+        with path.open("w", encoding="utf-8") as output:
+            result = self.compose(
+                "stats",
+                "--no-stream",
+                "--format",
+                "json",
+                check=False,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                timeout=60,
+            )
+        if result.returncode or not path.read_text(encoding="utf-8").strip():
+            raise RuntimeError("fixture Docker resource snapshot failed")
+
+    def validate_inventory(self) -> dict:
+        inventory = {}
+        for protocol, (variable, default) in FIXTURE_MANIFESTS.items():
+            manifest_path = Path(self.compose_env.get(variable, default))
+            if not manifest_path.is_absolute():
+                manifest_path = ROOT / manifest_path
+            inventory[protocol] = validate_fixture_inventory(
+                self.state_dir / f"{protocol}-state.json",
+                manifest_path,
+                protocol,
+            )
+        (self.artifact_dir / "fixture-inventory.json").write_text(
+            json.dumps(inventory, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return inventory
 
     def dash_health_api_ready(self) -> bool:
         result = self.compose(
@@ -260,6 +355,8 @@ class FixtureDomainStartup:
                 ),
             )
             result["checks"].append("fixture_services_running")
+            result["fixtureInventory"] = self.validate_inventory()
+            result["checks"].append("fixture_inventory_validated")
 
             self.wait_for(
                 "DASH health API",
@@ -271,6 +368,9 @@ class FixtureDomainStartup:
                 "validationOutcomesByProtocol"
             ]
             result["checks"].append("srt_dash_media_validated")
+
+            self.capture_resource_snapshot()
+            result["checks"].append("docker_resources_captured")
 
             self.capture_artifacts()
             captured = True

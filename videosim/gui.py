@@ -2222,6 +2222,13 @@ def durable_control_store(state: GuiState) -> PostgresControlPlaneStore | None:
 
 def durable_feed_record(state: GuiState, registration: dict) -> FeedRecord:
     try:
+        feed_id = registration.get("id")
+        if (
+            not isinstance(feed_id, str)
+            or not feed_id
+            or len(feed_id) > MAX_IDENTIFIER_LENGTH
+        ):
+            raise ValueError("feed ID must be a bounded non-empty string")
         stream = FeedRecord(**registration)
         if stream.source == "external":
             state.security.validate_external_endpoint(stream.external_url)

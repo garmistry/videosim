@@ -1387,6 +1387,25 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
 
         self.assertIn("invalid durable feed configuration", failed["error"])
 
+    def test_operator_catalog_fails_closed_on_overlong_durable_feed_id(self):
+        long_id = "x" * 513
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE feeds
+                    SET id = %s, config = jsonb_set(config, '{id}', to_jsonb(%s::text))
+                    WHERE tenant_id = %s AND id = %s
+                    """,
+                    (long_id, long_id, self.tenant_id, self.stream_id),
+                )
+
+        _, failed = self.get_json(
+            "/api/operator/feeds", {"limit": "10"}, expected_status=503
+        )
+
+        self.assertIn("invalid durable feed configuration", failed["error"])
+
     def test_concurrent_v2_assignment_polls_partition_streams_once(self):
         second_stream = self.state.create_stream(
             name="Concurrent worker v2 feed",

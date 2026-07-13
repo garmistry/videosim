@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from videosim.alarm_consistency import run_alarm_consistency
 from videosim.control_plane_load import run_control_plane_load
 from videosim.migrations import PostgresMigrator
 from videosim.postgres_store import PostgresControlPlaneStore
@@ -104,9 +105,9 @@ class ControlPlaneLoadPostgresIntegrationTest(unittest.TestCase):
                 report = run_control_plane_load(
                     database_url,
                     str(workload_path),
-                    3,
+                    8,
                     tick_seconds=0.05,
-                    worker_freshness_seconds=1,
+                    worker_freshness_seconds=3,
                 )
 
                 self.assertTrue(report.passed, report.errors)
@@ -142,6 +143,75 @@ class ControlPlaneLoadPostgresIntegrationTest(unittest.TestCase):
                 self.assertEqual(report.metrics["reportsAccepted"], 55)
                 self.assertEqual(report.metrics["resultsAccepted"], 5280)
                 self.assertEqual(report.metrics["resultOutboxEvents"], 55)
+        finally:
+            _database_command(DATABASE_URL, "DROP", database_name)
+
+    def test_p0_exact_candidate_raises_and_clears_endpoint_fault_storm(self):
+        database_name = f"videosim_load_{uuid.uuid4().hex}"
+        database_url = _database_url(DATABASE_URL, database_name)
+        _database_command(DATABASE_URL, "CREATE", database_name)
+        try:
+            PostgresMigrator(database_url).apply()
+            with tempfile.TemporaryDirectory() as directory:
+                workload = json.loads(WORKLOAD_PATH.read_text(encoding="utf-8"))
+                workload["eventStorms"] = [
+                    {"kind": "endpoint-fault-storm", "offsetSeconds": 0}
+                ]
+                workload_path = Path(directory, "workload.json")
+                workload_path.write_text(json.dumps(workload), encoding="utf-8")
+
+                report = run_control_plane_load(
+                    database_url,
+                    str(workload_path),
+                    0.001,
+                )
+
+                self.assertTrue(report.passed, report.errors)
+                event = report.metrics["events"][0]
+                self.assertEqual(event["status"], "recovered")
+                self.assertTrue(event["syntheticControlPlaneOnly"])
+                self.assertEqual(event["checkId"], "feed_reachable")
+                self.assertEqual(event["affectedStreams"], 1320)
+                self.assertEqual(event["workers"], 33)
+                self.assertEqual(event["reportsAccepted"], 66)
+                self.assertEqual(
+                    event["raiseAlarmState"],
+                    {
+                        "activeAlarms": 1320,
+                        "pendingAlarms": 0,
+                        "raisedEvents": 1320,
+                        "clearedEvents": 0,
+                        "alarmOutboxEvents": 1320,
+                    },
+                )
+                self.assertEqual(
+                    event["recoveryAlarmState"],
+                    {
+                        "activeAlarms": 0,
+                        "pendingAlarms": 0,
+                        "raisedEvents": 1320,
+                        "clearedEvents": 1320,
+                        "alarmOutboxEvents": 2640,
+                    },
+                )
+                self.assertEqual(report.metrics["reportsAccepted"], 99)
+                self.assertEqual(report.metrics["resultsAccepted"], 5280)
+                self.assertEqual(report.metrics["resultOutboxEvents"], 99)
+                self.assertEqual(report.metrics["activeEndpointAlarms"], 0)
+                self.assertEqual(report.metrics["pendingEndpointAlarms"], 0)
+                self.assertEqual(report.metrics["endpointAlarmEvents"], 2640)
+                self.assertEqual(report.metrics["alarmOutboxEvents"], 2640)
+
+                consistency = run_alarm_consistency(
+                    database_url,
+                    str(workload_path),
+                    tenant_id=report.tenant_id,
+                )
+                self.assertTrue(consistency.passed, consistency.errors)
+                self.assertEqual(consistency.metrics["currentAlarms"], 1320)
+                self.assertEqual(consistency.metrics["pendingAlarms"], 0)
+                self.assertEqual(consistency.metrics["alarmEvents"], 2640)
+                self.assertEqual(consistency.metrics["alarmOutboxEvents"], 2640)
         finally:
             _database_command(DATABASE_URL, "DROP", database_name)
 

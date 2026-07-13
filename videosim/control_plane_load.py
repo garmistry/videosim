@@ -21,6 +21,7 @@ from .worker import worker_resource_snapshot
 REPORT_SCHEMA = "videosim.control-plane-load/v1"
 FAILOVER_P95_LIMIT_SECONDS = 45
 FAILOVER_P99_LIMIT_SECONDS = 90
+ENDPOINT_FAULT_CHECK_ID = "feed_reachable"
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,10 @@ def human_summary(report: ControlPlaneLoadReport) -> str:
         (event for event in metrics.get("events", []) if event["kind"] == "worker-domain-loss"),
         None,
     )
+    endpoint_fault = next(
+        (event for event in metrics.get("events", []) if event["kind"] == "endpoint-fault-storm"),
+        None,
+    )
     summary = (
         f"Control-plane load {'passed' if report.passed else 'failed'}: "
         f"streams={metrics.get('desiredStreams', 0)} "
@@ -155,6 +160,7 @@ def human_summary(report: ControlPlaneLoadReport) -> str:
         f"ticks={metrics.get('ticks', 0)} "
         f"reports={metrics.get('reportsAccepted', 0)}"
         + (f" domainLoss={loss['status']}" if loss else "")
+        + (f" endpointFault={endpoint_fault['status']}" if endpoint_fault else "")
     )
     return summary if not report.errors else summary + "\n" + "\n".join(
         f"- {error}" for error in report.errors
@@ -207,10 +213,15 @@ def _load_spec(workload: dict) -> dict:
     domain_loss_count = sum(
         event["kind"] == "worker-domain-loss" for event in parsed_events
     )
+    endpoint_fault_count = sum(
+        event["kind"] == "endpoint-fault-storm" for event in parsed_events
+    )
     if domain_loss_count > spec["unavailable"]:
         raise ValueError("workload declares more simultaneous domain losses than allowed")
     if domain_loss_count > 1:
         raise ValueError("control-plane-load currently supports one worker-domain-loss event")
+    if endpoint_fault_count > 1:
+        raise ValueError("control-plane-load currently supports one endpoint-fault-storm event")
     parsed_events.sort(key=lambda item: (item["offsetSeconds"], item["kind"]))
     return spec | {"profiles": tuple(parsed_profiles), "events": tuple(parsed_events)}
 
@@ -300,6 +311,40 @@ def _check_assignment_capacity(assignments, feeds, spec):
                 raise ValueError(f"workload overfills {worker_id} {protocol.upper()} capacity")
 
 
+def _ingest_results(
+    store,
+    worker_id,
+    incarnation_id,
+    results,
+    metrics,
+    report_ms,
+    errors,
+):
+    operation_started = time.perf_counter()
+    disposition = store.ingest_report(
+        FencedReport(
+            uuid.uuid4(),
+            store.tenant_id,
+            worker_id,
+            incarnation_id,
+            results,
+        )
+    )
+    report_ms.append((time.perf_counter() - operation_started) * 1000)
+    metrics["reportsAccepted"] += 1
+    metrics["resultsAccepted"] += len(disposition.accepted_result_ids)
+    metrics["duplicateResults"] += len(disposition.duplicate_result_ids)
+    metrics["resultsRejected"] += len(disposition.rejected)
+    complete = (
+        len(disposition.accepted_result_ids) == len(results)
+        and not disposition.duplicate_result_ids
+        and not disposition.rejected
+    )
+    if not complete:
+        errors.append(f"report disposition was incomplete: {worker_id}")
+    return complete
+
+
 def _run_load(
     store,
     workers,
@@ -356,27 +401,15 @@ def _run_load(
                     for stream_id in assignments[worker_id]
                     for profile_index in due
                 )
-                operation_started = time.perf_counter()
-                disposition = store.ingest_report(
-                    FencedReport(
-                        uuid.uuid4(),
-                        store.tenant_id,
-                        worker_id,
-                        incarnation_id,
-                        results,
-                    )
-                )
-                report_ms.append((time.perf_counter() - operation_started) * 1000)
-                metrics["reportsAccepted"] += 1
-                metrics["resultsAccepted"] += len(disposition.accepted_result_ids)
-                metrics["duplicateResults"] += len(disposition.duplicate_result_ids)
-                metrics["resultsRejected"] += len(disposition.rejected)
-                if (
-                    len(disposition.accepted_result_ids) != len(results)
-                    or disposition.duplicate_result_ids
-                    or disposition.rejected
+                if not _ingest_results(
+                    store,
+                    worker_id,
+                    incarnation_id,
+                    results,
+                    metrics,
+                    report_ms,
+                    errors,
                 ):
-                    errors.append(f"report disposition was incomplete: {worker_id}")
                     break
             if loss_state and loss_state.get("recovered") and not errors:
                 loss_state["event"]["postRecoveryReports"] += len(active_workers)
@@ -420,6 +453,35 @@ def _run_load(
                     time.perf_counter() - load_started, 6
                 )
                 next_due = [time.perf_counter()] * len(spec["profiles"])
+        endpoint_event = next(
+            (
+                item
+                for item in metrics["events"]
+                if item["kind"] == "endpoint-fault-storm"
+                and item["status"] == "not_reached"
+                and elapsed >= item["offsetSeconds"]
+            ),
+            None,
+        )
+        if (
+            endpoint_event is not None
+            and metrics["reportWindows"]
+            and (loss_state is None or loss_state.get("recovered"))
+            and not errors
+        ):
+            sequence = _run_endpoint_fault_storm(
+                store,
+                active_workers,
+                assignments,
+                leases,
+                spec,
+                endpoint_event,
+                sequence,
+                load_started,
+                metrics,
+                report_ms,
+                errors,
+            )
         metrics["ticks"] += 1
         tick_ms.append((time.perf_counter() - tick_started) * 1000)
         if errors:
@@ -567,6 +629,154 @@ def _recover_worker_domain(store, workers, spec, state):
     }
 
 
+def _run_endpoint_fault_storm(
+    store,
+    workers,
+    assignments,
+    leases,
+    spec,
+    event,
+    sequence,
+    load_started,
+    metrics,
+    report_ms,
+    errors,
+):
+    initial_errors = len(errors)
+    initial_reports = metrics["reportsAccepted"]
+    event.update(
+        {
+            "status": "running",
+            "syntheticControlPlaneOnly": True,
+            "checkId": ENDPOINT_FAULT_CHECK_ID,
+            "affectedStreams": spec["load"],
+            "workers": len(workers),
+            "triggeredAtSeconds": round(time.perf_counter() - load_started, 6),
+        }
+    )
+    phases = (
+        (
+            "raise",
+            "unhealthy",
+            {
+                "activeAlarms": spec["load"],
+                "pendingAlarms": 0,
+                "raisedEvents": spec["load"],
+                "clearedEvents": 0,
+                "alarmOutboxEvents": spec["load"],
+            },
+        ),
+        (
+            "recovery",
+            "healthy",
+            {
+                "activeAlarms": 0,
+                "pendingAlarms": 0,
+                "raisedEvents": spec["load"],
+                "clearedEvents": spec["load"],
+                "alarmOutboxEvents": spec["load"] * 2,
+            },
+        ),
+    )
+    for phase, status, expected in phases:
+        sequence += 1
+        metrics["reportWindows"] += 1
+        phase_report_ms = []
+        for worker_id, incarnation_id in workers:
+            observed_at = datetime.now(timezone.utc)
+            results = tuple(
+                CheckResult(
+                    uuid.uuid4(),
+                    stream_id,
+                    ENDPOINT_FAULT_CHECK_ID,
+                    leases[stream_id].epoch,
+                    leases[stream_id].config_version,
+                    sequence,
+                    status,
+                    observed_at,
+                    {
+                        "message": f"synthetic endpoint fault storm {phase}",
+                        "synthetic": True,
+                    },
+                )
+                for stream_id in assignments[worker_id]
+            )
+            if not _ingest_results(
+                store,
+                worker_id,
+                incarnation_id,
+                results,
+                metrics,
+                phase_report_ms,
+                errors,
+            ):
+                break
+        report_ms.extend(phase_report_ms)
+        state = _endpoint_alarm_metrics(store)
+        event[f"{phase}AlarmState"] = state
+        event[f"{phase}ReportCommitMs"] = _percentiles(phase_report_ms)
+        event[f"{phase}CompletedAtSeconds"] = round(
+            time.perf_counter() - load_started, 6
+        )
+        mismatches = [
+            f"{field}={state[field]} expected={value}"
+            for field, value in expected.items()
+            if state[field] != value
+        ]
+        if mismatches:
+            errors.append(
+                f"endpoint-fault-storm {phase} projection mismatch: "
+                + ", ".join(mismatches)
+            )
+    event["reportsAccepted"] = metrics["reportsAccepted"] - initial_reports
+    event["status"] = "recovered" if len(errors) == initial_errors else "failed"
+    return sequence
+
+
+def _endpoint_alarm_metrics(store):
+    with store._pool.connection() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM current_alarms
+                 WHERE tenant_id = %s AND monitor_id = %s AND active)
+                    AS active_alarms,
+                (SELECT count(*) FROM current_alarm_pending
+                 WHERE tenant_id = %s AND monitor_id = %s)
+                    AS pending_alarms,
+                (SELECT count(*) FROM alarm_events
+                 WHERE tenant_id = %s AND monitor_id = %s
+                   AND transition = 'raised') AS raised_events,
+                (SELECT count(*) FROM alarm_events
+                 WHERE tenant_id = %s AND monitor_id = %s
+                   AND transition = 'cleared') AS cleared_events,
+                (SELECT count(*) FROM outbox
+                 WHERE subject = 'videosim.alarms.transition.v1'
+                   AND payload->>'tenantId' = %s
+                   AND payload->>'monitorId' = %s) AS alarm_outbox_events
+            """,
+            (
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+            ),
+        ).fetchone()
+    return {
+        "activeAlarms": int(row["active_alarms"]),
+        "pendingAlarms": int(row["pending_alarms"]),
+        "raisedEvents": int(row["raised_events"]),
+        "clearedEvents": int(row["cleared_events"]),
+        "alarmOutboxEvents": int(row["alarm_outbox_events"]),
+    }
+
+
 def _attempt_stale_report(store, workers, state):
     stream_id = min(state["affected"])
     old_lease = state["oldLeases"][stream_id]
@@ -648,7 +858,21 @@ def _database_metrics(store) -> dict:
                 (SELECT count(*) FROM check_results WHERE tenant_id = %s) AS check_results,
                 (SELECT count(*) FROM current_check_state WHERE tenant_id = %s) AS current_checks,
                 (SELECT count(*) FROM outbox
-                 WHERE payload->>'tenantId' = %s) AS result_outbox_events,
+                 WHERE subject = 'videosim.results.accepted.v1'
+                   AND payload->>'tenantId' = %s) AS result_outbox_events,
+                (SELECT count(*) FROM outbox
+                 WHERE subject = 'videosim.alarms.transition.v1'
+                   AND payload->>'tenantId' = %s
+                   AND payload->>'monitorId' = %s) AS alarm_outbox_events,
+                (SELECT count(*) FROM current_alarms
+                 WHERE tenant_id = %s AND monitor_id = %s AND active)
+                    AS active_endpoint_alarms,
+                (SELECT count(*) FROM current_alarm_pending
+                 WHERE tenant_id = %s AND monitor_id = %s)
+                    AS pending_endpoint_alarms,
+                (SELECT count(*) FROM alarm_events
+                 WHERE tenant_id = %s AND monitor_id = %s)
+                    AS endpoint_alarm_events,
                 pg_database_size(current_database()) AS database_bytes
             """,
             (
@@ -662,6 +886,14 @@ def _database_metrics(store) -> dict:
                 store.tenant_id,
                 store.tenant_id,
                 store.tenant_id,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
+                store.tenant_id,
+                ENDPOINT_FAULT_CHECK_ID,
             ),
         ).fetchone()
         worker_rows = connection.execute(
@@ -690,6 +922,10 @@ def _database_metrics(store) -> dict:
         "checkResults": int(row["check_results"]),
         "currentChecks": int(row["current_checks"]),
         "resultOutboxEvents": int(row["result_outbox_events"]),
+        "alarmOutboxEvents": int(row["alarm_outbox_events"]),
+        "activeEndpointAlarms": int(row["active_endpoint_alarms"]),
+        "pendingEndpointAlarms": int(row["pending_endpoint_alarms"]),
+        "endpointAlarmEvents": int(row["endpoint_alarm_events"]),
         "databaseBytes": int(row["database_bytes"]),
         "assignmentShape": {
             "workers": len(worker_rows),
@@ -722,15 +958,11 @@ def _empty_metrics(spec: dict, worker_freshness_seconds: int) -> dict:
         "events": [
             {
                 **event,
-                "status": (
-                    "not_reached"
-                    if event["kind"] == "worker-domain-loss"
-                    else "out_of_scope"
-                ),
+                "status": "not_reached",
                 **(
-                    {}
-                    if event["kind"] == "worker-domain-loss"
-                    else {"reason": "endpoint faults require independent media probes"}
+                    {"syntheticControlPlaneOnly": True}
+                    if event["kind"] == "endpoint-fault-storm"
+                    else {}
                 ),
             }
             for event in spec["events"]
@@ -778,6 +1010,32 @@ def _check_metrics(spec: dict, metrics: dict, errors: list[str]):
             errors.append("worker-domain-loss authority recovery exceeded the p95 limit")
         if recovery["p99"] > FAILOVER_P99_LIMIT_SECONDS:
             errors.append("worker-domain-loss authority recovery exceeded the p99 limit")
+    endpoint_fault = next(
+        (event for event in metrics["events"] if event["kind"] == "endpoint-fault-storm"),
+        None,
+    )
+    if endpoint_fault and endpoint_fault["status"] == "failed":
+        errors.append("endpoint-fault-storm did not complete cleanly")
+    if endpoint_fault and endpoint_fault["status"] == "recovered":
+        for field, expected in (
+            ("affectedStreams", spec["load"]),
+            ("reportsAccepted", endpoint_fault["workers"] * 2),
+        ):
+            if endpoint_fault.get(field) != expected:
+                errors.append(
+                    f"endpoint-fault-storm {field} is {endpoint_fault.get(field)}; "
+                    f"expected {expected}"
+                )
+        for field, expected in (
+            ("activeEndpointAlarms", 0),
+            ("pendingEndpointAlarms", 0),
+            ("endpointAlarmEvents", spec["load"] * 2),
+            ("alarmOutboxEvents", spec["load"] * 2),
+        ):
+            if metrics.get(field) != expected:
+                errors.append(
+                    f"{field} is {metrics.get(field)}; expected {expected}"
+                )
 
 
 def _assert_empty_database(store):

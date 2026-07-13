@@ -99,7 +99,9 @@ def _validate_dash(config: VideoFeedConfig, report: ValidationReport) -> Validat
     audio_segment = _wait_for_dash_segment(config, "audio", manifest)
     report.video_present = "video" in adaptations and bool(video_segment)
     report.audio_present = "audio" in adaptations and bool(audio_segment)
-    report.captions_present = "text" in adaptations and _dash_captions_present(config, manifest)
+    report.captions_present = "text" in adaptations and (
+        _external_dash(config) or _dash_captions_present(config, manifest)
+    )
     if config.passive:
         report.reachable = report.video_present or report.audio_present or report.captions_present
         if not report.reachable:
@@ -341,8 +343,10 @@ def _wait_for_dash_adaptations(config: VideoFeedConfig, manifest: Path | bytes, 
     budget_limited = wait_seconds < timeout
     deadline = time.monotonic() + wait_seconds
     adaptations = _dash_adaptations(manifest)
-    while not isinstance(manifest, bytes) and config.captions and "text" not in adaptations and time.monotonic() < deadline:
+    while config.captions and "text" not in adaptations and time.monotonic() < deadline:
         time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        if _external_dash(config):
+            manifest = _fetch_url(config.endpoint) or manifest
         adaptations = _dash_adaptations(manifest)
     if budget_limited and time.monotonic() >= deadline:
         raise TimeoutError("stream probe budget exhausted")
@@ -528,14 +532,18 @@ def _node_base_url(base: str, element) -> str:
 
 
 def _segment_list_urls(representation, adaptation, base_url: str) -> list[str]:
-    segment_list = _first_child(representation, "SegmentList") or _first_child(adaptation, "SegmentList")
+    segment_list = _first_child(representation, "SegmentList")
+    if segment_list is None:
+        segment_list = _first_child(adaptation, "SegmentList")
     if segment_list is None:
         return []
     return [urljoin(base_url, segment.attrib["media"]) for segment in _children(segment_list, "SegmentURL") if segment.attrib.get("media")]
 
 
 def _segment_template_urls(representation, adaptation, base_url: str) -> list[str]:
-    template = _first_child(representation, "SegmentTemplate") or _first_child(adaptation, "SegmentTemplate")
+    template = _first_child(representation, "SegmentTemplate")
+    if template is None:
+        template = _first_child(adaptation, "SegmentTemplate")
     if template is None or not template.attrib.get("media"):
         return []
     try:

@@ -80,6 +80,10 @@ implementation and must pass before those milestones advance.
   representative per-check baseline, or saturation curve yet. `worker-benchmark`
   can produce the single-worker real-probe report from an exported state, but no
   representative scenario result has been committed or admitted.
+- The manifest-driven DASH fixture fleet has unit and one-cycle Linux coverage
+  for healthy, slow, dead, and malformed endpoints. Equivalent SRT transport
+  fixtures, generated/external source cross-product, storm scheduling, and
+  long-run fixture reliability remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

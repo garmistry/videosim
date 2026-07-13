@@ -547,6 +547,23 @@ process. It does not run SRT/DASH media checks or satisfy a scale-admission gate
 
 Measure the real worker probe path against a captured state scenario:
 
+For the deterministic DASH matrix, start the blocking fixture service in one
+terminal:
+
+```sh
+python3 -m videosim fixture-fleet \
+  --manifest scale/fixtures/dash-matrix.json \
+  --state-path artifacts/dash-fixtures/state.json
+```
+
+The checked-in manifest advertises `127.0.0.1`. When the benchmark runs in a
+different container on the same network, add `--advertised-host <fixture DNS
+name>`. The service launches the existing healthy DASH generator, serves its
+manifest/segments, delays every slow response for 30 seconds, returns `503` for
+dead, and serves malformed MPD bytes for malformed. Stop it with Ctrl-C.
+
+To benchmark an existing app instead, capture its state:
+
 ```sh
 mkdir -p artifacts/worker-benchmark
 curl -fsS http://127.0.0.1:8080/state.json \

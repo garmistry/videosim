@@ -167,8 +167,18 @@ This command runs no media probes and is not evidence of 1,000-stream monitoring
 Measure one worker against live endpoints from an exported GUI state:
 
 ```sh
+python3 -m videosim fixture-fleet \
+  --manifest scale/fixtures/dash-matrix.json \
+  --state-path artifacts/dash-fixtures/state.json
+```
+
+The blocking fixture service starts one real DASH generator and exposes
+healthy, 30-second slow, unavailable, and malformed endpoints. Run the worker
+benchmark in a second terminal against the generated state file.
+
+```sh
 python3 -m videosim worker-benchmark \
-  --scenario artifacts/worker-state.json \
+  --scenario artifacts/dash-fixtures/state.json \
   --iterations 3 --warmup-iterations 1 \
   --max-concurrent-checks 8 --max-concurrent-deep-checks 2 --json
 ```

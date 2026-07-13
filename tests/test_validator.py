@@ -118,17 +118,24 @@ class ValidatorOutputTest(unittest.TestCase):
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
   <Period>
     <AdaptationSet contentType="video">
-      <SegmentTemplate media="$RepresentationID$_$Number$.ts" startNumber="1"/>
-      <Representation id="video_0"/>
+      <Representation id="video_0">
+        <SegmentTemplate media="$RepresentationID$_$Number$.ts" startNumber="1"/>
+      </Representation>
     </AdaptationSet>
     <AdaptationSet contentType="audio">
-      <SegmentTemplate media="$RepresentationID$_$Number$.ts" startNumber="1"/>
-      <Representation id="audio_0"/>
+      <Representation id="audio_0">
+        <SegmentTemplate media="$RepresentationID$_$Number$.ts" startNumber="1"/>
+      </Representation>
     </AdaptationSet>
     <AdaptationSet contentType="text"><Representation id="caption_0"/></AdaptationSet>
   </Period>
 </MPD>"""
+        initial_manifest = manifest.replace(
+            b'<AdaptationSet contentType="text"><Representation id="caption_0"/></AdaptationSet>',
+            b"",
+        )
         fetched = []
+        manifest_requests = 0
 
         class Response(BytesIO):
             def __enter__(self):
@@ -138,8 +145,12 @@ class ValidatorOutputTest(unittest.TestCase):
                 self.close()
 
         def fake_urlopen(url, timeout=8):
+            nonlocal manifest_requests
             fetched.append(url)
-            return Response(manifest if url.endswith("manifest.mpd") else b"segment")
+            if url.endswith("manifest.mpd"):
+                manifest_requests += 1
+                return Response(initial_manifest if manifest_requests == 1 else manifest)
+            return Response(b"segment")
 
         config = VideoFeedConfig(protocol="dash", external_endpoint="http://example.test/live/manifest.mpd", width=1, height=1)
 

@@ -16,6 +16,7 @@ from .distributed_benchmark import (
 )
 from .feed import FeedError, VideoFeedConfig, run_video_feed, video_pipeline_args
 from .feed_store import SqliteFeedStore, configured_database_url, default_feed_db_path, default_feed_store
+from .fixture_fleet import run_fixture_fleet
 from .gui import GuiState, run_gui
 from .migrations import MigrationError, PostgresMigrator
 from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
@@ -212,6 +213,14 @@ def build_parser() -> argparse.ArgumentParser:
     worker_benchmark.add_argument("--deep-check-interval-seconds", type=float, default=0)
     worker_benchmark.add_argument("--batch-budget-seconds", type=float, default=0)
     worker_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    fixture_fleet = subparsers.add_parser(
+        "fixture-fleet",
+        help="run deterministic media endpoint fixtures and write a benchmark state",
+    )
+    fixture_fleet.add_argument("--manifest", required=True)
+    fixture_fleet.add_argument("--state-path", required=True)
+    fixture_fleet.add_argument("--advertised-host", default="")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -488,6 +497,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(report.to_json() if args.json else worker_benchmark_summary(report))
             return 0 if report.passed else 1
+
+        if args.command == "fixture-fleet":
+            return run_fixture_fleet(
+                args.manifest, args.state_path, args.advertised_host
+            )
 
         if args.command == "worker":
             if args.poll_interval_seconds <= 0:

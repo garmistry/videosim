@@ -4,6 +4,7 @@ node_modules/
 reports/
 artifacts/
 .env.production
+.env.worker-domain
 *.dump
 deploy/certs/*
 !deploy/certs/.gitkeep

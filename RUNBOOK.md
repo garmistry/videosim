@@ -652,6 +652,55 @@ declared domain-loss and endpoint-fault storms and retain every required
 artifact for `capacity-check`. If measured hosts cannot sustain this shape,
 revise the candidate before rerunning rather than weakening the admission gate.
 
+### Boot the candidate worker domains
+
+Run `docker-compose.worker-domain.yml` on three separate Linux hosts. On each
+host, copy `.env.worker-domain.example` to `.env.worker-domain`, replace the
+image placeholder with the same immutable digest, and set
+`VIDEOSIM_FAILURE_DOMAIN` to one of the three zones in the workload manifest.
+Provision `server-ca.crt`, `worker-spool.key`, and 11 worker certificate/key
+pairs whose CN and filename stem exactly match that host's worker IDs. Create
+the configured data directory before startup.
+
+Render, boot, and capture the domain state:
+
+```sh
+set -a
+. ./.env.worker-domain
+set +a
+mkdir -p artifacts
+docker compose --env-file .env.worker-domain \
+  -f docker-compose.worker-domain.yml config --quiet
+docker compose --env-file .env.worker-domain \
+  -f docker-compose.worker-domain.yml pull
+docker compose --env-file .env.worker-domain \
+  -f docker-compose.worker-domain.yml up -d
+docker compose --env-file .env.worker-domain \
+  -f docker-compose.worker-domain.yml ps > artifacts/worker-domain-ps.txt
+curl --fail --silent --show-error \
+  --cacert "$VIDEOSIM_WORKER_CERT_DIR/server-ca.crt" \
+  "$VIDEOSIM_CONTROL_PLANE_HEALTH_URL" > artifacts/control-plane-health.txt
+docker compose --env-file .env.worker-domain \
+  -f docker-compose.worker-domain.yml logs --no-color \
+  > artifacts/worker-domain-docker.log
+```
+
+Repeat on all three hosts. In an OIDC-authenticated Chrome session, open the
+operator `/state.json` endpoint and verify 33 unique candidate worker IDs,
+`pressure.assignedStreams=40` for every worker after convergence, and no
+blocked spool. Retain that response. Treat a restarting container, worker API
+authentication error, assignment shortfall, traceback, or fatal Docker-log
+entry as a failed startup.
+
+At the declared domain-loss offset, stop all 11 services on one host. After the
+lease TTL and assignment-poll bound, the authenticated state must contain 22
+fresh workers at 60 assignments each. The immutable assignment capture must
+also prove 30 SRT and 30 DASH leases per survivor, no duplicate authority, only
+the failed domain's 440 ownership changes, and stale report rejection. Restart
+the domain, retain the before/loss/recovery API, database, process, metric, and
+Docker-log artifacts, then continue the 24-hour run. A same-host Compose test
+or a successful config render is not failure-domain or capacity evidence.
+
 For a strict rotation run with eight admitted validations per cycle:
 
 ```sh

@@ -256,6 +256,18 @@ failure domains. Losing one domain leaves 22 workers with exact capacity for
 1,320 streams, including 660 SRT and 660 DASH. This is checked configuration,
 not an approved capacity result.
 
+Render one 11-worker domain before deployment with:
+
+```sh
+cp .env.worker-domain.example .env.worker-domain
+docker compose --env-file .env.worker-domain \
+  -f docker-compose.worker-domain.yml config --quiet
+```
+
+Use the same file on three separate hosts with distinct failure-domain names,
+worker certificates, and spool storage. The runbook contains the boot,
+Chrome/API, failure-injection, and Docker-log checks.
+
 ## Documentation
 
 - [Runbook](RUNBOOK.md): install, run, verify, operate, and troubleshoot.

@@ -51,6 +51,7 @@ class SecurityConfigTest(unittest.TestCase):
         for sensitive_path in (
             ".env",
             ".env.production",
+            ".env.worker-domain",
             "incident.dump",
             "deploy/certs/worker.key",
             ".pi-subagents/session.json",

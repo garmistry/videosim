@@ -47,6 +47,12 @@ outside the proxy-to-app hop.
    broker uses credentials on its private bridge; cross-VM broker/database TLS
    remains an F4 requirement.
 
+The F5 worker-domain Compose file drops Linux capabilities, enables
+`no-new-privileges`, uses a read-only root filesystem, and mounts only the
+domain certificate and spool directories. Its 11 certificate CNs must match
+`<failure-domain>-worker-01` through `worker-11`; private keys and spool data
+must remain local to that domain host.
+
 Validate configuration:
 
 ```sh

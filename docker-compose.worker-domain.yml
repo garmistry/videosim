@@ -1,0 +1,96 @@
+name: videosim-worker-domain
+
+x-worker-environment: &worker-environment
+  VIDEOSIM_CONTROL_PLANE_URL: "${VIDEOSIM_CONTROL_PLANE_URL:?set the worker mTLS control-plane URL}"
+  VIDEOSIM_SRT_HOST: "${VIDEOSIM_SRT_HOST:?set the generated-feed SRT host}"
+  VIDEOSIM_STREAM_BUDGET_SECONDS: "${VIDEOSIM_STREAM_BUDGET_SECONDS:?set the measured stream budget}"
+  VIDEOSIM_DEEP_CHECK_INTERVAL_SECONDS: "${VIDEOSIM_DEEP_CHECK_INTERVAL_SECONDS:?set the deep-check interval}"
+  VIDEOSIM_WORKER_SPOOL_MAX_BYTES: "${VIDEOSIM_WORKER_SPOOL_MAX_BYTES:-536870912}"
+
+x-worker: &worker
+  image: "${VIDEOSIM_WORKER_IMAGE:?set an immutable worker image digest}"
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=1g,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  stop_grace_period: 2m
+  logging:
+    driver: local
+    options:
+      max-size: 20m
+      max-file: "5"
+  volumes:
+    - type: bind
+      source: "${VIDEOSIM_WORKER_CERT_DIR:?set the worker certificate directory}"
+      target: /etc/videosim/certs
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: "${VIDEOSIM_WORKER_DATA_DIR:?set the worker spool directory}"
+      target: /var/lib/videosim-worker
+      bind:
+        create_host_path: false
+  entrypoint: ["/bin/sh", "-ec"]
+  command:
+    - |
+      exec python -m videosim worker \
+        --control-plane-url "$${VIDEOSIM_CONTROL_PLANE_URL}" \
+        --worker-id "$${VIDEOSIM_WORKER_ID}" \
+        --srt-host "$${VIDEOSIM_SRT_HOST}" \
+        --poll-interval-seconds 5 \
+        --repeat-interval-seconds 5 \
+        --heartbeat-interval-seconds 20 \
+        --tls-ca-file /etc/videosim/certs/server-ca.crt \
+        --tls-cert-file "/etc/videosim/certs/$${VIDEOSIM_WORKER_ID}.crt" \
+        --tls-key-file "/etc/videosim/certs/$${VIDEOSIM_WORKER_ID}.key" \
+        --max-streams 60 \
+        --max-srt-streams 30 \
+        --max-dash-streams 30 \
+        --max-concurrent-checks 12 \
+        --max-concurrent-deep-checks 2 \
+        --stream-budget-seconds "$${VIDEOSIM_STREAM_BUDGET_SECONDS}" \
+        --deep-check-interval-seconds "$${VIDEOSIM_DEEP_CHECK_INTERVAL_SECONDS}" \
+        --report-spool-dir "/var/lib/videosim-worker/$${VIDEOSIM_WORKER_ID}/reports" \
+        --report-spool-key-file /etc/videosim/certs/worker-spool.key \
+        --report-spool-max-bytes "$${VIDEOSIM_WORKER_SPOOL_MAX_BYTES}"
+
+services:
+  worker-01:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-01"}
+  worker-02:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-02"}
+  worker-03:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-03"}
+  worker-04:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-04"}
+  worker-05:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-05"}
+  worker-06:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-06"}
+  worker-07:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-07"}
+  worker-08:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-08"}
+  worker-09:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-09"}
+  worker-10:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-10"}
+  worker-11:
+    <<: *worker
+    environment: {<<: *worker-environment, VIDEOSIM_WORKER_ID: "${VIDEOSIM_FAILURE_DOMAIN:?set the failure-domain name}-worker-11"}

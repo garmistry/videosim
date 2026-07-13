@@ -8,6 +8,8 @@ The production Compose overlay expects:
 - `worker-ca.crt`: CA Nginx uses to verify worker client certificates.
 - `worker-1.crt` / `worker-1.key`: sample worker identity whose certificate CN
   is exactly `worker-1`.
+- `worker-spool.key`: URL-safe base64 Fernet key for the encrypted local report
+  spool, readable only by the worker account.
 
 Do not commit certificates, private keys, or CA keys. Use the organization's
 certificate manager in production. `scripts/generate-dev-mtls-certs.sh` creates

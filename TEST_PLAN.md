@@ -113,6 +113,7 @@ The master/worker control-plane slice is additive to the local monitor service.
 | Worker SIGINT/SIGTERM sends its final report before an incarnation-fenced drain and immediate reoffer | P0 | implemented; PostgreSQL integration gated | `python3 -m unittest tests.test_worker tests.test_worker_api`; `VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest tests.test_postgres_store tests.test_worker_v2` |
 | Critical validation runs every cycle while deep checks defer on stable per-stream cadence offsets without false alarm clears | P0 | implemented | `python3 -m unittest tests.test_monitor tests.test_worker tests.test_cli_video_feed tests.test_gui` |
 | Aggregate batch pressure defers only the deep phase after every assigned stream validates, preserving alarms and staggered retry state | P0 | implemented | `python3 -m unittest tests.test_monitor tests.test_worker tests.test_cli_video_feed tests.test_gui` |
+| Worker v2 reports are encrypted and fsynced before send, replay before registration, remain byte-bounded, and block new probes during transport outage | P0 | implemented unit; production outage/chaos pending | `python3 -m unittest tests.test_report_spool tests.test_worker tests.test_cli_video_feed` |
 
 ## Startup Workflow Coverage
 

@@ -99,9 +99,12 @@
   loudness work while retaining every-cycle validation, but the interval is an
   operator setting. `--batch-budget-seconds` dynamically defers the deep phase
   when validation consumes the configured cycle budget, but does not bound the
-  validation phase or provide queue backpressure, recovery telemetry, or
-  durable spooling. Black/frozen validation can still be expensive and there
-  are no protocol/tenant cost tokens.
+  validation phase or provide probe-cost fairness. Worker API v2 has an
+  authenticated-encrypted, fsynced, byte-bounded report spool that pauses new
+  probes behind undelivered reports. It has transition logs but no fleet health
+  metric, automatic key rotation, quarantine/repair tool, priority eviction, or
+  production outage/disk-pressure evidence. Black/frozen validation can still
+  be expensive and there are no protocol/tenant cost tokens.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The
   future JetStream consumer must still use `consumer_inbox` atomically and prove

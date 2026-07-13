@@ -71,6 +71,10 @@ VideoSim should split into a master control plane and many worker nodes:
   deep checks when validation alone consumes the budget. Deferral emits no
   health observation, preserves alarms, and uses the configured stable cadence
   for retry scheduling. It is a soft phase guard, not queue backpressure.
+- Worker API v2 can write each exact fenced report to a Fernet-authenticated,
+  fsynced local spool before send. A byte quota bounds disk use; blocked replay
+  pauses new probes, startup replay precedes incarnation registration, accepted
+  reports are deleted, and explicit `409` stale reports are discarded.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -118,8 +122,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - Worker concurrency and built-in probe waits are bounded when configured, but
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
   HTTP preemption, protocol/tenant cost tokens, validation-phase bounds,
-  pressure/recovery telemetry, durable spool, and full queue backpressure
-  remain open. Workers can keep validation on every cycle, shed the deep phase
+  fleet pressure/recovery telemetry, spool key rotation/repair, and full
+  probe-queue backpressure remain open. Workers can keep validation on every
+  cycle, shed the deep phase
   when validation exhausts an aggregate budget, and stagger retries at stable
   per-stream offsets. Graceful workers finish the current report, stop
   heartbeats, and transition their fenced incarnation/leases to `draining` for
@@ -140,8 +145,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - Deploy JetStream consumers that replay immutable PostgreSQL monitor source
   results through `consumer_inbox` without changing the direct read authority.
 - Add worker health/utilization metadata, bounded concurrent execution,
-  cancellation, encrypted spooling, full queue backpressure, and scheduling
-  beyond the current static capacity and soft batch-pressure controls.
+  cancellation, spool key rotation/repair, full probe-queue backpressure, and
+  scheduling beyond the current static capacity and soft batch-pressure controls.
 - Connect structured security audit events to the durable audit repository.
 - Split generated feed runtime out of the master when generated feeds need to scale independently from the GUI/API.
 

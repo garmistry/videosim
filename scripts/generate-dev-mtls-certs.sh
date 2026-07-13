@@ -46,5 +46,6 @@ openssl x509 -req -days 30 -sha256 -in "$work_dir/worker.csr" \
   -CA "$output_dir/worker-ca.crt" -CAkey "$work_dir/worker-ca.key" -CAcreateserial \
   -extfile "$work_dir/worker.ext" -out "$output_dir/${worker_id}.crt" >/dev/null 2>&1
 
-chmod 600 "$output_dir/server.key" "$output_dir/${worker_id}.key"
+openssl rand -base64 32 | sed 's/+/-/g; s#/#_#g' >"$output_dir/worker-spool.key"
+chmod 600 "$output_dir/server.key" "$output_dir/${worker_id}.key" "$output_dir/worker-spool.key"
 echo "Generated local-only TLS material in $output_dir for worker CN ${worker_id}"

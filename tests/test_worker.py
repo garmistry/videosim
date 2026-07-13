@@ -7,12 +7,17 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from unittest.mock import Mock, patch
 
+from cryptography.fernet import Fernet
+
 from videosim.gui import GuiState, apply_worker_report, register_worker, worker_assignments_payload
 from videosim.monitor import monitor_state_for_stream_ids
+from videosim.report_spool import EncryptedReportSpool
 from videosim.worker import (
     advance_lease_sequences,
+    build_report_payload,
     build_ssl_context,
     call_with_retry,
+    flush_report_spool,
     post_lease_acknowledgement,
     post_drain,
     post_heartbeat,
@@ -64,6 +69,25 @@ def assignment(stream_ids=("stream-1",), generation=7):
 
 
 class WorkerTest(unittest.TestCase):
+    def spool(self, directory):
+        key = Path(directory, "spool.key")
+        key.write_bytes(Fernet.generate_key())
+        key.chmod(0o600)
+        return EncryptedReportSpool(Path(directory, "reports"), key, 100_000), key
+
+    def test_report_spool_options_are_required_together(self):
+        with self.assertRaisesRegex(ValueError, "required together"):
+            run_worker(
+                "http://master:8080",
+                "worker-a",
+                5,
+                7,
+                20,
+                "app",
+                once=True,
+                report_spool_dir="/tmp/reports",
+            )
+
     def test_worker_drain_payload_includes_incarnation_fence(self):
         response = Mock()
         response.read.return_value = b'{"ok": true}'
@@ -470,6 +494,168 @@ class WorkerTest(unittest.TestCase):
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(sleeps, [0.125, 0.25])
+
+    def test_spooled_report_blocks_new_probe_work_until_delivery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spool, key = self.spool(directory)
+            spool.enqueue(
+                build_report_payload(
+                    "worker-a",
+                    ["stream-1"],
+                    {"updatedAt": "now"},
+                    durable_assignment(),
+                    worker_incarnation_id="00000000-0000-0000-0000-000000000001",
+                    sequence=1,
+                    report_id="00000000-0000-0000-0000-000000000002",
+                )
+            )
+            with patch(
+                "videosim.worker.post_report_payload", side_effect=URLError("offline")
+            ), patch("videosim.worker.fetch_assignments") as fetch, patch(
+                "videosim.worker.run_monitor_once"
+            ) as monitor:
+                code = run_worker(
+                    "http://master:8080",
+                    "worker-a",
+                    5,
+                    7,
+                    20,
+                    "app",
+                    once=True,
+                    retry_attempts=1,
+                    report_spool_dir=str(spool.directory),
+                    report_spool_key_file=str(key),
+                    report_spool_max_bytes=100_000,
+                )
+
+        self.assertEqual(code, 1)
+        fetch.assert_not_called()
+        monitor.assert_not_called()
+
+    def test_startup_replays_spool_before_registering_new_incarnation(self):
+        order = []
+        monitor_state = {
+            "updatedAt": "now",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            spool, key = self.spool(directory)
+            spool.enqueue(
+                build_report_payload(
+                    "worker-a",
+                    ["stream-1"],
+                    {"updatedAt": "old"},
+                    durable_assignment(),
+                    worker_incarnation_id="00000000-0000-0000-0000-000000000001",
+                    sequence=1,
+                    report_id="00000000-0000-0000-0000-000000000002",
+                )
+            )
+            with patch(
+                "videosim.worker.post_report_payload",
+                side_effect=lambda *_args: order.append("report") or {"ok": True},
+            ), patch(
+                "videosim.worker.post_heartbeat",
+                side_effect=lambda *_args: order.append("heartbeat") or {"ok": True},
+            ), patch(
+                "videosim.worker.fetch_assignments",
+                return_value=durable_assignment(()),
+            ), patch(
+                "videosim.worker.post_lease_acknowledgement", return_value={"ok": True}
+            ), patch(
+                "videosim.worker.run_monitor_once", return_value=monitor_state
+            ):
+                code = run_worker(
+                    "http://master:8080",
+                    "worker-a",
+                    5,
+                    7,
+                    20,
+                    "app",
+                    once=True,
+                    retry_attempts=1,
+                    max_streams=100,
+                    report_spool_dir=str(spool.directory),
+                    report_spool_key_file=str(key),
+                    report_spool_max_bytes=100_000,
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(order[:2], ["report", "heartbeat"])
+
+    def test_worker_write_ahead_report_recovers_after_transport_outage(self):
+        monitor_state = {
+            "updatedAt": "now",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            spool, key = self.spool(directory)
+            with patch(
+                "videosim.worker.fetch_assignments", return_value=durable_assignment()
+            ), patch(
+                "videosim.worker.post_lease_acknowledgement", return_value={"ok": True}
+            ), patch(
+                "videosim.worker.run_monitor_once", return_value=monitor_state
+            ), patch(
+                "videosim.worker.post_report_payload", side_effect=URLError("offline")
+            ):
+                code = run_worker(
+                    "http://master:8080",
+                    "worker-a",
+                    5,
+                    7,
+                    20,
+                    "app",
+                    once=True,
+                    retry_attempts=1,
+                    report_spool_dir=str(spool.directory),
+                    report_spool_key_file=str(key),
+                    report_spool_max_bytes=100_000,
+                )
+
+            reopened = EncryptedReportSpool(spool.directory, key, 100_000)
+            queued = reopened.read(reopened.entries()[0])
+            self.assertEqual(code, 1)
+            self.assertEqual(queued["streamIds"], ["stream-1"])
+            self.assertEqual(queued["sequence"], 1)
+            with patch(
+                "videosim.worker.post_report_payload", return_value={"ok": True}
+            ) as post:
+                disposition = flush_report_spool(
+                    reopened, "http://master:8080", None, 1, 0
+                )
+
+            self.assertEqual(disposition, "delivered")
+            self.assertEqual(post.call_args.args[1], queued)
+            self.assertEqual(reopened.entries(), [])
+
+    def test_spool_discards_explicitly_fenced_stale_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spool, _key = self.spool(directory)
+            spool.enqueue(
+                build_report_payload(
+                    "worker-a",
+                    ["stream-1"],
+                    {"updatedAt": "now"},
+                    durable_assignment(),
+                    worker_incarnation_id="00000000-0000-0000-0000-000000000001",
+                    sequence=1,
+                    report_id="00000000-0000-0000-0000-000000000002",
+                )
+            )
+            with patch(
+                "videosim.worker.post_report_payload", side_effect=AssignmentConflict()
+            ):
+                disposition = flush_report_spool(
+                    spool, "http://master:8080", None, 1, 0
+                )
+
+            self.assertEqual(disposition, "stale")
+            self.assertEqual(spool.entries(), [])
 
     def test_assignment_conflict_is_not_transport_retried(self):
         calls = []

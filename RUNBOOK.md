@@ -467,17 +467,36 @@ budget. The skipped phase remains inconclusive and does not clear alarms. With
 `--deep-check-interval-seconds`, deferred work moves to the stream's next stable
 cadence offset; without a cadence it is retried on the next worker cycle. This
 is a soft phase guard and does not bound validation duration, persist reports,
-or provide queue backpressure.
+or provide probe-cost fairness. Report delivery pressure is handled separately
+by the encrypted spool below.
 When `--max-concurrent-checks` is greater than one, the worker validates every
 assigned stream before starting TR-101, frame-rate, and loudness checks. This
 protects core validation freshness but is not protocol- or tenant-cost fairness.
+
+For worker API v2, configure all three spool controls together:
+
+```sh
+python3 -m videosim worker \
+  --report-spool-dir /var/lib/videosim-worker/reports \
+  --report-spool-key-file /etc/videosim/certs/worker-spool.key \
+  --report-spool-max-bytes 536870912
+```
+
+The key file must contain a Fernet key and be mode `0600` or stricter. Each
+report is encrypted and fsynced before network delivery, then removed only
+after acceptance. On restart, queued reports replay before the new incarnation
+registers. HTTP `409` means the old lease is fenced and deletes that stale
+entry; retryable transport failures retain it and pause new probes. Quota
+exhaustion fails closed. Do not rotate or remove the key while entries remain.
+Docker logs emit one `report_spool=blocked` transition and one recovery
+transition with aggregate count/byte fields.
 
 On SIGINT or SIGTERM, a worker finishes the current monitor/report cycle, stops
 heartbeats, and posts `/api/workers/drain`. PostgreSQL atomically marks that
 incarnation and its live leases `draining`; the same incarnation cannot be
 reactivated by a late heartbeat, and another worker receives a higher lease
-epoch immediately. A hard-killed worker still relies on lease expiry, and
-durable encrypted report spooling remains unimplemented.
+epoch immediately. A hard-killed worker still relies on lease expiry; queued
+reports remain encrypted on the worker volume for replay or fenced discard.
 
 Strict versioned reports are the default. During a controlled same-host upgrade,
 the GUI can temporarily accept old unversioned reporters with

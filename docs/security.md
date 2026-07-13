@@ -32,8 +32,9 @@ outside the proxy-to-app hop.
    operator hostname.
 3. Provision a worker client CA and one certificate per worker. Each certificate
    CN must exactly equal the worker's `--worker-id`.
-4. Put certificates in `deploy/certs/` using the names documented there. Never
-   commit private keys.
+4. Put certificates and an independent Fernet worker-spool key in
+   `deploy/certs/` using the names documented there. Keep every private key mode
+   `0600` and never commit it.
 5. Copy `.env.production.example` to a protected environment file and replace
    every placeholder. Generate the proxy secret with at least 32 random bytes,
    plus distinct URL-safe PostgreSQL owner, app, publisher, pruner, and NATS
@@ -137,6 +138,9 @@ Workers accept:
 --tls-key-file
 --retry-attempts
 --retry-base-seconds
+--report-spool-dir
+--report-spool-key-file
+--report-spool-max-bytes
 ```
 
 Transient connection failures and HTTP 429/500/502/503/504 responses use bounded
@@ -145,7 +149,11 @@ assignment refetch/fencing path. On PostgreSQL, worker v2 binds the verified
 worker ID to a process-incarnation UUID and durable offered/acknowledged leases;
 a different incarnation is rejected while the current one is heartbeat-fresh,
 and a post-expiry replacement revokes prior leases. Certificates and
-keys must still be rotated by the VM secret/certificate manager.
+keys must still be rotated by the VM secret/certificate manager. The production
+worker writes report ciphertext to a persistent volume before delivery and
+requires its Fernet key from the read-only certificate/secret mount. Do not
+rotate that key until the spool is empty; automatic multi-key rotation and
+corrupted-entry repair are not implemented.
 
 ## Known boundaries
 

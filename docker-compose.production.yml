@@ -190,6 +190,7 @@ services:
         condition: service_started
     volumes:
       - ./deploy/certs:/etc/videosim/certs:ro
+      - worker-spool:/var/lib/videosim-worker
     command: >
       python -m videosim worker
       --control-plane-url https://proxy:9443
@@ -199,6 +200,9 @@ services:
       --tls-ca-file /etc/videosim/certs/server-ca.crt
       --tls-cert-file /etc/videosim/certs/worker-1.crt
       --tls-key-file /etc/videosim/certs/worker-1.key
+      --report-spool-dir /var/lib/videosim-worker/reports
+      --report-spool-key-file /etc/videosim/certs/worker-spool.key
+      --report-spool-max-bytes ${VIDEOSIM_WORKER_SPOOL_MAX_BYTES:-536870912}
     restart: unless-stopped
 
 volumes:
@@ -206,3 +210,4 @@ volumes:
   dash-data:
   postgres-data:
   nats-data:
+  worker-spool:

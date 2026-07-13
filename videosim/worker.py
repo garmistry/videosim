@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .monitor import empty_monitor_state, monitor_state_for_stream_ids, run_monitor_once
+from .report_spool import EncryptedReportSpool, ReportSpoolError
 
 
 MAX_ASSIGNMENT_CONFLICT_REFETCHES = 3
@@ -216,13 +217,11 @@ def post_lease_acknowledgement(
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_report(
-    control_plane_url: str,
+def build_report_payload(
     worker_id: str,
     stream_ids: list[str],
     state: dict,
     assignment: dict | None = None,
-    ssl_context: ssl.SSLContext | None = None,
     *,
     worker_incarnation_id: str = "",
     sequence: int = 0,
@@ -268,6 +267,14 @@ def post_report(
             "state": state,
             **contract,
         }
+    return payload
+
+
+def post_report_payload(
+    control_plane_url: str,
+    payload: dict,
+    ssl_context: ssl.SSLContext | None = None,
+) -> dict:
     body = json.dumps(payload).encode("utf-8")
     request = Request(
         f"{control_plane_url.rstrip('/')}/api/workers/report",
@@ -277,6 +284,35 @@ def post_report(
     )
     with _open(request, ssl_context) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def post_report(
+    control_plane_url: str,
+    worker_id: str,
+    stream_ids: list[str],
+    state: dict,
+    assignment: dict | None = None,
+    ssl_context: ssl.SSLContext | None = None,
+    *,
+    worker_incarnation_id: str = "",
+    sequence: int = 0,
+    report_id: str = "",
+    lease_sequences: dict[str, int] | None = None,
+) -> dict:
+    return post_report_payload(
+        control_plane_url,
+        build_report_payload(
+            worker_id,
+            stream_ids,
+            state,
+            assignment,
+            worker_incarnation_id=worker_incarnation_id,
+            sequence=sequence,
+            report_id=report_id,
+            lease_sequences=lease_sequences,
+        ),
+        ssl_context,
+    )
 
 
 def retryable_transport_error(exc: Exception) -> bool:
@@ -306,6 +342,38 @@ def call_with_retry(
             cap = min(base_seconds * (2**attempt), 5.0)
             sleep(cap * (0.5 + max(0.0, min(1.0, random_value())) / 2))
     raise RuntimeError("retry loop exited unexpectedly")
+
+
+def flush_report_spool(
+    spool: EncryptedReportSpool,
+    control_plane_url: str,
+    ssl_context: ssl.SSLContext | None,
+    retry_attempts: int,
+    retry_base_seconds: float,
+) -> str:
+    disposition = "delivered"
+    for path in spool.entries():
+        payload = spool.read(path)
+        try:
+            call_with_retry(
+                lambda: post_report_payload(control_plane_url, payload, ssl_context),
+                attempts=retry_attempts,
+                base_seconds=retry_base_seconds,
+            )
+        except HTTPError as exc:
+            if exc.code == 409:
+                spool.acknowledge(path)
+                disposition = "stale"
+                continue
+            if retryable_transport_error(exc):
+                return "blocked"
+            raise
+        except Exception as exc:
+            if retryable_transport_error(exc):
+                return "blocked"
+            raise
+        spool.acknowledge(path)
+    return disposition
 
 
 def advance_lease_sequences(
@@ -346,6 +414,9 @@ def run_worker(
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
     batch_budget_seconds: float = 0,
+    report_spool_dir: str = "",
+    report_spool_key_file: str = "",
+    report_spool_max_bytes: int = 0,
     drain_event: threading.Event | None = None,
 ) -> int:
     if heartbeat_seconds <= 0:
@@ -360,12 +431,60 @@ def run_worker(
         raise ValueError("deep_check_interval_seconds must be zero or greater")
     if not math.isfinite(batch_budget_seconds) or batch_budget_seconds < 0:
         raise ValueError("batch_budget_seconds must be zero or greater")
+    spool_options = (
+        bool(report_spool_dir),
+        bool(report_spool_key_file),
+        isinstance(report_spool_max_bytes, int)
+        and not isinstance(report_spool_max_bytes, bool)
+        and report_spool_max_bytes > 0,
+    )
+    if any(spool_options) and not all(spool_options):
+        raise ValueError(
+            "report spool directory, key file, and positive max bytes are required together"
+        )
+    report_spool = (
+        EncryptedReportSpool(
+            report_spool_dir, report_spool_key_file, report_spool_max_bytes
+        )
+        if all(spool_options)
+        else None
+    )
+    spool_blocked = False
+
+    def note_spool_pressure(blocked: bool):
+        nonlocal spool_blocked
+        if report_spool is None or blocked == spool_blocked:
+            return
+        spool_blocked = blocked
+        stats = report_spool.stats()
+        print(
+            f"[videosim-worker] report_spool={'blocked' if blocked else 'recovered'} "
+            f"queued_reports={stats['queuedReports']} bytes={stats['bytes']} "
+            f"max_bytes={stats['maxBytes']}",
+            flush=True,
+        )
+
+    drain_requested = drain_event or threading.Event()
+    while report_spool is not None and report_spool.entries():
+        replay = flush_report_spool(
+            report_spool,
+            control_plane_url,
+            ssl_context,
+            retry_attempts,
+            retry_base_seconds,
+        )
+        note_spool_pressure(replay == "blocked")
+        if replay != "blocked":
+            continue
+        if once:
+            return 1
+        if drain_requested.wait(poll_seconds):
+            return 0
     state = empty_monitor_state()
     assignment_conflicts = 0
     report_sequence = 0
     lease_sequences: dict[tuple[str, int, int], int] = {}
     worker_incarnation_id = str(uuid.uuid4())
-    drain_requested = drain_event or threading.Event()
     previous_signal_handlers = {}
     if threading.current_thread() is threading.main_thread():
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -439,6 +558,24 @@ def run_worker(
             if drain_requested.is_set():
                 finish_drain()
                 return 0
+            if report_spool is not None:
+                replay = flush_report_spool(
+                    report_spool,
+                    control_plane_url,
+                    ssl_context,
+                    retry_attempts,
+                    retry_base_seconds,
+                )
+                note_spool_pressure(replay == "blocked")
+                if replay == "blocked":
+                    if once:
+                        return 1
+                    if drain_requested.wait(poll_seconds):
+                        finish_drain()
+                        return 0
+                    continue
+                if replay == "stale":
+                    state = empty_monitor_state()
             assignments = call_with_retry(
                 lambda: fetch_assignments(
                     control_plane_url,
@@ -451,6 +588,13 @@ def run_worker(
             )
             registered = True
             streams = assignments.get("streams", [])
+            if (
+                report_spool is not None
+                and assignments.get("apiVersion") != WORKER_API_VERSION_V2
+            ):
+                raise ReportSpoolError(
+                    "encrypted report spooling requires worker API v2 assignments"
+                )
             if assignments.get("apiVersion") == WORKER_API_VERSION_V2:
                 try:
                     call_with_retry(
@@ -503,30 +647,66 @@ def run_worker(
                 streams, lease_sequences
             )
             report_id = str(uuid.uuid4())
+            report_conflict = False
+            report_conflict_error = None
             try:
-                call_with_retry(
-                    lambda: post_report(
+                if report_spool is not None:
+                    report_spool.enqueue(
+                        build_report_payload(
+                            worker_id,
+                            sorted(stream_ids),
+                            state,
+                            assignments,
+                            worker_incarnation_id=worker_incarnation_id,
+                            sequence=report_sequence,
+                            report_id=report_id,
+                            lease_sequences=report_lease_sequences,
+                        )
+                    )
+                    delivery = flush_report_spool(
+                        report_spool,
                         control_plane_url,
-                        worker_id,
-                        sorted(stream_ids),
-                        state,
-                        assignments,
                         ssl_context,
-                        worker_incarnation_id=worker_incarnation_id,
-                        sequence=report_sequence,
-                        report_id=report_id,
-                        lease_sequences=report_lease_sequences,
-                    ),
-                    attempts=retry_attempts,
-                    base_seconds=retry_base_seconds,
-                )
+                        retry_attempts,
+                        retry_base_seconds,
+                    )
+                    note_spool_pressure(delivery == "blocked")
+                    if delivery == "blocked":
+                        if once:
+                            return 1
+                        continue
+                    report_conflict = delivery == "stale"
+                else:
+                    call_with_retry(
+                        lambda: post_report(
+                            control_plane_url,
+                            worker_id,
+                            sorted(stream_ids),
+                            state,
+                            assignments,
+                            ssl_context,
+                            worker_incarnation_id=worker_incarnation_id,
+                            sequence=report_sequence,
+                            report_id=report_id,
+                            lease_sequences=report_lease_sequences,
+                        ),
+                        attempts=retry_attempts,
+                        base_seconds=retry_base_seconds,
+                    )
             except HTTPError as exc:
                 if exc.code != 409:
                     raise
+                report_conflict = True
+                report_conflict_error = exc
+            if report_conflict:
                 assignment_conflicts += 1
                 state = empty_monitor_state()
                 if assignment_conflicts >= MAX_ASSIGNMENT_CONFLICT_REFETCHES:
-                    raise
+                    if report_conflict_error is not None:
+                        raise report_conflict_error
+                    raise ReportSpoolError(
+                        "report spool exceeded assignment conflict refetch limit"
+                    )
                 continue
             assignment_conflicts = 0
             if drain_requested.is_set():

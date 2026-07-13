@@ -247,6 +247,12 @@ class VideoFeedCliTest(unittest.TestCase):
                     "60",
                     "--batch-budget-seconds",
                     "20",
+                    "--report-spool-dir",
+                    "/var/lib/videosim-worker/reports",
+                    "--report-spool-key-file",
+                    "/run/secrets/worker-spool.key",
+                    "--report-spool-max-bytes",
+                    "536870912",
                 ]
             )
 
@@ -257,6 +263,9 @@ class VideoFeedCliTest(unittest.TestCase):
             "stream_budget_seconds": 30.0,
             "deep_check_interval_seconds": 60.0,
             "batch_budget_seconds": 20.0,
+            "report_spool_dir": "/var/lib/videosim-worker/reports",
+            "report_spool_key_file": "/run/secrets/worker-spool.key",
+            "report_spool_max_bytes": 536870912,
         })
 
     def test_verbose_feed_logs_pipeline_command_and_pid(self):

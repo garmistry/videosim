@@ -79,6 +79,11 @@ Use `--batch-budget-seconds N` to defer the deep phase when validation has
 already consumed that aggregate worker-cycle budget. Pair it with the deep-check
 cadence to spread deferred retries; this is a soft pressure guard, not queue
 backpressure or capacity evidence.
+Worker API v2 can enable an authenticated-encrypted write-ahead report spool
+with `--report-spool-dir`, `--report-spool-key-file`, and
+`--report-spool-max-bytes`. All three are required. Pending reports replay
+before a new incarnation registers, and new probes pause while delivery is
+blocked. The production Compose overlay enables a persistent 512 MiB spool.
 With concurrent checks enabled, every assigned stream finishes validation
 before the worker starts TR-101, frame-rate, or loudness checks.
 

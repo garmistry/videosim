@@ -22,6 +22,7 @@ from .monitor import DEFAULT_MONITOR_STATE_PATH, run_monitor
 from .nats_publisher import NatsPublisherError, ensure_event_stream, run_outbox_publisher
 from .postgres_store import PostgresControlPlaneStore, PostgresStoreError
 from .profile import ProfileError, load_profile
+from .report_spool import ReportSpoolError
 from .security import SecurityConfig
 from .soak import check_reports
 from .soak import check_summary
@@ -151,6 +152,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="defer deep checks when validation consumes this batch budget; zero disables",
     )
+    worker.add_argument("--report-spool-dir", default="")
+    worker.add_argument("--report-spool-key-file", default="")
+    worker.add_argument("--report-spool-max-bytes", type=int, default=0)
     worker.add_argument("--once", action="store_true", help="poll once and exit")
 
     control_plane_benchmark = subparsers.add_parser(
@@ -443,6 +447,21 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("deep_check_interval_seconds must be zero or greater")
             if args.batch_budget_seconds < 0:
                 raise ValueError("batch_budget_seconds must be zero or greater")
+            spool_enabled = any(
+                (
+                    args.report_spool_dir.strip(),
+                    args.report_spool_key_file.strip(),
+                    args.report_spool_max_bytes,
+                )
+            )
+            if spool_enabled and not (
+                args.report_spool_dir.strip()
+                and args.report_spool_key_file.strip()
+                and args.report_spool_max_bytes > 0
+            ):
+                raise ValueError(
+                    "report spool directory, key file, and positive max bytes are required together"
+                )
             if not args.worker_id.strip():
                 raise ValueError("worker_id is required")
             ssl_context = build_ssl_context(args.tls_ca_file, args.tls_cert_file, args.tls_key_file)
@@ -452,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
                 or args.stream_budget_seconds
                 or args.deep_check_interval_seconds
                 or args.batch_budget_seconds
+                or spool_enabled
             ):
                 return run_worker(
                     args.control_plane_url,
@@ -470,6 +490,9 @@ def main(argv: list[str] | None = None) -> int:
                     stream_budget_seconds=args.stream_budget_seconds,
                     deep_check_interval_seconds=args.deep_check_interval_seconds,
                     batch_budget_seconds=args.batch_budget_seconds,
+                    report_spool_dir=args.report_spool_dir.strip(),
+                    report_spool_key_file=args.report_spool_key_file.strip(),
+                    report_spool_max_bytes=args.report_spool_max_bytes,
                 )
             return run_worker(
                 args.control_plane_url,
@@ -519,6 +542,7 @@ def main(argv: list[str] | None = None) -> int:
         NatsPublisherError,
         PostgresStoreError,
         ProfileError,
+        ReportSpoolError,
         ValueError,
     ) as exc:
         parser.exit(2, f"error: {exc}\n")

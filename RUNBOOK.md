@@ -615,6 +615,14 @@ and behavior percentages, gives every logical stream a unique ID, and performs
 a seeded shuffle. The 1,000 streams share eight endpoints; use this only to test
 bounded scheduling/deferral and never as media-capacity evidence.
 
+For 1,000 distinct protocol URLs, run the fleets with
+`scale/fixtures/srt-endpoints-500.json` and
+`scale/fixtures/dash-endpoints-500.json`, then pass those two states to the same
+composer command. The SRT manifest starts 475 live listener processes and leaves
+25 ports dead by design, so use a resource-controlled load host. The 500 DASH
+paths share one generator and HTTP origin. Distinct URLs prove request/socket
+fan-out only; they do not prove independent source generation or capacity.
+
 For a strict rotation run with eight admitted validations per cycle:
 
 ```sh

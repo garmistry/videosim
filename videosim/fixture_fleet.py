@@ -11,11 +11,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from .control_plane import MAX_REPORT_STREAMS
 from .feed import require_gst_launch
 
 
 FIXTURE_SCHEMA = "videosim.fixture-fleet/v1"
 BEHAVIORS = ("healthy", "slow", "dead", "malformed")
+
+
+def behavior_endpoint_counts(manifest: dict) -> dict[str, int]:
+    return manifest.get("behaviorEndpointCounts") or {
+        behavior: 1 for behavior in BEHAVIORS
+    }
 
 
 def load_fixture_manifest(path: str | Path) -> tuple[dict, str]:
@@ -40,7 +47,7 @@ def load_fixture_manifest(path: str | Path) -> tuple[dict, str]:
             raise ValueError(f"fixture fleet {field} must be a non-empty string")
     integer_fields = [("width", 1, 7680), ("height", 1, 4320)]
     integer_fields.append(
-        ("httpPort", 1, 65535) if protocol == "dash" else ("basePort", 1, 65532)
+        ("httpPort", 1, 65535) if protocol == "dash" else ("basePort", 1, 65535)
     )
     for field, minimum, maximum in integer_fields:
         value = manifest.get(field)
@@ -58,37 +65,76 @@ def load_fixture_manifest(path: str | Path) -> tuple[dict, str]:
             raise ValueError(
                 f"fixture fleet {field} must be a positive number no greater than {maximum}"
             )
+    counts = manifest.get("behaviorEndpointCounts")
+    if counts is not None:
+        if not isinstance(counts, dict) or set(counts) != set(BEHAVIORS):
+            raise ValueError(
+                "fixture fleet behaviorEndpointCounts must contain exactly "
+                + ", ".join(BEHAVIORS)
+            )
+        for behavior, count in counts.items():
+            if (
+                isinstance(count, bool)
+                or not isinstance(count, int)
+                or not 1 <= count <= MAX_REPORT_STREAMS
+            ):
+                raise ValueError(
+                    f"fixture fleet behaviorEndpointCounts.{behavior} must be an integer "
+                    f"from 1 to {MAX_REPORT_STREAMS}"
+                )
+        if sum(counts.values()) > MAX_REPORT_STREAMS:
+            raise ValueError(
+                f"fixture fleet behaviorEndpointCounts total must not exceed {MAX_REPORT_STREAMS}"
+            )
+    if protocol == "srt" and manifest["basePort"] + sum(
+        behavior_endpoint_counts(manifest).values()
+    ) > 65536:
+        raise ValueError("fixture fleet basePort plus endpoint count exceeds 65535")
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
 def fixture_state(manifest: dict, manifest_sha256: str) -> dict:
     protocol = manifest["protocol"]
-    if protocol == "dash":
-        base_url = f"http://{manifest['advertisedHost']}:{manifest['httpPort']}"
-        endpoints = [f"{base_url}/{behavior}/manifest.mpd" for behavior in BEHAVIORS]
-    else:
-        endpoints = [
-            f"srt://{manifest['advertisedHost']}:{manifest['basePort'] + index}?mode=caller"
-            for index in range(len(BEHAVIORS))
-        ]
-    streams = [
-        {
-            "id": f"{protocol}-{behavior}",
-            "name": f"{protocol.upper()} {behavior} fixture",
-            "protocol": protocol,
-            "source": "external",
-            "mode": "normal",
-            "status": "running",
-            "endpoint": endpoint,
-            "width": manifest["width"],
-            "height": manifest["height"],
-            "framerate": str(manifest["framerate"]),
-        }
-        for behavior, endpoint in zip(BEHAVIORS, endpoints)
-    ]
+    counts = behavior_endpoint_counts(manifest)
+    expanded = "behaviorEndpointCounts" in manifest
+    streams = []
+    offset = 0
+    for behavior in BEHAVIORS:
+        for index in range(counts[behavior]):
+            endpoint_number = offset + index
+            endpoint_id = f"endpoint-{index + 1:05d}"
+            if protocol == "dash":
+                endpoint_path = f"/{behavior}/{endpoint_id}" if expanded else f"/{behavior}"
+                endpoint = (
+                    f"http://{manifest['advertisedHost']}:{manifest['httpPort']}"
+                    f"{endpoint_path}/manifest.mpd"
+                )
+            else:
+                endpoint = (
+                    f"srt://{manifest['advertisedHost']}:"
+                    f"{manifest['basePort'] + endpoint_number}?mode=caller"
+                )
+            suffix = f"-{index + 1:05d}" if expanded else ""
+            streams.append(
+                {
+                    "id": f"{protocol}-{behavior}{suffix}",
+                    "name": f"{protocol.upper()} {behavior} fixture{suffix}",
+                    "protocol": protocol,
+                    "source": "external",
+                    "mode": "normal",
+                    "status": "running",
+                    "endpoint": endpoint,
+                    "fixtureBehavior": behavior,
+                    "width": manifest["width"],
+                    "height": manifest["height"],
+                    "framerate": str(manifest["framerate"]),
+                }
+            )
+        offset += counts[behavior]
     return {
         "schemaVersion": "videosim.fixture-state/v1",
         "fixtureManifestSha256": manifest_sha256,
+        "behaviorEndpointCounts": counts,
         "streams": streams,
     }
 
@@ -111,7 +157,12 @@ def build_dash_fixture_handler(dash_dir: str | Path, slow_delay_seconds: float):
                 return self._send(200, b"<MPD><broken", "application/dash+xml")
             if behavior == "slow":
                 time.sleep(slow_delay_seconds)
-            target = (root / Path(*parts[1:])).resolve()
+            content_parts = (
+                parts[2:]
+                if len(parts) > 2 and parts[1].startswith("endpoint-")
+                else parts[1:]
+            )
+            target = (root / Path(*content_parts)).resolve()
             if target != root and root not in target.parents:
                 return self._send(404, b"not found\n", "text/plain")
             try:
@@ -158,7 +209,15 @@ def stop_process(process: subprocess.Popen):
 
 def srt_fixture_commands(manifest: dict) -> list[list[str]]:
     gst_launch = require_gst_launch()
-    base_port = manifest["basePort"]
+    counts = behavior_endpoint_counts(manifest)
+    ports = {}
+    offset = 0
+    for behavior in BEHAVIORS:
+        ports[behavior] = range(
+            manifest["basePort"] + offset,
+            manifest["basePort"] + offset + counts[behavior],
+        )
+        offset += counts[behavior]
 
     def listener(port: int) -> list[str]:
         return [
@@ -168,52 +227,62 @@ def srt_fixture_commands(manifest: dict) -> list[list[str]]:
             "wait-for-connection=false",
         ]
 
-    healthy = [
-        sys.executable,
-        "-m",
-        "videosim",
-        "start",
-        "--profile",
-        manifest["profile"],
-        "--protocol",
-        "srt",
-        "--port",
-        str(base_port),
-        "--width",
-        str(manifest["width"]),
-        "--height",
-        str(manifest["height"]),
-        "--framerate",
-        str(manifest["framerate"]),
-    ]
-    slow = [
-        gst_launch,
-        "-q",
-        "fakesrc",
-        "is-live=true",
-        "do-timestamp=true",
-        "sizetype=fixed",
-        "sizemax=188",
-        "filltype=zero",
-        "!",
-        "identity",
-        f"sleep-time={int(manifest['slowDelaySeconds'] * 1_000_000)}",
-        *listener(base_port + 1),
-    ]
-    malformed = [
-        gst_launch,
-        "-q",
-        "fakesrc",
-        "is-live=true",
-        "do-timestamp=true",
-        "sizetype=fixed",
-        "sizemax=188",
-        "filltype=pattern",
-        "datarate=1880",
-        "sync=true",
-        *listener(base_port + 3),
-    ]
-    return [healthy, slow, malformed]
+    commands = []
+    for port in ports["healthy"]:
+        commands.append(
+            [
+                sys.executable,
+                "-m",
+                "videosim",
+                "start",
+                "--profile",
+                manifest["profile"],
+                "--protocol",
+                "srt",
+                "--port",
+                str(port),
+                "--width",
+                str(manifest["width"]),
+                "--height",
+                str(manifest["height"]),
+                "--framerate",
+                str(manifest["framerate"]),
+            ]
+        )
+    for port in ports["slow"]:
+        commands.append(
+            [
+                gst_launch,
+                "-q",
+                "fakesrc",
+                "is-live=true",
+                "do-timestamp=true",
+                "sizetype=fixed",
+                "sizemax=188",
+                "filltype=zero",
+                "!",
+                "identity",
+                f"sleep-time={int(manifest['slowDelaySeconds'] * 1_000_000)}",
+                *listener(port),
+            ]
+        )
+    for port in ports["malformed"]:
+        commands.append(
+            [
+                gst_launch,
+                "-q",
+                "fakesrc",
+                "is-live=true",
+                "do-timestamp=true",
+                "sizetype=fixed",
+                "sizemax=188",
+                "filltype=pattern",
+                "datarate=1880",
+                "sync=true",
+                *listener(port),
+            ]
+        )
+    return commands
 
 
 def run_srt_fixture_fleet(manifest: dict, state_path: str, manifest_sha256: str) -> int:

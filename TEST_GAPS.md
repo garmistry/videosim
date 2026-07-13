@@ -83,10 +83,11 @@ implementation and must pass before those milestones advance.
 - The manifest-driven DASH and SRT fixture fleets have unit and one-cycle Linux
   coverage for healthy, slow, dead, and malformed endpoints. The
   deterministic mixed composer can consume multiple URLs per behavior and
-  derives whether any are shared. The checked-in 1,000-logical-stream states
-  still reuse eight endpoints; independent services, the generated/external
-  source cross-product, storm scheduling, and long-run fixture reliability
-  remain open.
+  derives whether any are shared. Checked-in 500-URL manifests now exist for
+  each protocol, but the DASH URLs share one origin/generator and the 475-live-
+  process SRT fleet has not run at full scale. Independent services, the
+  generated/external source cross-product, storm scheduling, and long-run
+  fixture reliability remain open.
 - The worker benchmark can require and report unique validation-start coverage
   plus repeated cadence. A 250-cycle Linux run covered all 1,000 mixed logical
   streams twice with eight admissions per cycle; full first coverage and the

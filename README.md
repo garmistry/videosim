@@ -203,6 +203,12 @@ The output has exact 50/50 protocol and 80/10/5/5 healthy/slow/dead/malformed
 counts, but reuses the eight physical fixture endpoints. It is a bounded-worker
 stress input, not independent-stream or capacity evidence.
 
+`scale/fixtures/srt-endpoints-500.json` and
+`scale/fixtures/dash-endpoints-500.json` instead declare 500 distinct protocol
+URLs each with that same behavior mix. The SRT fleet launches one process per
+non-dead listener; the DASH URLs still share one generator/origin. Treat both as
+load inputs, not capacity evidence, until their full run artifacts pass F5.
+
 To fail unless cursor rotation starts validation for every logical stream, add
 `--require-full-validation-coverage` and run enough measured iterations. With
 eight validation tokens, the checked-in 1,000-stream scenario requires at least

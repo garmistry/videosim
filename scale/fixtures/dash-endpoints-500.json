@@ -1,0 +1,19 @@
+{
+  "advertisedHost": "127.0.0.1",
+  "behaviorEndpointCounts": {
+    "dead": 25,
+    "healthy": 400,
+    "malformed": 25,
+    "slow": 50
+  },
+  "bindHost": "0.0.0.0",
+  "dashDir": "/tmp/videosim-fixtures/dash-endpoints-500",
+  "framerate": 10,
+  "height": 180,
+  "httpPort": 18082,
+  "profile": "profiles/dash-normal.yaml",
+  "protocol": "dash",
+  "schemaVersion": "videosim.fixture-fleet/v1",
+  "slowDelaySeconds": 30,
+  "width": 320
+}

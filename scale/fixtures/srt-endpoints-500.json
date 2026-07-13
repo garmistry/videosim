@@ -1,0 +1,17 @@
+{
+  "advertisedHost": "127.0.0.1",
+  "basePort": 20000,
+  "behaviorEndpointCounts": {
+    "dead": 25,
+    "healthy": 400,
+    "malformed": 25,
+    "slow": 50
+  },
+  "framerate": 10,
+  "height": 180,
+  "profile": "profiles/srt-normal.yaml",
+  "protocol": "srt",
+  "schemaVersion": "videosim.fixture-fleet/v1",
+  "slowDelaySeconds": 30,
+  "width": 320
+}

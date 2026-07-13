@@ -94,22 +94,15 @@ class FixtureScenarioTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             states = {}
             for protocol in ("srt", "dash"):
-                path = self.write_fixture_state(directory, protocol)
-                state = json.loads(path.read_text(encoding="utf-8"))
-                expanded = []
-                for behavior_index, stream in enumerate(state["streams"]):
-                    behavior = stream["id"].removeprefix(f"{protocol}-")
-                    for instance in range(2):
-                        item = dict(stream)
-                        item["id"] = f"{stream['id']}-{instance}"
-                        item["fixtureBehavior"] = behavior
-                        item["endpoint"] = (
-                            f"srt://127.0.0.1:{21000 + behavior_index * 2 + instance}?mode=caller"
-                            if protocol == "srt"
-                            else f"http://127.0.0.1:18081/{behavior}/{instance}/manifest.mpd"
-                        )
-                        expanded.append(item)
-                state["streams"] = expanded
+                manifest, digest = load_fixture_manifest(
+                    ROOT / f"scale/fixtures/{protocol}-matrix.json"
+                )
+                manifest["behaviorEndpointCounts"] = {
+                    behavior: 2
+                    for behavior in ("healthy", "slow", "dead", "malformed")
+                }
+                state = fixture_state(manifest, digest)
+                path = Path(directory) / f"{protocol}.json"
                 path.write_text(json.dumps(state), encoding="utf-8")
                 states[protocol] = path
 

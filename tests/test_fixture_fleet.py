@@ -21,6 +21,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FixtureFleetTest(unittest.TestCase):
+    def test_repository_endpoint_manifests_build_exact_500_url_mix(self):
+        for protocol in ("srt", "dash"):
+            with self.subTest(protocol=protocol):
+                manifest, digest = load_fixture_manifest(
+                    ROOT / f"scale/fixtures/{protocol}-endpoints-500.json"
+                )
+                state = fixture_state(manifest, digest)
+
+                self.assertEqual(len(state["streams"]), 500)
+                self.assertEqual(
+                    len({stream["endpoint"] for stream in state["streams"]}), 500
+                )
+                self.assertEqual(
+                    state["behaviorEndpointCounts"],
+                    {"healthy": 400, "slow": 50, "dead": 25, "malformed": 25},
+                )
+
     def test_repository_dash_manifest_builds_four_benchmark_streams(self):
         manifest, digest = load_fixture_manifest(
             ROOT / "scale/fixtures/dash-matrix.json"
@@ -49,6 +66,12 @@ class FixtureFleetTest(unittest.TestCase):
             try:
                 self.assertEqual(
                     urlopen(f"{base}/healthy/manifest.mpd", timeout=2).read(),
+                    b"healthy-mpd",
+                )
+                self.assertEqual(
+                    urlopen(
+                        f"{base}/healthy/endpoint-00001/manifest.mpd", timeout=2
+                    ).read(),
                     b"healthy-mpd",
                 )
                 with patch("videosim.fixture_fleet.time.sleep") as sleep:
@@ -104,6 +127,34 @@ class FixtureFleetTest(unittest.TestCase):
         self.assertIn("filltype=pattern", malformed)
         self.assertIn("uri=srt://:19084?mode=listener", malformed)
 
+    @patch("videosim.fixture_fleet.require_gst_launch", return_value="gst-launch-1.0")
+    def test_manifest_expands_unique_behavior_endpoints_and_srt_commands(self, _require):
+        with tempfile.TemporaryDirectory() as directory:
+            source = json.loads(
+                (ROOT / "scale/fixtures/srt-matrix.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            source["behaviorEndpointCounts"] = {
+                "healthy": 2,
+                "slow": 1,
+                "dead": 1,
+                "malformed": 2,
+            }
+            path = Path(directory, "manifest.json")
+            path.write_text(json.dumps(source), encoding="utf-8")
+
+            manifest, digest = load_fixture_manifest(path)
+            state = fixture_state(manifest, digest)
+            commands = srt_fixture_commands(manifest)
+
+        self.assertEqual(len(state["streams"]), 6)
+        self.assertEqual(len({stream["endpoint"] for stream in state["streams"]}), 6)
+        self.assertEqual(len(commands), 5)
+        self.assertIn("19081", commands[0])
+        self.assertIn("19082", commands[1])
+        self.assertIn("uri=srt://:19086?mode=listener", commands[-1])
+
     def test_fixture_fleet_rejects_unsupported_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
             source = json.loads(
@@ -130,6 +181,17 @@ class FixtureFleetTest(unittest.TestCase):
             path.write_text(json.dumps(source), encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "basePort"):
+                load_fixture_manifest(path)
+
+            source["basePort"] = 65532
+            source["behaviorEndpointCounts"] = {
+                "healthy": 2,
+                "slow": 1,
+                "dead": 1,
+                "malformed": 1,
+            }
+            path.write_text(json.dumps(source), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "endpoint count"):
                 load_fixture_manifest(path)
 
     def test_fixture_fleet_cli_delegates(self):

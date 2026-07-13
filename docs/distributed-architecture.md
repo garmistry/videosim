@@ -111,7 +111,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - `python -m videosim fixture-fleet` writes benchmark-state scenarios for
   deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
   It reuses the existing generators, a standard-library DASH HTTP service, and
-  GStreamer SRT listeners.
+  GStreamer SRT listeners. Optional per-behavior endpoint counts expand distinct
+  URLs/listener ports; checked-in manifests declare 500 URLs per protocol.
 - `python -m videosim fixture-scenario` deterministically expands those states
   into exact logical protocol/behavior mixes for bounded-worker tests. The
   checked-in 1,000-stream scenario reuses eight endpoints and is not a capacity

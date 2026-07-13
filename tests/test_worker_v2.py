@@ -296,14 +296,17 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             expected_status=403,
             headers=self.worker_headers("different-worker"),
         )
-        _, assignment = self.get_json(
-            "/api/workers/assignments",
-            {
-                "worker_id": worker_id,
-                "worker_incarnation_id": str(incarnation),
-            },
-            headers=self.worker_headers(worker_id),
-        )
+        with patch.object(
+            SecurityConfig, "validate_external_endpoint", return_value=None
+        ):
+            _, assignment = self.get_json(
+                "/api/workers/assignments",
+                {
+                    "worker_id": worker_id,
+                    "worker_incarnation_id": str(incarnation),
+                },
+                headers=self.worker_headers(worker_id),
+            )
 
         self.assertIn("does not match", denied["error"])
         self.assertEqual(assignment["apiVersion"], "videosim.worker/v2")

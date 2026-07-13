@@ -1,8 +1,9 @@
 # Generated Feed Runtime
 
-This is the first F4 data-plane split. It removes PostgreSQL-backed generated
-feed processes from GUI/API ownership. It is not 1,000-stream admission or a
-complete multi-host endpoint allocator.
+This F4 data-plane split removes PostgreSQL-backed generated feed processes
+from GUI/API ownership. It includes replica-safe SRT port allocation and live
+runtime-owner observation. It is not 1,000-stream media admission or a
+multi-host endpoint router.
 
 ## Runtime Contract
 
@@ -10,14 +11,21 @@ complete multi-host endpoint allocator.
 - Versioned start, fault-profile, update, alert, stop, and delete requests may
   reach any API replica. PostgreSQL compare-and-swap plus the existing success
   audit remains the mutation authority.
+- PostgreSQL generated-SRT create/update serializes on the tenant row and
+  chooses an available port from the configured range. A partial unique index
+  enforces the tenant/port invariant for every write path, including imports.
 - API replicas do not launch PostgreSQL-backed generated feeds. Detail reads
-  report `runtimeKnown=false` and show durable desired state without claiming
-  observed process health.
+  show durable desired state and query PostgreSQL's current lock authority for
+  version-matched observed owner/health. An absent ready lock is reported as
+  `runtimeKnown=false` rather than inferred from desired state.
 - `python -m videosim.generated_runtime` polls desired generated feeds and
   holds PostgreSQL session advisory locks for both feed ID and SRT port while a
   child process is alive.
 - A config-version change stops the old child before relaunch. Stop/delete
   removes the desired row from reconciliation and terminates the child.
+- A runtime takes a version-specific ready lock only after the media child
+  launches. Database-session loss releases feed, port, and ready locks; another
+  replica can then take over without stale observed health.
 - Loss of the lock-holding database session is fatal: the runtime terminates
   all children and exits so a supervisor can restart it. `--max-feeds` bounds
   one process's owned child count.
@@ -64,10 +72,11 @@ docker compose \
 ## Marked Startup Validation
 
 The marked API workflow boots PostgreSQL, migration, two API replicas, and the
-generated runtime. It creates through API A, starts through API B, proves real
-SRT video/audio/captions, kills and recreates the runtime, proves media again,
-stops through API A, proves the endpoint unreachable, and captures Docker state
-and logs.
+generated runtime. It creates through both APIs and proves distinct allocated
+ports, starts through API B, observes the runtime owner, proves real SRT
+video/audio/captions, kills the runtime, proves ownership disappears, recreates
+it, proves a new owner session and media, stops through API A, proves the
+endpoint unreachable, and captures Docker state and logs.
 
 ```sh
 VIDEOSIM_GENERATED_RUNTIME_INTEGRATION=1 \
@@ -89,15 +98,12 @@ report, and the pre-restart runtime log.
 
 ## Open Gates
 
-- Generated SRT port selection during API create is still replica-local. The
-  runtime rejects duplicate port ownership, but PostgreSQL does not yet allocate
-  a unique host/port endpoint atomically. Do not scale generated creates across
-  APIs until that allocator exists.
-- Advisory locks fence process ownership; observed owner, process health,
-  restart count, and endpoint metadata are not yet projected for operator reads.
-- A stable SRT address across separate runtime hosts still needs explicit
-  host/IP allocation or a proven UDP routing design. The validation recreates
-  one service at the same Docker DNS name.
+- Allocation covers the configured port range on one advertised SRT host. A
+  stable address across separate runtime hosts still needs host/IP allocation
+  or a proven UDP routing design; validation recreates one service at the same
+  Docker DNS name.
+- Operator detail exposes current lock-backed owner/session health, not restart
+  history, media PID, last launch failure, or historical availability.
 - The DASH origin is one shared-volume Nginx service, not HA object storage or
   a measured cache tier.
 - First-claim placement and static `--max-feeds` are not cost-aware scheduling.

@@ -40,6 +40,15 @@ def validate_config(config: VideoFeedConfig) -> ValidationReport:
 
 def _validate_srt(config: VideoFeedConfig, report: ValidationReport) -> ValidationReport:
     if config.passive:
+        if _expected_tracks_present(
+            config.endpoint, {"video": True, "audio": True, "captions": True}
+        ):
+            report.reachable = True
+            report.video_present = True
+            report.audio_present = True
+            report.captions_present = True
+            report.passed = True
+            return report
         report.video_present = _track_present(config.endpoint, "video")
         report.audio_present = _track_present(config.endpoint, "audio")
         report.captions_present = report.video_present and _captions_present(config.endpoint)

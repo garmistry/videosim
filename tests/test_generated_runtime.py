@@ -140,6 +140,14 @@ class ProcessFactory:
         return process
 
 
+class FailFirstProcessFactory(ProcessFactory):
+    def __call__(self, command, *, start_new_session):
+        if not self.processes:
+            self.processes.append(None)
+            raise OSError("media launcher unavailable")
+        return super().__call__(command, start_new_session=start_new_session)
+
+
 class GeneratedRuntimeTest(unittest.TestCase):
     def test_parses_bounded_runtime_feed_and_rejects_unsafe_input(self):
         parsed = parse_runtime_feed(feed_row(), 9000, 9999)
@@ -207,6 +215,22 @@ class GeneratedRuntimeTest(unittest.TestCase):
         self.assertEqual(set(second.owned), {"stream-a"})
         with patch("videosim.generated_runtime.os.killpg"):
             second.close()
+
+    def test_one_launch_failure_does_not_stop_other_feed_ownership(self):
+        database = FakeDatabase([feed_row(), feed_row("stream-b", port=9001)])
+        runtime = GeneratedFeedRuntime(
+            database.connect(),
+            max_feeds=2,
+            process_factory=FailFirstProcessFactory(),
+        )
+
+        runtime.reconcile()
+
+        self.assertEqual(set(runtime.owned), {"stream-b"})
+        self.assertNotIn(runtime_lock_id("default", "stream-a"), database.locks)
+        self.assertNotIn(runtime_port_lock_id("default", 9000), database.locks)
+        with patch("videosim.generated_runtime.os.killpg"):
+            runtime.close()
 
 
 @unittest.skipUnless(DATABASE_URL, "VIDEOSIM_TEST_POSTGRES_URL is not configured")

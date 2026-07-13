@@ -278,8 +278,8 @@ class GeneratedFeedRuntime:
             if lock_id is None:
                 continue
             port_lock_id = None
+            row = self._current_row(feed_id)
             try:
-                row = self._current_row(feed_id)
                 current = (
                     parse_runtime_feed(
                         row, self.srt_port_start, self.srt_port_end
@@ -287,26 +287,32 @@ class GeneratedFeedRuntime:
                     if row is not None
                     else None
                 )
-                if current != offered:
+            except ValueError as exc:
+                self._unlock(lock_id)
+                self.log(f"feed={feed_id} rejected={exc}")
+                continue
+            if current != offered:
+                self._unlock(lock_id)
+                continue
+            if current.protocol == "srt":
+                port_lock_id = self._try_port_lock(current.feed_port)
+                if port_lock_id is None:
                     self._unlock(lock_id)
+                    self.log(
+                        f"feed={feed_id} rejected=claimed_srt_port "
+                        f"port={current.feed_port}"
+                    )
                     continue
-                if current.protocol == "srt":
-                    port_lock_id = self._try_port_lock(current.feed_port)
-                    if port_lock_id is None:
-                        self._unlock(lock_id)
-                        self.log(
-                            f"feed={feed_id} rejected=claimed_srt_port "
-                            f"port={current.feed_port}"
-                        )
-                        continue
+            try:
                 process = self.process_factory(
                     self.command_for(current), start_new_session=True
                 )
-            except Exception:
+            except OSError as exc:
                 if port_lock_id is not None:
                     self._unlock(port_lock_id)
                 self._unlock(lock_id)
-                raise
+                self.log(f"feed={feed_id} launch_failed={exc}")
+                continue
             self.owned[feed_id] = OwnedFeed(
                 current, process, lock_id, port_lock_id
             )

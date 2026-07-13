@@ -211,13 +211,21 @@ def validation_monitor_ids(stream: dict) -> tuple[str, ...]:
 
 
 def issues_for_report(stream: dict, report: ValidationReport) -> list[MonitorIssue]:
+    expects_black = stream.get("source") != "external" and stream.get("mode") == "black_video"
+    expects_frozen = stream.get("source") != "external" and stream.get("mode") == "frozen_video"
     failures = {
         "feed_reachable": (not report.reachable, "Feed is unreachable or expected streams are missing"),
         "essence_video_present": (not report.video_present, "Expected video is absent"),
         "essence_audio_present": (not report.audio_present, "Expected audio is absent"),
         "essence_captions_present": (not report.captions_present, "Expected captions are absent"),
-        "black_video_detected": (not report.black_video, "Black-video profile did not validate"),
-        "frozen_video_detected": (not report.frozen_video, "Frozen-video profile did not validate"),
+        "black_video_detected": (
+            report.black_video != expects_black,
+            "Black-video profile did not validate" if expects_black else "Black video detected",
+        ),
+        "frozen_video_detected": (
+            report.frozen_video != expects_frozen,
+            "Frozen-video profile did not validate" if expects_frozen else "Frozen video detected",
+        ),
     }
     return [
         issue(stream, monitor_id, failures[monitor_id][1])

@@ -16,6 +16,7 @@ from videosim.monitor import (
     empty_monitor_state,
     frame_rate_issues_for_stream,
     issue,
+    issues_for_report,
     loudness_issues_for_stream,
     next_deep_check_at,
     run_monitor_once,
@@ -70,6 +71,39 @@ def repeated_with_nulls(*packets):
 
 
 class MonitorTest(unittest.TestCase):
+    def test_black_and_frozen_checks_distinguish_fault_profiles_from_detection(self):
+        external = stream() | {
+            "source": "external",
+            "alertProfile": {"enabledMonitorIds": None, "delaySeconds": 0},
+        }
+        cases = (
+            (external, False, False, set()),
+            (external, True, False, {"black_video_detected"}),
+            (external, False, True, {"frozen_video_detected"}),
+            (stream("black_video"), True, False, set()),
+            (stream("frozen_video"), False, True, set()),
+        )
+        for candidate, black, frozen, expected in cases:
+            with self.subTest(
+                source=candidate.get("source"),
+                mode=candidate["mode"],
+                black=black,
+                frozen=frozen,
+            ):
+                issues = issues_for_report(
+                    candidate,
+                    ValidationReport(
+                        endpoint=candidate["endpoint"],
+                        reachable=True,
+                        video_present=True,
+                        audio_present=True,
+                        captions_present=True,
+                        black_video=black,
+                        frozen_video=frozen,
+                    ),
+                )
+            self.assertEqual({item.monitor_id for item in issues}, expected)
+
     def test_1000_stream_deep_check_offsets_cover_the_cadence(self):
         bins = Counter(
             int((next_deep_check_at(f"stream-{index}", 100, 60) - 100) // 5)

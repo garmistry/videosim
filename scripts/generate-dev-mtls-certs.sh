@@ -2,7 +2,16 @@
 set -euo pipefail
 
 output_dir="${1:-deploy/certs}"
-worker_id="${WORKER_ID:-worker-1}"
+if (($#)); then
+  shift
+fi
+worker_ids=("${@:-${WORKER_ID:-worker-1}}")
+for worker_id in "${worker_ids[@]}"; do
+  if [[ ! "$worker_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo "invalid worker ID: $worker_id" >&2
+    exit 1
+  fi
+done
 mkdir -p "$output_dir"
 
 if ! command -v openssl >/dev/null 2>&1; then
@@ -20,7 +29,7 @@ openssl req -x509 -newkey rsa:3072 -nodes -days 30 \
   -addext "subjectKeyIdentifier=hash" \
   -keyout "$work_dir/server-ca.key" -out "$output_dir/server-ca.crt" >/dev/null 2>&1
 cat >"$work_dir/server.ext" <<'EOF'
-subjectAltName=DNS:proxy,DNS:localhost,IP:127.0.0.1
+subjectAltName=DNS:proxy,DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1
 extendedKeyUsage=serverAuth
 keyUsage=digitalSignature,keyEncipherment
 EOF
@@ -40,12 +49,16 @@ cat >"$work_dir/worker.ext" <<'EOF'
 extendedKeyUsage=clientAuth
 keyUsage=digitalSignature
 EOF
-openssl req -newkey rsa:3072 -nodes -subj "/CN=${worker_id}" \
-  -keyout "$output_dir/${worker_id}.key" -out "$work_dir/worker.csr" >/dev/null 2>&1
-openssl x509 -req -days 30 -sha256 -in "$work_dir/worker.csr" \
-  -CA "$output_dir/worker-ca.crt" -CAkey "$work_dir/worker-ca.key" -CAcreateserial \
-  -extfile "$work_dir/worker.ext" -out "$output_dir/${worker_id}.crt" >/dev/null 2>&1
+for worker_id in "${worker_ids[@]}"; do
+  openssl req -newkey rsa:3072 -nodes -subj "/CN=${worker_id}" \
+    -keyout "$output_dir/${worker_id}.key" \
+    -out "$work_dir/${worker_id}.csr" >/dev/null 2>&1
+  openssl x509 -req -days 30 -sha256 -in "$work_dir/${worker_id}.csr" \
+    -CA "$output_dir/worker-ca.crt" -CAkey "$work_dir/worker-ca.key" -CAcreateserial \
+    -extfile "$work_dir/worker.ext" -out "$output_dir/${worker_id}.crt" >/dev/null 2>&1
+  chmod 600 "$output_dir/${worker_id}.key"
+done
 
 openssl rand -base64 32 | sed 's/+/-/g; s#/#_#g' >"$output_dir/worker-spool.key"
-chmod 600 "$output_dir/server.key" "$output_dir/${worker_id}.key" "$output_dir/worker-spool.key"
-echo "Generated local-only TLS material in $output_dir for worker CN ${worker_id}"
+chmod 600 "$output_dir/server.key" "$output_dir/worker-spool.key"
+echo "Generated local-only TLS material in $output_dir for ${#worker_ids[@]} worker certificate(s)"

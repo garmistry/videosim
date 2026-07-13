@@ -87,6 +87,64 @@ class ControlPlaneLoadPostgresIntegrationTest(unittest.TestCase):
         finally:
             _database_command(DATABASE_URL, "DROP", database_name)
 
+    def test_p0_exact_candidate_recovers_one_domain_and_fences_its_stale_report(self):
+        database_name = f"videosim_load_{uuid.uuid4().hex}"
+        database_url = _database_url(DATABASE_URL, database_name)
+        _database_command(DATABASE_URL, "CREATE", database_name)
+        try:
+            PostgresMigrator(database_url).apply()
+            with tempfile.TemporaryDirectory() as directory:
+                workload = json.loads(WORKLOAD_PATH.read_text(encoding="utf-8"))
+                workload["eventStorms"] = [
+                    {"kind": "worker-domain-loss", "offsetSeconds": 0}
+                ]
+                workload_path = Path(directory, "workload.json")
+                workload_path.write_text(json.dumps(workload), encoding="utf-8")
+
+                report = run_control_plane_load(
+                    database_url,
+                    str(workload_path),
+                    3,
+                    tick_seconds=0.05,
+                    worker_freshness_seconds=1,
+                )
+
+                self.assertTrue(report.passed, report.errors)
+                event = report.metrics["events"][0]
+                self.assertEqual(event["status"], "recovered")
+                self.assertEqual(event["failureDomain"], "candidate-zone-a")
+                self.assertEqual(event["failedWorkers"], 11)
+                self.assertEqual(event["survivorWorkers"], 22)
+                self.assertEqual(event["affectedStreams"], 440)
+                self.assertEqual(event["ownershipChanges"], 440)
+                self.assertEqual(event["healthyOwnershipChanges"], 0)
+                self.assertFalse(event["staleReportAccepted"])
+                self.assertIn(
+                    "worker_heartbeat_stale", event["staleReportRejectedReasons"]
+                )
+                self.assertLessEqual(event["authorityRecoverySeconds"]["p99"], 90)
+                self.assertGreaterEqual(event["postRecoveryReports"], 22)
+                self.assertEqual(
+                    event["assignmentShape"],
+                    {
+                        "workers": 22,
+                        "minimumStreams": 60,
+                        "maximumStreams": 60,
+                        "minimumSrtStreams": 30,
+                        "maximumSrtStreams": 30,
+                        "minimumDashStreams": 30,
+                        "maximumDashStreams": 30,
+                    },
+                )
+                self.assertEqual(report.metrics["freshWorkers"], 22)
+                self.assertEqual(report.metrics["authoritativeLeases"], 1320)
+                self.assertEqual(report.metrics["currentCheckStreams"], 1320)
+                self.assertEqual(report.metrics["reportsAccepted"], 55)
+                self.assertEqual(report.metrics["resultsAccepted"], 5280)
+                self.assertEqual(report.metrics["resultOutboxEvents"], 55)
+        finally:
+            _database_command(DATABASE_URL, "DROP", database_name)
+
 
 def _database_url(url: str, database_name: str) -> str:
     parsed = urlsplit(url)

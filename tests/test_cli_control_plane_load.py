@@ -32,6 +32,8 @@ class ControlPlaneLoadCliTest(unittest.TestCase):
                     "scale/workloads/f5-1000-candidate.json",
                     "--duration",
                     "24h",
+                    "--worker-freshness-seconds",
+                    "30",
                     "--output",
                     "artifacts/control-plane-load.json",
                     "--json",
@@ -45,6 +47,7 @@ class ControlPlaneLoadCliTest(unittest.TestCase):
             "scale/workloads/f5-1000-candidate.json",
             86400,
             tick_seconds=20,
+            worker_freshness_seconds=30,
             output_path="artifacts/control-plane-load.json",
         )
 

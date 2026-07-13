@@ -388,6 +388,7 @@ function FeedTable({ state, streams, previewTick, copiedEndpoint, onCopyEndpoint
                     <>
                       <form action="/start" method="post">
                         <input name="stream_id" type="hidden" value={stream.id} />
+                        <input name="config_version" type="hidden" value={stream.configVersion} />
                         <input name="protocol" type="hidden" value={stream.protocol} />
                         <input name="mode" type="hidden" value={stream.mode} />
                         <button className="button small secondary" type="submit">Start</button>
@@ -431,6 +432,7 @@ function CatalogPager({ hasMore, loading, onNext, onPrevious, pageNumber }) {
 function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
   const controls = state.controls || {};
   const readOnly = Boolean(state.operatorReadOnly);
+  const runtimeKnown = stream.runtimeKnown !== false;
   const [configSource, setConfigSource] = useState(stream.source || "generated");
   useEffect(() => {
     setConfigSource(stream.source || "generated");
@@ -452,7 +454,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
           <p className="meta-line">{stream.source === "external" ? "External feed" : stream.intentionalOutage ? "Intentional outage" : "Normal feed"}</p>
         </div>
         <div className="header-actions">
-          {!readOnly ? (
+          {!readOnly && runtimeKnown ? (
             <>
               <form action="/validate" method="post">
                 <input name="stream_id" type="hidden" value={stream.id} />
@@ -467,6 +469,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                 ) : (
                   <form action="/start" method="post">
                     <input name="stream_id" type="hidden" value={stream.id} />
+                    <input name="config_version" type="hidden" value={stream.configVersion} />
                     <input name="protocol" type="hidden" value={stream.protocol} />
                     <input name="mode" type="hidden" value={stream.mode} />
                     <button className="button primary" type="submit">Start feed</button>
@@ -549,6 +552,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
               ) : (
                 <form action="/streams/update" className="form-grid" method="post">
                 <input name="stream_id" type="hidden" value={stream.id} />
+                <input name="config_version" type="hidden" value={stream.configVersion} />
                 <label>
                   Feed name
                   <input defaultValue={stream.name} name="name" />
@@ -602,7 +606,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
         </div>
       </section>
 
-      {stream.source !== "external" && !readOnly ? (
+      {stream.source !== "external" && !readOnly && runtimeKnown ? (
         <section className="card">
           <header className="card-header"><h2>Fault controls</h2></header>
           <div className="card-body">
@@ -610,6 +614,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
               <input name="controls" type="hidden" value="1" />
               <input name="protocol" type="hidden" value={stream.protocol} />
               <input name="stream_id" type="hidden" value={stream.id} />
+              <input name="config_version" type="hidden" value={stream.configVersion} />
               {[
                 ["video", "Video"],
                 ["audio", "Audio"],
@@ -660,6 +665,7 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
         <div className="delete-row">
           <form action="/streams/delete" method="post">
             <input name="stream_id" type="hidden" value={stream.id} />
+            <input name="config_version" type="hidden" value={stream.configVersion} />
             <button className="button danger" type="submit">Delete feed</button>
           </form>
         </div>
@@ -930,6 +936,7 @@ function AlertProfileCard({ readOnly = false, state, stream }) {
       <div className="card-body">
         <form action="/streams/alerts" className="alert-profile-form" method="post">
           <input name="stream_id" type="hidden" value={stream.id} />
+          <input name="config_version" type="hidden" value={stream.configVersion} />
           <label className="delay-field">
             Alarm delay seconds
             <input defaultValue={profile.delaySeconds || 0} disabled={readOnly} min="0" name="alert_delay_seconds" step="1" type="number" />

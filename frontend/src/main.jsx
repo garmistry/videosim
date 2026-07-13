@@ -4,6 +4,7 @@ import "./style.css";
 
 const detailTabs = ["Logs", "Validation"];
 const METRICS_WINDOW_MS = 5 * 60 * 1000;
+const CATALOG_PAGE_SIZE = 100;
 const themeKey = "videosim-theme";
 
 function readState() {
@@ -26,9 +27,15 @@ function applyTheme(theme) {
 
 const initialTheme = readTheme();
 applyTheme(initialTheme);
+const initialState = readState();
 
 function App() {
-  const [state, setState] = useState(() => readState());
+  const [state, setState] = useState(initialState);
+  const [catalog, setCatalog] = useState(initialState.operatorCatalog || null);
+  const [catalogCursor, setCatalogCursor] = useState("");
+  const [catalogHistory, setCatalogHistory] = useState([]);
+  const [catalogError, setCatalogError] = useState(initialState.operatorCatalog?.error || "");
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [tab, setTab] = useState("Logs");
   const [theme, setTheme] = useState(initialTheme);
   const [copiedEndpoint, setCopiedEndpoint] = useState("");
@@ -39,6 +46,11 @@ function App() {
   const selectedStream = useMemo(
     () => (state.streams || []).find((item) => item.id === state.selectedStreamId),
     [state.selectedStreamId, state.streams]
+  );
+  const durableList = Boolean(state.durableOperatorReads && !state.selectedStreamId);
+  const listedStreams = useMemo(
+    () => durableList ? (catalog?.feeds || []).map(operatorCatalogFeed) : (state.streams || []),
+    [catalog, durableList, state.streams]
   );
 
   async function copyEndpoint(value) {
@@ -68,20 +80,70 @@ function App() {
     let active = true;
     async function refreshState() {
       try {
-        const response = await fetch("/state.json", { cache: "no-store" });
+        const path = state.durableOperatorReads
+          ? state.selectedStreamId
+            ? `/api/operator/feeds/${encodeURIComponent(state.selectedStreamId)}`
+            : "/api/operator/overview"
+          : "/state.json";
+        const response = await fetch(path, { cache: "no-store" });
         if (active && response.ok) {
-          setState(await response.json());
+          const payload = await response.json();
+          if (state.durableOperatorReads && !state.selectedStreamId) {
+            setState((current) => ({ ...current, monitor: payload.monitor }));
+          } else {
+            setState(payload);
+          }
         }
       } catch {
         return;
       }
     }
+    refreshState();
     const timer = setInterval(refreshState, 1000);
     return () => {
       active = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [state.durableOperatorReads, state.selectedStreamId]);
+
+  useEffect(() => {
+    if (!durableList) {
+      return undefined;
+    }
+    let active = true;
+    async function refreshCatalog() {
+      setCatalogLoading(true);
+      const query = new URLSearchParams({ limit: String(CATALOG_PAGE_SIZE) });
+      if (catalogCursor) {
+        query.set("cursor", catalogCursor);
+      }
+      try {
+        const response = await fetch(`/api/operator/feeds?${query}`, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Catalog request failed (${response.status})`);
+        }
+        const payload = await response.json();
+        if (active) {
+          setCatalog(payload);
+          setCatalogError("");
+        }
+      } catch (error) {
+        if (active) {
+          setCatalogError(error instanceof Error ? error.message : "Catalog request failed");
+        }
+      } finally {
+        if (active) {
+          setCatalogLoading(false);
+        }
+      }
+    }
+    refreshCatalog();
+    const timer = setInterval(refreshCatalog, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [catalogCursor, durableList]);
 
   useEffect(() => {
     if (!(state.streams || []).some((stream) => stream.previewAvailable)) {
@@ -134,12 +196,27 @@ function App() {
           />
         ) : (
           <FeedList
+            catalog={durableList ? catalog : null}
+            catalogError={catalogError}
+            catalogLoading={catalogLoading}
             copiedEndpoint={copiedEndpoint}
+            onCatalogNext={() => {
+              if (!catalog?.nextCursor) return;
+              setCatalogHistory((history) => [...history, catalogCursor]);
+              setCatalogCursor(catalog.nextCursor);
+            }}
+            onCatalogPrevious={() => {
+              const previous = catalogHistory.at(-1) || "";
+              setCatalogHistory((history) => history.slice(0, -1));
+              setCatalogCursor(previous);
+            }}
             onCopyEndpoint={copyEndpoint}
             onCreate={() => setCreateOpen(true)}
             onPreview={setFullPreview}
+            pageNumber={catalogHistory.length + 1}
             previewTick={previewTick}
             state={state}
+            streams={listedStreams}
           />
         )}
       </main>
@@ -173,24 +250,65 @@ function TopBar({ theme, onCreate, onToggleTheme }) {
   );
 }
 
-function FeedList({ state, previewTick, copiedEndpoint, onCopyEndpoint, onCreate, onPreview }) {
-  const streams = state.streams || [];
+function operatorCatalogFeed(feed) {
+  return {
+    ...feed,
+    url: `/feeds/${encodeURIComponent(feed.id)}`,
+    sourceLabel: feed.source === "external" ? "External URL" : "Generated",
+    status: "unknown",
+    runtimeKnown: false,
+    intentionalOutage: false,
+    lastError: "none",
+    metrics: {
+      uptimeSeconds: 0,
+      bitrateBps: 0,
+      outboundBytes: 0,
+      videoFrames: 0,
+      videoFramesLabel: "0",
+      outboundLabel: "0 B"
+    },
+    previewAvailable: false,
+    previewUrl: "",
+    catalogOnly: true
+  };
+}
+
+function FeedList({
+  state,
+  streams,
+  catalog,
+  catalogError,
+  catalogLoading,
+  pageNumber,
+  previewTick,
+  copiedEndpoint,
+  onCopyEndpoint,
+  onCreate,
+  onPreview,
+  onCatalogNext,
+  onCatalogPrevious
+}) {
   const runningCount = streams.filter((stream) => stream.status === "running").length;
+  const summary = catalog
+    ? `Page ${pageNumber} / ${streams.length} feeds`
+    : `${runningCount} running / ${streams.length} total`;
   return (
     <div className="screen-stack">
       <header className="screen-header">
         <div>
           <h1>Active feeds</h1>
-          <p className="meta-line">{runningCount} running / {streams.length} total</p>
+          <p className="meta-line">{summary}</p>
         </div>
         <button className="button primary" onClick={onCreate} type="button">Create feed</button>
       </header>
       <MonitorSummary monitor={state.monitor || {}} />
       <section className="card flush">
-        {streams.length === 0 ? (
+        {catalogError ? (
+          <div className="empty-state catalog-error">{catalogError}</div>
+        ) : streams.length === 0 ? (
           <div className="empty-state">
-            <span>No feeds configured.</span>
-            <button className="button primary" onClick={onCreate} type="button">Create feed</button>
+            <span>{catalogLoading ? "Loading feeds..." : "No feeds configured."}</span>
+            {!catalogLoading ? <button className="button primary" onClick={onCreate} type="button">Create feed</button> : null}
           </div>
         ) : (
           <FeedTable
@@ -199,14 +317,24 @@ function FeedList({ state, previewTick, copiedEndpoint, onCopyEndpoint, onCreate
             onPreview={onPreview}
             previewTick={previewTick}
             state={state}
+            streams={streams}
           />
         )}
+        {catalog ? (
+          <CatalogPager
+            hasMore={catalog.hasMore}
+            loading={catalogLoading}
+            onNext={onCatalogNext}
+            onPrevious={onCatalogPrevious}
+            pageNumber={pageNumber}
+          />
+        ) : null}
       </section>
     </div>
   );
 }
 
-function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
+function FeedTable({ state, streams, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
   return (
     <div className="feed-table-wrap">
       <table className="feed-table">
@@ -222,12 +350,16 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
           </tr>
         </thead>
         <tbody>
-          {(state.streams || []).map((stream) => (
+          {streams.map((stream) => (
             <tr key={stream.id}>
               <td>
-                <button className="preview-thumb" onClick={() => onPreview(stream)} type="button">
-                  <img alt={`${stream.name} preview`} src={`${stream.previewUrl}?t=${previewTick}`} />
-                </button>
+                {stream.catalogOnly ? (
+                  <span className="preview-unavailable">Config</span>
+                ) : (
+                  <button className="preview-thumb" onClick={() => onPreview(stream)} type="button">
+                    <img alt={`${stream.name} preview`} src={`${stream.previewUrl}?t=${previewTick}`} />
+                  </button>
+                )}
               </td>
               <td>
                 <div className="feed-name-cell">
@@ -252,7 +384,7 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
               <td>
                 <div className="row-actions">
                   <a className="button small ghost" href={stream.url}>Open</a>
-                  {stream.source !== "external" ? (
+                  {!stream.catalogOnly && stream.source !== "external" ? (
                     <>
                       <form action="/start" method="post">
                         <input name="stream_id" type="hidden" value={stream.id} />
@@ -266,10 +398,12 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
                       </form>
                     </>
                   ) : null}
-                  <form action="/validate" method="post">
-                    <input name="stream_id" type="hidden" value={stream.id} />
-                    <button className="button small ghost" type="submit">Validate</button>
-                  </form>
+                  {!stream.catalogOnly ? (
+                    <form action="/validate" method="post">
+                      <input name="stream_id" type="hidden" value={stream.id} />
+                      <button className="button small ghost" type="submit">Validate</button>
+                    </form>
+                  ) : null}
                 </div>
               </td>
             </tr>
@@ -280,8 +414,23 @@ function FeedTable({ state, previewTick, copiedEndpoint, onCopyEndpoint, onPrevi
   );
 }
 
+function CatalogPager({ hasMore, loading, onNext, onPrevious, pageNumber }) {
+  return (
+    <nav aria-label="Feed pages" className="catalog-pager">
+      <button className="button small secondary" disabled={loading || pageNumber === 1} onClick={onPrevious} type="button">
+        Previous
+      </button>
+      <span className="card-meta">Page {pageNumber}</span>
+      <button className="button small secondary" disabled={loading || !hasMore} onClick={onNext} type="button">
+        Next
+      </button>
+    </nav>
+  );
+}
+
 function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, copiedEndpoint, onCopyEndpoint, onPreview }) {
   const controls = state.controls || {};
+  const readOnly = Boolean(state.operatorReadOnly);
   const [configSource, setConfigSource] = useState(stream.source || "generated");
   useEffect(() => {
     setConfigSource(stream.source || "generated");
@@ -298,28 +447,33 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
             <Tag>{stream.protocol.toUpperCase()}</Tag>
             {stream.source !== "external" ? <Tag>{stream.mode}</Tag> : null}
             <Tag accent>{stream.url}</Tag>
+            {readOnly ? <Tag>Read-only replica</Tag> : null}
           </div>
           <p className="meta-line">{stream.source === "external" ? "External feed" : stream.intentionalOutage ? "Intentional outage" : "Normal feed"}</p>
         </div>
         <div className="header-actions">
-          <form action="/validate" method="post">
-            <input name="stream_id" type="hidden" value={stream.id} />
-            <button className="button secondary" type="submit">Validate</button>
-          </form>
-          {stream.source !== "external" ? (
-            stream.status === "running" ? (
-              <form action="/stop" method="post">
+          {!readOnly ? (
+            <>
+              <form action="/validate" method="post">
                 <input name="stream_id" type="hidden" value={stream.id} />
-                <button className="button danger" type="submit">Stop feed</button>
+                <button className="button secondary" type="submit">Validate</button>
               </form>
-            ) : (
-              <form action="/start" method="post">
-                <input name="stream_id" type="hidden" value={stream.id} />
-                <input name="protocol" type="hidden" value={stream.protocol} />
-                <input name="mode" type="hidden" value={stream.mode} />
-                <button className="button primary" type="submit">Start feed</button>
-              </form>
-            )
+              {stream.source !== "external" ? (
+                stream.status === "running" ? (
+                  <form action="/stop" method="post">
+                    <input name="stream_id" type="hidden" value={stream.id} />
+                    <button className="button danger" type="submit">Stop feed</button>
+                  </form>
+                ) : (
+                  <form action="/start" method="post">
+                    <input name="stream_id" type="hidden" value={stream.id} />
+                    <input name="protocol" type="hidden" value={stream.protocol} />
+                    <input name="mode" type="hidden" value={stream.mode} />
+                    <button className="button primary" type="submit">Start feed</button>
+                  </form>
+                )
+              ) : null}
+            </>
           ) : null}
         </div>
       </header>
@@ -328,9 +482,11 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
         <article className="card">
           <header className="card-header"><h2>Preview</h2></header>
           <div className="card-body">
-            <button className="preview-button" onClick={() => onPreview(stream)} type="button">
-              <img alt={`${stream.name} preview`} src={`${stream.previewUrl}?t=${previewTick}`} />
-            </button>
+            {stream.previewAvailable ? (
+              <button className="preview-button" onClick={() => onPreview(stream)} type="button">
+                <img alt={`${stream.name} preview`} src={`${stream.previewUrl}?t=${previewTick}`} />
+              </button>
+            ) : <span className="preview-unavailable">Unavailable</span>}
           </div>
         </article>
 
@@ -378,12 +534,20 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
           </article>
 
           <MonitorPanel monitor={state.monitor || {}} stream={stream} />
-          <AlertProfileCard state={state} stream={stream} />
+          <AlertProfileCard readOnly={readOnly} state={state} stream={stream} />
 
           <article className="card">
             <header className="card-header"><h2>Configuration</h2></header>
             <div className="card-body">
-              <form action="/streams/update" className="form-grid" method="post">
+              {readOnly ? (
+                <dl className="config-list">
+                  <div><dt>Name</dt><dd>{stream.name}</dd></div>
+                  <div><dt>Source</dt><dd>{stream.sourceLabel || stream.source}</dd></div>
+                  <div><dt>Protocol</dt><dd>{stream.protocol.toUpperCase()}</dd></div>
+                  <div><dt>Version</dt><dd>{stream.configVersion}</dd></div>
+                </dl>
+              ) : (
+                <form action="/streams/update" className="form-grid" method="post">
                 <input name="stream_id" type="hidden" value={stream.id} />
                 <label>
                   Feed name
@@ -430,14 +594,15 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
                     <input defaultValue={stream.externalUrl || ""} name="external_url" placeholder="srt://host:port or https://host/manifest.mpd" />
                   </label>
                 )}
-                <button className="button secondary" type="submit">Update</button>
-              </form>
+                  <button className="button secondary" type="submit">Update</button>
+                </form>
+              )}
             </div>
           </article>
         </div>
       </section>
 
-      {stream.source !== "external" ? (
+      {stream.source !== "external" && !readOnly ? (
         <section className="card">
           <header className="card-header"><h2>Fault controls</h2></header>
           <div className="card-body">
@@ -491,12 +656,14 @@ function FeedDetail({ state, stream, metricSamples, tab, setTab, previewTick, co
         </div>
       </section>
 
-      <div className="delete-row">
-        <form action="/streams/delete" method="post">
-          <input name="stream_id" type="hidden" value={stream.id} />
-          <button className="button danger" type="submit">Delete feed</button>
-        </form>
-      </div>
+      {!readOnly ? (
+        <div className="delete-row">
+          <form action="/streams/delete" method="post">
+            <input name="stream_id" type="hidden" value={stream.id} />
+            <button className="button danger" type="submit">Delete feed</button>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -609,6 +776,9 @@ function StatusBadge({ stream, state }) {
 function statusMeta(stream, state) {
   if (!stream) {
     return { key: "stopped", label: "Stopped" };
+  }
+  if (stream.runtimeKnown === false) {
+    return { key: "stopped", label: "Config only" };
   }
   if (stream.lastError && stream.lastError !== "none") {
     return { key: "error", label: "Error" };
@@ -741,7 +911,7 @@ function MonitorPanel({ stream, monitor }) {
   );
 }
 
-function AlertProfileCard({ state, stream }) {
+function AlertProfileCard({ readOnly = false, state, stream }) {
   const options = state.alertOptions || state.monitor?.monitors || [];
   const profile = stream.alertProfile || { allEnabled: true, enabledMonitorIds: null, delaySeconds: 0 };
   const enabled = profile.enabledMonitorIds;
@@ -762,7 +932,7 @@ function AlertProfileCard({ state, stream }) {
           <input name="stream_id" type="hidden" value={stream.id} />
           <label className="delay-field">
             Alarm delay seconds
-            <input defaultValue={profile.delaySeconds || 0} min="0" name="alert_delay_seconds" step="1" type="number" />
+            <input defaultValue={profile.delaySeconds || 0} disabled={readOnly} min="0" name="alert_delay_seconds" step="1" type="number" />
           </label>
           {options.length === 0 ? (
             <p className="empty-copy">Monitor not running</p>
@@ -771,7 +941,7 @@ function AlertProfileCard({ state, stream }) {
               <div className="alert-choice-grid">
                 {options.map((option) => (
                   <label className="check-row" key={option.id}>
-                    <input defaultChecked={isEnabled(option.id)} name="alert_monitor" type="checkbox" value={option.id} />
+                    <input defaultChecked={isEnabled(option.id)} disabled={readOnly} name="alert_monitor" type="checkbox" value={option.id} />
                     <span>
                       <strong>{option.name}</strong>
                       <em className={`alert-state ${alertState(option.id).toLowerCase()}`}>{alertState(option.id)}</em>
@@ -781,9 +951,9 @@ function AlertProfileCard({ state, stream }) {
                 ))}
               </div>
               <div className="row-actions">
-                <button className="button secondary" name="alert_action" type="submit" value="save">Save selected</button>
-                <button className="button ghost" name="alert_action" type="submit" value="enable_all">Enable all</button>
-                <button className="button ghost" name="alert_action" type="submit" value="disable_all">Disable all</button>
+                <button className="button secondary" disabled={readOnly} name="alert_action" type="submit" value="save">Save selected</button>
+                <button className="button ghost" disabled={readOnly} name="alert_action" type="submit" value="enable_all">Enable all</button>
+                <button className="button ghost" disabled={readOnly} name="alert_action" type="submit" value="disable_all">Disable all</button>
               </div>
             </>
           )}
@@ -831,6 +1001,9 @@ function modeLabel(mode, state) {
 }
 
 function bitrateText(stream) {
+  if (stream.runtimeKnown === false) {
+    return "-";
+  }
   if (stream.status !== "running") {
     return "0 b/s";
   }
@@ -838,6 +1011,9 @@ function bitrateText(stream) {
 }
 
 function uptimeText(stream) {
+  if (stream.runtimeKnown === false) {
+    return "-";
+  }
   return formatSeconds(stream.status === "running" ? stream.metrics.uptimeSeconds : 0);
 }
 

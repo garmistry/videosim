@@ -384,6 +384,12 @@ code {
   border-color: var(--status-error);
 }
 
+.button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+  opacity: 0.6;
+}
+
 button:focus-visible,
 a:focus-visible,
 select:focus-visible,
@@ -458,6 +464,34 @@ input:focus-visible {
 
 .preview-thumb {
   width: 80px;
+}
+
+.preview-unavailable {
+  align-items: center;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  justify-content: center;
+  min-width: 80px;
+}
+
+.catalog-pager {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--space-4);
+  justify-content: flex-end;
+  min-height: 44px;
+  padding: var(--space-4) var(--space-5);
+}
+
+.catalog-error {
+  color: var(--status-error);
 }
 
 .preview-thumb img,
@@ -791,6 +825,32 @@ input:focus-visible {
 .alert-profile-form {
   display: grid;
   gap: var(--space-5);
+}
+
+.config-list {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.config-list div {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: 7rem minmax(0, 1fr);
+}
+
+.config-list dt {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+}
+
+.config-list dd {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .delay-field {

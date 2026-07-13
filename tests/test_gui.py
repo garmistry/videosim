@@ -1185,7 +1185,12 @@ class GuiTest(unittest.TestCase):
     def test_frontend_renders_feed_table_modal_and_full_preview(self):
         source = Path("frontend/src/main.jsx").read_text()
 
-        self.assertIn('fetch("/state.json"', source)
+        self.assertIn('const CATALOG_PAGE_SIZE = 100', source)
+        self.assertIn('"/api/operator/overview"', source)
+        self.assertIn('`/api/operator/feeds/${encodeURIComponent(state.selectedStreamId)}`', source)
+        self.assertIn('fetch(`/api/operator/feeds?${query}`', source)
+        self.assertIn('CatalogPager', source)
+        self.assertIn('"/state.json"', source)
         self.assertIn("setInterval(refreshState, 1000)", source)
         self.assertIn("FeedTable", source)
         self.assertIn("CreateFeedDialog", source)
@@ -1203,6 +1208,18 @@ class GuiTest(unittest.TestCase):
         self.assertIn('value="enable_all"', source)
         self.assertIn('value="disable_all"', source)
         self.assertIn("alertState", source)
+
+    def test_state_payload_can_omit_streams_and_probe_metrics(self):
+        state = GuiState(feed_port=9912)
+        self.create_feed(state)
+
+        payload = state_payload(
+            state, include_streams=False, include_probe_metrics=False
+        )
+
+        self.assertEqual(payload["streams"], [])
+        self.assertEqual(payload["monitor"]["probeMetrics"], {})
+        self.assertEqual(payload["monitor"]["workerProbeMetrics"], {})
 
     def test_frontend_renders_stream_detail_traffic_graphs(self):
         source = Path("frontend/src/main.jsx").read_text()

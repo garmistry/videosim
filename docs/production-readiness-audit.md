@@ -655,15 +655,18 @@ python -m videosim capacity-check --report <report.json> --policy <gate.json>
 fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
 slow/dead/malformed matrices; the worker command runs real probes from their
 states and reports outcomes by protocol; the fixture-scenario command can
-create exact seeded 1,000- and 1,320-URL mixes; and the worker benchmark can
-fail unless validation rotation covers every logical stream. The capacity
-command checks JSON evidence/policy inputs against
+create exact seeded 1,000- and 1,320-URL mixes from one or more source-host
+states while rejecting duplicate shard endpoints; a Linux fixture-domain
+Compose/startup contract samples real SRT/DASH media and logs; and the worker
+benchmark can fail unless validation rotation covers every logical stream. The
+capacity command checks JSON evidence/policy inputs against
 `scale/policies/f5-1000.json`. The checked-in F5 candidate places 33 workers
 evenly across three domains so any 22 survivors retain exact 1,320/660/660
-total/SRT/DASH tokens. A reusable Compose file renders one 11-worker domain,
-but it has not been booted on three independent hosts. Independent sources,
-remaining proposed harnesses, and production-like evidence are not implemented;
-a valid candidate or deployment render is not scale admission.
+total/SRT/DASH tokens. Reusable Compose files render one 11-worker domain and
+one 220-SRT/220-DASH fixture shard, but neither shape has been booted on three
+independent hosts. Per-stream independent sources, remaining proposed
+harnesses, and production-like evidence are not implemented; a valid candidate
+or deployment render is not scale admission.
 
 The control-plane benchmark also supports process-local worker removal. Its
 1,300-stream/ten-worker/one-loss run preserved complete unique ownership and

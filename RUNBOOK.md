@@ -687,6 +687,54 @@ declared domain-loss and endpoint-fault storms and retain every required
 artifact for `capacity-check`. If measured hosts cannot sustain this shape,
 revise the candidate before rerunning rather than weakening the admission gate.
 
+### Boot the candidate fixture domains
+
+Run `docker-compose.fixture-domain.yml` on three separate Linux load hosts,
+not on the worker-domain hosts. On each host, copy
+`.env.fixture-domain.example` to `.env.fixture-domain`, set the same
+immutable image digest, set a unique worker-reachable advertised hostname, and
+create the configured state directory. The Compose file uses Linux host
+networking so its SRT listeners and DASH origin bind directly on that host.
+
+Boot and validate each domain:
+
+```sh
+set -a
+. ./.env.fixture-domain
+set +a
+VIDEOSIM_FIXTURE_STARTUP_ARTIFACT_DIR="$VIDEOSIM_FIXTURE_STATE_DIR/startup-validation" \
+  python3 scripts/fixture-domain-startup.py
+```
+
+The command fails unless the image uses an immutable digest, both services
+remain running, the DASH `/healthz` API passes, one healthy SRT and one healthy
+DASH endpoint pass full media validation, and Docker logs contain no critical
+marker. Retain `result.json`, `media-validation.json`, `compose-ps.txt`,
+`docker.log`, `srt-state.json`, and `dash-state.json` from every host.
+
+Copy the six state files to the workload coordinator and compose the exact
+candidate input:
+
+```sh
+python3 -m videosim fixture-scenario \
+  --manifest scale/fixtures/mixed-1320.json \
+  --srt-state artifacts/fixture-a/srt-state.json \
+  --srt-state artifacts/fixture-b/srt-state.json \
+  --srt-state artifacts/fixture-c/srt-state.json \
+  --dash-state artifacts/fixture-a/dash-state.json \
+  --dash-state artifacts/fixture-b/dash-state.json \
+  --dash-state artifacts/fixture-c/dash-state.json \
+  --state-path artifacts/mixed-1320.json
+```
+
+Require `fixtureStateCounts={"srt":3,"dash":3}`,
+`logicalStreamsShareEndpoints=false`, 660 streams per protocol, and 1,320
+unique endpoint URLs. The startup check samples two healthy endpoints; it does
+not prove that a 220+220 domain stays healthy under concurrent load. Each SRT
+shard still shares one encoder and each DASH shard one generator/origin, so
+this topology reduces shared fate without proving per-stream source
+independence.
+
 ### Boot the candidate worker domains
 
 Run `docker-compose.worker-domain.yml` on three separate Linux hosts. On each

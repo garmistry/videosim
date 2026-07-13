@@ -29,6 +29,10 @@
 - No project-specific target receiver has been defined.
 - The soak harness is implemented, but 24-hour normal/outage soak evidence is
   still pending.
+- The candidate fixture-domain deployment requires a Linux Docker engine with
+  host networking. Three 220-SRT/220-DASH state shards can be composed, but
+  each host still shares one encoder or generator per protocol; this is not
+  per-stream source independence or 1,000-stream capacity evidence.
 - The GUI preview is a local refreshed frame matching the active mode, not
   native browser SRT playback and not validation proof of the SRT output.
   Audio-only mode and external feeds have no video preview.

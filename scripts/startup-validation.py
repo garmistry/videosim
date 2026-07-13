@@ -159,7 +159,12 @@ class StartupValidation:
 
             self.post_form(
                 "/start",
-                {"stream_id": stream_id, "protocol": "srt", "mode": "normal"},
+                {
+                    "stream_id": stream_id,
+                    "config_version": created["configVersion"],
+                    "protocol": "srt",
+                    "mode": "normal",
+                },
             )
             self.wait_for(
                 "running feed", lambda: self.stream(stream_id)["status"] == "running"

@@ -13,7 +13,7 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from videosim.gui import GuiHandler, GuiState, OperatorMutationPersistenceError
@@ -160,14 +160,17 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(status, expected_status, body)
         return body
 
-    def post_form(self, path, fields, *, headers=None, expected_status=303):
+    def post_form(
+        self, path, fields, *, headers=None, expected_status=303, base_url=None
+    ):
         body = urlencode(fields)
         request_headers = {
             "Content-Type": "application/x-www-form-urlencoded",
             "Content-Length": str(len(body.encode("utf-8"))),
         }
         request_headers.update(headers or {})
-        connection = HTTPConnection("127.0.0.1", self.server.server_port, timeout=5)
+        target = urlparse(base_url or self.base_url)
+        connection = HTTPConnection(target.hostname, target.port, timeout=5)
         try:
             connection.request("POST", path, body=body, headers=request_headers)
             response = connection.getresponse()
@@ -343,6 +346,9 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "/start",
                 {
                     "stream_id": self.stream_id,
+                    "config_version": self.state.streams[
+                        self.stream_id
+                    ].config_version,
                     "protocol": "srt",
                     "mode": "video_only",
                 },
@@ -363,10 +369,12 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             stream_id for stream_id in self.state.streams
             if stream_id != self.stream_id
         )
+        created = self.state.streams[created_id]
         self.post_form(
             "/streams/update",
             {
                 "stream_id": created_id,
+                "config_version": created.config_version,
                 "name": "Audited feed updated",
                 "source": "generated",
                 "protocol": "srt",
@@ -379,6 +387,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             "/streams/alerts",
             {
                 "stream_id": created_id,
+                "config_version": created.config_version,
                 "alert_action": "save",
                 "alert_monitor": "feed_reachable",
                 "alert_delay_seconds": "3",
@@ -387,7 +396,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         )
         self.post_form(
             "/streams/delete",
-            {"stream_id": created_id},
+            {
+                "stream_id": created_id,
+                "config_version": created.config_version,
+            },
             headers=headers,
         )
 
@@ -493,6 +505,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "/start",
                 {
                     "stream_id": generated.id,
+                    "config_version": generated.config_version,
                     "protocol": "srt",
                     "mode": "video_only",
                 },
@@ -541,6 +554,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "/start",
                 {
                     "stream_id": generated.id,
+                    "config_version": generated.config_version,
                     "protocol": "srt",
                     "mode": "video_only",
                 },
@@ -575,6 +589,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "/streams/update",
                 {
                     "stream_id": generated.id,
+                    "config_version": generated.config_version,
                     "name": "Committed despite cleanup failure",
                     "source": "generated",
                     "protocol": "srt",
@@ -604,7 +619,10 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         ) as retry_cleanup:
             self.post_form(
                 "/streams/delete",
-                {"stream_id": generated.id},
+                {
+                    "stream_id": generated.id,
+                    "config_version": generated.config_version,
+                },
                 headers=self.operator_headers(),
             )
         with self.store._pool.connection() as connection:
@@ -761,6 +779,143 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         finally:
             other_store.close()
 
+    def test_external_mutations_route_across_replicas_and_fence_stale_forms(self):
+        replica_store = PostgresControlPlaneStore(
+            DATABASE_URL,
+            tenant_id=self.tenant_id,
+            min_pool_size=1,
+            max_pool_size=4,
+        )
+        replica_state = GuiState(feed_store=replica_store)
+        replica_handler = type(
+            "ReplicaMutationHandler", (GuiHandler,), {"state": replica_state}
+        )
+        replica_server = ThreadingHTTPServer(("127.0.0.1", 0), replica_handler)
+        replica_thread = threading.Thread(
+            target=replica_server.serve_forever, daemon=True
+        )
+        replica_thread.start()
+        replica_url = f"http://127.0.0.1:{replica_server.server_port}"
+        external = self.state.create_stream(
+            name="Replica mutation feed",
+            source="external",
+            external_url="srt://example.test:9200?mode=caller",
+        )
+        generated = self.state.create_stream(name="Owner-only generated feed")
+        try:
+            _, detail = self.get_json(
+                f"/api/operator/feeds/{external.id}",
+                {},
+                base_url=replica_url,
+            )
+            self.assertFalse(detail["operatorReadOnly"])
+            self.assertFalse(detail["streams"][0]["runtimeKnown"])
+
+            for path, fields in (
+                ("/start", {"protocol": "srt", "mode": "normal"}),
+                ("/streams/update", {"name": "Missing fence"}),
+                ("/streams/alerts", {"alert_action": "enable_all"}),
+                ("/streams/delete", {}),
+            ):
+                with self.subTest(path=path):
+                    missing = self.post_form(
+                        path,
+                        {"stream_id": external.id, **fields},
+                        expected_status=400,
+                        base_url=replica_url,
+                    )
+                    self.assertIn("config_version", missing["error"])
+
+            self.post_form(
+                "/streams/update",
+                {
+                    "stream_id": external.id,
+                    "config_version": external.config_version,
+                    "name": "Updated through replica",
+                    "source": "external",
+                    "protocol": "srt",
+                    "external_url": "srt://example.test:9201?mode=caller",
+                },
+                base_url=replica_url,
+            )
+            updated = self.store.load_one(external.id)
+            self.assertEqual(updated["name"], "Updated through replica")
+            self.assertEqual(updated["config_version"], 2)
+            self.assertEqual(replica_state.streams, {})
+
+            stale = self.post_form(
+                "/streams/update",
+                {
+                    "stream_id": external.id,
+                    "config_version": external.config_version,
+                    "name": "Stale overwrite",
+                },
+                expected_status=409,
+            )
+            self.assertIn("reload and retry", stale["error"])
+            self.assertEqual(self.store.load_one(external.id)["name"], "Updated through replica")
+            stale_delete = self.post_form(
+                "/streams/delete",
+                {
+                    "stream_id": external.id,
+                    "config_version": external.config_version,
+                },
+                expected_status=409,
+                base_url=replica_url,
+            )
+            self.assertIn("reload and retry", stale_delete["error"])
+            self.assertIsNotNone(self.store.load_one(external.id))
+
+            self.post_form(
+                "/streams/alerts",
+                {
+                    "stream_id": external.id,
+                    "config_version": updated["config_version"],
+                    "alert_action": "save",
+                    "alert_monitor": "feed_reachable",
+                    "alert_delay_seconds": "3",
+                },
+                base_url=replica_url,
+            )
+            alerted = self.store.load_one(external.id)
+            self.assertEqual(alerted["config_version"], 3)
+            self.assertEqual(alerted["alert_enabled_ids"], ["feed_reachable"])
+
+            _, generated_detail = self.get_json(
+                f"/api/operator/feeds/{generated.id}",
+                {},
+                base_url=replica_url,
+            )
+            self.assertTrue(generated_detail["operatorReadOnly"])
+            self.assertFalse(generated_detail["streams"][0]["runtimeKnown"])
+            owner_only = self.post_form(
+                "/streams/update",
+                {
+                    "stream_id": generated.id,
+                    "config_version": generated.config_version,
+                    "name": "Must stay owner-bound",
+                },
+                expected_status=409,
+                base_url=replica_url,
+            )
+            self.assertIn("runtime-owning replica", owner_only["error"])
+
+            self.post_form(
+                "/streams/delete",
+                {
+                    "stream_id": external.id,
+                    "config_version": alerted["config_version"],
+                },
+            )
+            self.assertIsNone(self.store.load_one(external.id))
+            self.assertNotIn(external.id, self.state.streams)
+            self.assertEqual(replica_state.streams, {})
+        finally:
+            replica_server.shutdown()
+            replica_server.server_close()
+            replica_thread.join(timeout=2)
+            replica_store.close()
+
     def test_operator_mutation_fails_closed_when_audit_outbox_cannot_commit(self):
         self.enable_trusted_security()
         before = set(self.state.streams)
@@ -813,6 +968,9 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
                 "/streams/update",
                 {
                     "stream_id": self.stream_id,
+                    "config_version": self.state.streams[
+                        self.stream_id
+                    ].config_version,
                     "name": "Must not update",
                     "source": "generated",
                     "protocol": "srt",
@@ -841,7 +999,12 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         ):
             self.post_form(
                 "/streams/delete",
-                {"stream_id": self.stream_id},
+                {
+                    "stream_id": self.stream_id,
+                    "config_version": self.state.streams[
+                        self.stream_id
+                    ].config_version,
+                },
                 headers=self.operator_headers(),
                 expected_status=503,
             )
@@ -1419,7 +1582,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             self.assertEqual(overview["monitor"]["probeMetrics"], {})
             self.assertEqual(detail["selectedStreamId"], second.id)
             self.assertEqual([feed["id"] for feed in detail["streams"]], [second.id])
-            self.assertTrue(detail["operatorReadOnly"])
+            self.assertFalse(detail["operatorReadOnly"])
             self.assertFalse(detail["streams"][0]["runtimeKnown"])
             self.assertEqual(detail["streams"][0]["configVersion"], second.config_version)
 

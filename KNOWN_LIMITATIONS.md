@@ -110,10 +110,11 @@
   Worker API v2 has an
   authenticated-encrypted, fsynced, byte-bounded report spool that pauses new
   probes behind undelivered reports. Heartbeats persist a bounded latest
-  pressure snapshot and durable `/state.json` exposes it, but there is no
-  pressure history, alerting, recovery SLO evaluation, automatic key rotation,
-  quarantine/repair tool, priority eviction, or production outage/disk-pressure
-  evidence. Black/frozen validation can still
+  pressure snapshot and durable `/state.json` exposes it. The durable scheduler
+  excludes a spool-blocked worker and reports resulting shortfall, but there is
+  no queue, pressure history, hysteresis, alerting, recovery SLO evaluation,
+  automatic key rotation, quarantine/repair tool, priority eviction, or
+  production outage/disk-pressure evidence. Black/frozen validation can still
   be expensive and there are no weighted check-cost or tenant tokens.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The

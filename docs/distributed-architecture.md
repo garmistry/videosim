@@ -85,6 +85,10 @@ VideoSim should split into a master control plane and many worker nodes:
   snapshot inside durable capacity metadata. Assignment responses retain it and
   PostgreSQL `/state.json` exposes per-worker cycle-active, prior deferral/batch,
   and current spool fields without adding unbounded metric labels.
+- Durable assignment excludes workers reporting `spoolBlocked=true`. Healthy
+  workers can receive higher-epoch replacement leases, while insufficient or
+  all-blocked capacity produces explicit shortfall instead of new authority on
+  a worker that cannot deliver results.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -128,7 +132,9 @@ VideoSim should split into a master control plane and many worker nodes:
   leases, but its scheduler is not leader-elected.
 - PostgreSQL assignment is capacity-aware for workers advertising total or
   SRT/DASH protocol limits; unconfigured workers use compatibility round-robin.
-  These are static admission counts, not weighted cost or media capacity.
+  A current spool-blocked signal removes a worker from placement, but has no
+  hysteresis or durable queue. Admission counts remain static operator values,
+  not weighted cost or media capacity.
 - Worker concurrency and built-in probe waits are bounded when configured, but
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
   HTTP preemption, weighted check-cost/tenant tokens, pressure history/alerts/

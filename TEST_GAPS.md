@@ -89,9 +89,11 @@ implementation and must pass before those milestones advance.
   deferred streams, and defers the deep phase. Black/frozen validation cost,
   weighted check-cost/tenant fairness, durable queue backpressure, and
   slow-stream-storm freshness evidence remain open. Heartbeats now expose a
-  schema-bounded latest cycle/deferral/spool pressure snapshot, but pressure
-  history, alerts, recovery SLO evaluation, and production saturation evidence
-  remain open.
+  schema-bounded latest cycle/deferral/spool pressure snapshot, and assignment
+  excludes spool-blocked workers with explicit shortfall. Pressure history,
+  hysteresis, alerts, recovery SLO evaluation, and production saturation
+  evidence remain open. The 1,300-assignment failure-domain test proves only
+  scheduler math for a 1,000 target plus 30% modeled headroom.
 - The environment-gated Compose startup workflow proves one worker plus one
   normal SRT feed through the real HTTP API, captures Docker state/logs, and has
   a documented Chrome path. It does not exercise the production PostgreSQL/NATS

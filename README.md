@@ -90,6 +90,9 @@ Long-running workers publish a bounded `capacity.pressure` snapshot on their
 independent heartbeat. PostgreSQL `/state.json` exposes it as
 `workers[].pressure`, including active-cycle, deferral, batch-duration, and
 spool-occupancy fields. This is current state, not historical capacity evidence.
+When a durable worker reports `spoolBlocked=true`, assignment excludes that
+worker and reports any resulting `capacityShortfall` instead of granting it new
+lease authority. This is fail-closed load shedding, not a durable fleet queue.
 Worker API v2 can enable an authenticated-encrypted write-ahead report spool
 with `--report-spool-dir`, `--report-spool-key-file`, and
 `--report-spool-max-bytes`. All three are required. Pending reports replay

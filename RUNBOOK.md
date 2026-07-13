@@ -490,6 +490,11 @@ curl -fsS http://127.0.0.1:8080/state.json | jq '.workers[] | {id, pressure}'
 cycle; `spoolBlocked`, `spoolQueuedReports`, and `spoolBytes` describe local
 delivery pressure. The snapshot advances on heartbeats and has no history or
 alert policy; retain external observations when diagnosing saturation/recovery.
+In durable PostgreSQL mode, `spoolBlocked=true` removes the worker from
+assignment placement. Healthy workers may receive higher-epoch replacement
+leases on their next assignment poll; if their advertised limits cannot absorb
+the work, `capacityShortfall` remains nonzero. This is immediate load shedding
+without hysteresis, a durable queue, or measured recovery/headroom evidence.
 
 For worker API v2, configure all three spool controls together:
 

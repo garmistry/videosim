@@ -81,6 +81,65 @@ class GuiTest(unittest.TestCase):
         )
         self.assertEqual(shortfall, 2)
 
+    def test_spool_blocked_workers_receive_no_assignments(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Blocked worker stream {index}",
+                source="external",
+                external_url=f"srt://example.test:{9100 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(4)
+        ]
+
+        assignments, shortfall = capacity_aware_assignments(
+            [
+                {
+                    "id": "worker-a",
+                    "capacity": {"pressure": {"spoolBlocked": True}},
+                },
+                {"id": "worker-b", "capacity": {}},
+            ],
+            streams,
+        )
+
+        self.assertEqual(assignments["worker-a"], [])
+        self.assertEqual(assignments["worker-b"], streams)
+        self.assertEqual(shortfall, 0)
+
+    def test_all_spool_blocked_workers_report_full_shortfall(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Unavailable worker stream {index}",
+                source="external",
+                external_url=f"srt://example.test:{9200 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(3)
+        ]
+
+        assignments, shortfall = capacity_aware_assignments(
+            [
+                {
+                    "id": "worker-a",
+                    "capacity": {"pressure": {"spoolBlocked": True}},
+                },
+                {
+                    "id": "worker-b",
+                    "capacity": {
+                        "maxStreams": 100,
+                        "pressure": {"spoolBlocked": True},
+                    },
+                },
+            ],
+            streams,
+        )
+
+        self.assertEqual(assignments, {"worker-a": [], "worker-b": []})
+        self.assertEqual(shortfall, len(streams))
+
     def test_protocol_capacity_tokens_prevent_mixed_over_admission(self):
         state = GuiState()
         streams = [
@@ -181,6 +240,56 @@ class GuiTest(unittest.TestCase):
             self.assertEqual(len(assigned), 100)
             self.assertEqual(sum(stream.protocol == "srt" for stream in assigned), 50)
             self.assertEqual(sum(stream.protocol == "dash" for stream in assigned), 50)
+
+    def test_1000_target_plus_30_percent_headroom_survives_one_blocked_worker(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Headroom SRT {index}",
+                protocol="srt",
+                source="external",
+                external_url=f"srt://example.test:{10000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(650)
+        ] + [
+            state.create_stream(
+                name=f"Headroom DASH {index}",
+                protocol="dash",
+                source="external",
+                external_url=f"https://example.test/headroom/{index}/manifest.mpd",
+                select=False,
+            )
+            for index in range(650)
+        ]
+        workers = [
+            {
+                "id": f"worker-{index:02d}",
+                "capacity": {
+                    "maxStreams": 145,
+                    "maxSrtStreams": 73,
+                    "maxDashStreams": 73,
+                    "pressure": {"spoolBlocked": index == 0},
+                },
+            }
+            for index in range(10)
+        ]
+
+        assignments, shortfall = capacity_aware_assignments(workers, streams)
+
+        self.assertEqual(shortfall, 0)
+        self.assertEqual(assignments["worker-00"], [])
+        self.assertEqual(sum(map(len, assignments.values())), 1300)
+        for worker_id, assigned in assignments.items():
+            if worker_id == "worker-00":
+                continue
+            self.assertLessEqual(len(assigned), 145)
+            self.assertLessEqual(
+                sum(stream.protocol == "srt" for stream in assigned), 73
+            )
+            self.assertLessEqual(
+                sum(stream.protocol == "dash" for stream in assigned), 73
+            )
 
     def create_feed(self, state: GuiState, name: str = "Primary feed"):
         return state.create_stream(

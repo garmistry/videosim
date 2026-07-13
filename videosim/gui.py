@@ -2233,6 +2233,15 @@ def capacity_aware_assignments(
         worker["id"]: normalize_worker_capacity(worker.get("capacity")) or {}
         for worker in workers
     }
+    schedulable_workers = [
+        worker
+        for worker in workers
+        if not capacities[worker["id"]].get("pressure", {}).get(
+            "spoolBlocked", False
+        )
+    ]
+    if not schedulable_workers:
+        return assignments, len(streams)
     admission_fields = ("maxStreams", *PROTOCOL_CAPACITY_FIELDS.values())
     if not any(
         field in capacity
@@ -2240,7 +2249,9 @@ def capacity_aware_assignments(
         for field in admission_fields
     ):
         for index, stream in enumerate(streams):
-            assignments[workers[index % len(workers)]["id"]].append(stream)
+            assignments[
+                schedulable_workers[index % len(schedulable_workers)]["id"]
+            ].append(stream)
         return assignments, 0
 
     protocol_counts = {
@@ -2251,7 +2262,7 @@ def capacity_aware_assignments(
     for stream in streams:
         protocol_field = PROTOCOL_CAPACITY_FIELDS.get(stream.protocol)
         eligible = []
-        for worker in workers:
+        for worker in schedulable_workers:
             worker_id = worker["id"]
             capacity = capacities[worker_id]
             if len(assignments[worker_id]) >= capacity.get("maxStreams", math.inf):

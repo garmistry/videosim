@@ -346,6 +346,14 @@ failure domains. Losing one domain leaves 22 workers with exact capacity for
 1,320 streams, including 660 SRT and 660 DASH. This is checked configuration,
 not an approved capacity result.
 
+After collecting startup artifacts from all three fixture hosts and all three
+worker hosts, run `python3 scripts/f5-domain-preflight.py` with the three
+ordered `--fixture-result`/`--srt-state`/`--dash-state` triplets and three
+`--worker-result` files. It rejects incomplete domains, reused advertised
+hosts/endpoints, worker ID or zone drift, mutable/mismatched images, and
+tampered state hashes. Its report always keeps `independentHostsCertified` and
+`capacityCertified` false; see `RUNBOOK.md` for the full command.
+
 After an endpoint-fault exercise, reconcile the durable result and alarm
 projections from one PostgreSQL snapshot:
 

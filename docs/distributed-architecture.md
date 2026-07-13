@@ -175,6 +175,12 @@ VideoSim should split into a master control plane and many worker nodes:
   paginated operator API parity, final fixture/application process state and
   resources, or Docker logs. A digest-pinned same-host run passes all 440 paths;
   its output remains explicitly one-domain, non-capacity startup evidence.
+- `f5-domain-preflight.py` verifies the artifacts copied from three fixture and
+  three worker domains before the distributed run. It requires exact candidate
+  endpoint/behavior/worker/zone shape, state-hash parity, required startup
+  checks and windows, distinct advertised hosts, and one immutable image digest.
+  It cannot infer physical host independence from collected JSON and never
+  certifies capacity.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

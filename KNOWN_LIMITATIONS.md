@@ -141,6 +141,11 @@
   and Docker logs; a local durable HTTP run registered all 11 workers. No
   production immutable image over the remote HTTPS/mTLS path, three-host boot,
   host sizing, media load, or physical domain-loss execution has passed.
+- The cross-domain startup preflight validates three advertised fixture hosts,
+  three worker zones, exact endpoint/worker counts, retained state hashes, and
+  one immutable image digest. Collected JSON cannot prove that advertised names
+  map to separate physical failure domains, so its report permanently keeps
+  `independentHostsCertified=false` and `capacityCertified=false`.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

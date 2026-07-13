@@ -939,6 +939,36 @@ The marked test invokes the same script and leaves the worker domain running.
 It is not independent-host, media-load, domain-loss, or soak evidence by
 itself.
 
+Copy the three fixture startup results and six fixture states plus the three
+worker startup results to the coordinator. Keep fixture result/SRT/DASH options
+in the same domain order, then run the cross-domain preflight:
+
+```sh
+python3 scripts/f5-domain-preflight.py \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --fixture-result artifacts/fixture-a/result.json \
+  --srt-state artifacts/fixture-a/srt-state.json \
+  --dash-state artifacts/fixture-a/dash-state.json \
+  --fixture-result artifacts/fixture-b/result.json \
+  --srt-state artifacts/fixture-b/srt-state.json \
+  --dash-state artifacts/fixture-b/dash-state.json \
+  --fixture-result artifacts/fixture-c/result.json \
+  --srt-state artifacts/fixture-c/srt-state.json \
+  --dash-state artifacts/fixture-c/dash-state.json \
+  --worker-result artifacts/worker-a/result.json \
+  --worker-result artifacts/worker-b/result.json \
+  --worker-result artifacts/worker-c/result.json \
+  --output artifacts/f5-domain-preflight.json
+```
+
+Require `passed=true`, three unique advertised hosts, three workload failure
+domains, 660 SRT/660 DASH paths, 1,056/132/66/66 behavior counts, 33 unique
+worker IDs, and one immutable image digest. The verifier matches each fixture
+result to its state hashes and rejects duplicate cross-domain endpoints. Host
+names cannot prove separate physical failure domains, so the report always
+keeps `independentHostsCertified=false` and `capacityCertified=false`. Retain
+the report as preflight evidence, then prove host identity/topology separately.
+
 From a coordinator with read access to the same PostgreSQL database, set
 `VIDEOSIM_DATABASE_URL` and retain the converged authority baseline:
 

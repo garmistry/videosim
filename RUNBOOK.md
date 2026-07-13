@@ -725,9 +725,11 @@ snapshot is captured, and Docker logs contain no critical marker. Retain
 shape; the sampled media check does not prove every endpoint path or capacity.
 `VIDEOSIM_FIXTURE_STARTUP_KEEP=1` is required for the later fault workflow;
 without it the isolated startup validator cleans up its containers on exit.
-Scaled SRT generation keeps every advertised port distinct while batching up
-to 16 listener sinks in one relay pipeline. Treat the captured CPU, memory, and
-PID values as host-specific measurements, not fixture-capacity limits.
+Scaled SRT generation keeps every advertised port distinct and gives every live
+endpoint one downstream-leaky relay process fed by the shared encoder.
+Multi-sink relays are intentionally not used: concurrent caller sweeps showed
+that they did not reliably reconnect. Treat captured CPU, memory, and PID
+values as host-specific measurements, not fixture-capacity limits.
 
 Copy the six state files to the workload coordinator and compose the exact
 candidate input:
@@ -775,6 +777,62 @@ malformed SRT paths to time out, and malformed DASH paths to report issues.
 Skipped counts are expected between rotating windows. Read the retained Docker
 logs and resource snapshots after the run. This host check does not exercise
 durable assignments, alarm transitions, domain loss, or fleet headroom.
+
+### Run the local durable fixture startup gate
+
+Use the combined fail-closed workflow before attempting the distributed run:
+
+```sh
+export VIDEOSIM_DURABLE_FIXTURE_IMAGE='videosim@sha256:<digest>'
+export VIDEOSIM_DURABLE_FIXTURE_ARTIFACT_DIR="$PWD/artifacts/durable-fixture-startup"
+python3 scripts/durable-fixture-startup.py
+```
+
+The workflow tears down only its named project, boots the existing 220+220
+fixture-domain validator, starts a fresh PostgreSQL 17 container, applies the
+image's migrations, composes and imports `mixed-440-domain.json`, then starts
+the API and 11 workers with the candidate 60/30/30 capacity, 12/2 concurrency,
+and 15-second stream budget. It waits for exact 440 leases at 40 per worker and
+requires all 440 latest validation results to match the declared behavior:
+healthy paths are healthy, slow/dead paths time out, malformed SRT times out,
+and malformed DASH is unhealthy with exactly four active essence/reachability
+alarms per malformed feed. Any black/frozen alarm fails the run.
+
+The API path pages `/api/operator/feeds?limit=200`, requiring 440 unique source
+endpoints, exact protocol counts, and config version one. The workflow also
+requires every container to remain running with zero restarts, captures Docker
+stats and timestamped fixture/PostgreSQL/API/worker logs, and rejects traceback
+or fixture-process-exit markers. Retain:
+
+- `result.json`
+- `durable-summary.json`
+- `api-catalog.json`
+- `catalog-import.json`
+- `mixed-domain.json`
+- `container-state.json`
+- `docker-stats.jsonl`
+- `docker.log`
+- `fixture-startup/` and `fixture-state/`
+
+Set `VIDEOSIM_DURABLE_FIXTURE_KEEP=1` to leave a successful stack running. On a
+Linux host, open `http://127.0.0.1:18085` in Chrome and inspect representative
+SRT/DASH healthy and malformed rows, then compare the visible alarms with
+`durable-summary.json` and the captured Docker logs. The automated API capture
+is authoritative for the gate; Chrome is the human-visible follow-up.
+
+Run the marked compact contract with an already built image:
+
+```sh
+VIDEOSIM_DURABLE_FIXTURE_STARTUP_INTEGRATION=1 \
+VIDEOSIM_DURABLE_FIXTURE_IMAGE='<local-image>' \
+  python3 -m unittest tests.test_durable_fixture_startup
+```
+
+The marked test uses eight distinct matrix endpoints and two real workers. The
+default 440-path workflow is a same-host diagnostic and always reports
+`capacityCertified=false` and `independentHosts=false`; it cannot replace the
+three fixture hosts, three worker hosts, mTLS path, failure events, or 24-hour
+F5 evidence.
 
 ### Load and validate the candidate catalog
 

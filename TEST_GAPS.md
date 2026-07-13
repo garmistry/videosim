@@ -156,6 +156,14 @@ implementation and must pass before those milestones advance.
   VM, not all 440 durable worker observations/alarms, per-stream source
   independence, concurrent reconnect pressure, independent source-domain loss,
   or sustained capacity.
+- `durable-fixture-startup.py` now boots fresh PostgreSQL, composes/imports one
+  exact 440-stream source shard, starts the API and 11 real workers, validates
+  latest behavior outcomes and alarms, pages the operator API, and captures
+  Docker state/resources/logs. Its marked eight-path/two-worker run passed in
+  29.802 seconds. An earlier exploratory exact-440 run converged leases/results
+  but left 28/176 healthy SRT paths inconclusive; because that database also
+  inherited an exploratory migration, it is useful negative diagnosis only.
+  A clean full-shape pass on independent fixture and worker hosts remains open.
 - Composed fixture states can now be imported into an exclusive PostgreSQL feed
   catalog through the production feed-generation and lease semantics. The
   importer validates complete external-feed configs, rejects shared endpoints

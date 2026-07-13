@@ -148,9 +148,9 @@ VideoSim should split into a master control plane and many worker nodes:
   It reuses the existing generators, a standard-library DASH HTTP service, and
   GStreamer SRT listeners. Optional per-behavior endpoint counts expand distinct
   URLs/listener ports; checked-in manifests declare 500 URLs per protocol. At
-  scale, one captioned SRT encoder feeds local UDP multicast; relay pipelines
-  batch up to 16 distinct listener-port sinks instead of launching one process
-  per listener or duplicating the encoder per port.
+  scale, one captioned SRT encoder feeds local UDP multicast; each live listener
+  has its own downstream-leaky relay process. Concurrent testing showed that
+  multi-sink relay pipelines did not reliably accept repeated caller sweeps.
 - `python -m videosim fixture-scenario` deterministically expands those states
   into exact logical protocol/behavior mixes for bounded-worker tests. Repeated
   protocol state options aggregate source-host shards, retain their hashes, and
@@ -169,6 +169,11 @@ VideoSim should split into a master control plane and many worker nodes:
   process state, Docker resources, and logs before a run. The host fault
   workflow stops both fixture services, proves sampled media failure, restarts
   them, and records recovery timing without claiming all-endpoint coverage.
+- `durable-fixture-startup.py` composes one local source shard into an exact
+  440-stream catalog, boots fresh PostgreSQL plus the API and 11 real workers,
+  and fails closed on lease balance, latest behavior outcomes, alarm shape,
+  paginated operator API parity, process state, resources, or Docker logs. Its
+  output is explicitly same-host, non-capacity startup evidence.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

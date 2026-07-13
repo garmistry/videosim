@@ -248,6 +248,23 @@ shares one source per protocol and startup validation is not saturation
 evidence. The fault workflow samples two paths; durable worker alarms must
 separately prove every affected endpoint transition.
 
+Run the fail-closed local durable startup gate with one immutable application
+image:
+
+```sh
+VIDEOSIM_DURABLE_FIXTURE_IMAGE='videosim@sha256:<digest>' \
+  python3 scripts/durable-fixture-startup.py
+```
+
+It boots the 220-SRT/220-DASH fixture shard, a fresh PostgreSQL database, the
+API, and 11 real workers; imports `mixed-440-domain.json`; requires exact
+balanced leases, behavior-level media outcomes, and malformed-DASH alarms;
+pages the operator API; and captures Docker state, resources, and logs under
+`artifacts/durable-fixture-startup/`. The API is the default validation surface.
+Set `VIDEOSIM_DURABLE_FIXTURE_KEEP=1` to retain the stack for a Chrome check.
+This same-host diagnostic permanently reports `capacityCertified=false`; F5
+still requires the documented three-host 1,320-stream run and 24-hour bundle.
+
 Load a distinct-endpoint scenario into a dedicated migrated PostgreSQL catalog
 before booting candidate workers:
 

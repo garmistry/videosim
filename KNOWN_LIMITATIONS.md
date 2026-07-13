@@ -110,16 +110,25 @@
   catalog identity only. They do not prove endpoint reachability, worker probe
   freshness, alarm transitions, source independence, host headroom, or
   admission capacity.
-- Scaled SRT fixture reconnect validation takes about 10 seconds after the
-  first caller. `validationOutcomesByProtocol` exposes this separately from
-  DASH; a stream budget below that value cannot support a healthy-SRT capacity
-  claim even when cursor freshness passes.
 - Scaled SRT listeners retain distinct URLs and ports but share one multicast
-  source and batch at most 16 sinks per relay process. On the local exact-220
-  startup this reduced the SRT snapshot from 988.6 MiB/1,891 PIDs to 195.5
-  MiB/938 PIDs, while CPU rose from 91.88% to 199.34%. After the all-path probe
-  rotation the container used 516.2 MiB, 937 PIDs, and 194.07% CPU. This is a
-  useful fixture-host improvement, not production sizing or headroom evidence.
+  source. Every live endpoint now uses one downstream-leaky relay process:
+  batching 16 sinks reduced memory/process pressure, but a concurrent first
+  sweep reached only 136/176 healthy paths and the next reached 0/176 while the
+  relays stayed alive. Process isolation restored repeated reconnect progress
+  at the cost of the higher process/memory shape measured before batching.
+- Healthy passive SRT validation now checks video, audio, and captions in one
+  receiver and can retry three five-second handshakes inside the existing
+  15-second stream budget. In the local 66-caller diagnostic this improved
+  healthy coverage from about 70% to 171/176, but it did not make the host an
+  all-path capacity pass.
+- The fail-closed durable startup workflow passed its marked eight-path,
+  two-worker API/media/alarm/log test. An exploratory exact-440/11-worker run
+  reached balanced 40-stream leases and all 440 latest results, but only
+  148/176 healthy SRT paths were conclusive; 28 timed out. It also produced
+  exact 176/176 healthy DASH, 44 expected malformed-DASH alarms, and zero false
+  black/frozen alarms. That exploratory database contained an inherited extra
+  migration, so the run is diagnostic negative evidence, not an admission
+  artifact.
 - Correcting the budget does not make the current single-host environment
   sufficient. A 22-survivor, 12-token, 15-second run failed the 90-second gate
   on 14 workers and saturated local CPU/process capacity. This repository has

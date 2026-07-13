@@ -84,6 +84,9 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_MONITOR_STATE_PATH = "/tmp/videosim-monitor/state.json"
 WORKER_TTL_SECONDS = 60
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
+OPERATOR_API_VERSION = "videosim.operator/v1"
+DEFAULT_FEED_PAGE_SIZE = 100
+MAX_FEED_PAGE_SIZE = 200
 
 
 class OperatorMutationPersistenceError(RuntimeError):
@@ -1286,6 +1289,39 @@ class GuiHandler(BaseHTTPRequestHandler):
             return
         if self._authorize_operator(write=False) is None:
             return
+        if path == "/api/operator/feeds":
+            params = parse_qs(parsed_request.query)
+            try:
+                limit = int(
+                    params.get("limit", [str(DEFAULT_FEED_PAGE_SIZE)])[0]
+                )
+            except ValueError:
+                limit = 0
+            cursor = params.get("cursor", [""])[0]
+            if not 1 <= limit <= MAX_FEED_PAGE_SIZE:
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": f"limit must be between 1 and {MAX_FEED_PAGE_SIZE}",
+                    },
+                    status=400,
+                )
+                return
+            if len(cursor) > MAX_IDENTIFIER_LENGTH:
+                self._send_json(
+                    {"ok": False, "error": "cursor exceeds maximum length"},
+                    status=400,
+                )
+                return
+            try:
+                payload = operator_feed_catalog_payload(
+                    self.state, limit=limit, cursor=cursor
+                )
+            except PostgresStoreError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=503)
+                return
+            self._send_json(payload)
+            return
         if path == "/diagnostics.txt":
             self._send_text(diagnostics_text(self.state))
             return
@@ -2031,6 +2067,48 @@ def state_payload(state: GuiState) -> dict:
     }
 
 
+def operator_feed_catalog_payload(
+    state: GuiState, *, limit: int, cursor: str = ""
+) -> dict:
+    store = durable_control_store(state)
+    if store is None:
+        with state.control_plane_lock:
+            streams = [
+                state.streams[stream_id]
+                for stream_id in sorted(state.streams)
+                if stream_id > cursor
+            ][: limit + 1]
+    else:
+        registrations = store.load_page(limit + 1, cursor)
+        streams = [durable_feed_record(state, item) for item in registrations]
+    has_more = len(streams) > limit
+    streams = streams[:limit]
+    return {
+        "apiVersion": OPERATOR_API_VERSION,
+        "feeds": [operator_feed_payload(stream) for stream in streams],
+        "limit": limit,
+        "hasMore": has_more,
+        "nextCursor": streams[-1].id if has_more else None,
+    }
+
+
+def operator_feed_payload(stream: FeedRecord) -> dict:
+    return {
+        "id": stream.id,
+        "name": stream.name,
+        "source": stream.source,
+        "protocol": stream.protocol,
+        "mode": stream.mode,
+        "framerate": stream.framerate,
+        "externalUrl": stream.external_url,
+        "endpoint": stream.endpoint,
+        "configVersion": stream.config_version,
+        "alertProfile": alert_profile_payload(
+            stream.alert_enabled_ids, stream.alert_delay_seconds
+        ),
+    }
+
+
 def stream_payload(stream: FeedRecord) -> dict:
     return {
         "id": stream.id,
@@ -2142,6 +2220,19 @@ def durable_control_store(state: GuiState) -> PostgresControlPlaneStore | None:
     return state.feed_store if isinstance(state.feed_store, PostgresControlPlaneStore) else None
 
 
+def durable_feed_record(state: GuiState, registration: dict) -> FeedRecord:
+    try:
+        stream = FeedRecord(**registration)
+        if stream.source == "external":
+            state.security.validate_external_endpoint(stream.external_url)
+        return stream
+    except (EndpointPolicyError, TypeError, ValueError) as exc:
+        feed_id = registration.get("id", "<unknown>")
+        raise PostgresStoreError(
+            f"invalid durable feed configuration: {feed_id}"
+        ) from exc
+
+
 def durable_assignment_streams(
     state: GuiState,
     store: PostgresControlPlaneStore,
@@ -2150,14 +2241,7 @@ def durable_assignment_streams(
     streams = []
     for registration in store.load(_connection=connection):
         if registration.get("source") == "external":
-            try:
-                stream = FeedRecord(**registration)
-                state.security.validate_external_endpoint(stream.external_url)
-            except (EndpointPolicyError, TypeError, ValueError) as exc:
-                feed_id = registration.get("id", "<unknown>")
-                raise PostgresStoreError(
-                    f"invalid durable feed configuration: {feed_id}"
-                ) from exc
+            stream = durable_feed_record(state, registration)
         else:
             stream = state.streams.get(registration.get("id"))
             if stream is None or stream.config_version != registration["config_version"]:

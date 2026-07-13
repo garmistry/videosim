@@ -222,6 +222,28 @@ class PostgresControlPlaneStore:
             feeds.append(config)
         return feeds
 
+    def load_page(self, limit: int, after_id: str = "") -> list[dict]:
+        if not isinstance(limit, int) or limit < 1:
+            raise ValueError("feed page limit must be a positive integer")
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, config, config_version
+                FROM feeds
+                WHERE tenant_id = %s AND id > %s
+                ORDER BY id
+                LIMIT %s
+                """,
+                (self.tenant_id, after_id, limit),
+            ).fetchall()
+        feeds = []
+        for row in rows:
+            config = dict(row["config"])
+            config["id"] = row["id"]
+            config["config_version"] = int(row["config_version"])
+            feeds.append(config)
+        return feeds
+
     def upsert(self, feed: Mapping) -> int:
         return self.import_feed_if_changed(feed)[1]
 

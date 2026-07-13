@@ -5,6 +5,7 @@ import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
@@ -37,6 +38,13 @@ class WorkerApiTest(unittest.TestCase):
 
     def assignment(self):
         with urlopen(f"{self.base_url}/api/workers/assignments?worker_id=worker-a", timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def operator_catalog(self, **query):
+        suffix = f"?{urlencode(query)}" if query else ""
+        with urlopen(
+            f"{self.base_url}/api/operator/feeds{suffix}", timeout=2
+        ) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def post(self, payload):
@@ -79,6 +87,35 @@ class WorkerApiTest(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["legacyContract"])
+
+    def test_operator_feed_catalog_uses_bounded_cursor_pages(self):
+        self.state.create_stream(name="Camera B")
+        self.state.create_stream(name="Camera C")
+
+        first = self.operator_catalog(limit=2)
+        second = self.operator_catalog(limit=2, cursor=first["nextCursor"])
+
+        self.assertEqual(first["apiVersion"], "videosim.operator/v1")
+        self.assertEqual(
+            [feed["id"] for feed in first["feeds"]], ["stream-1", "stream-2"]
+        )
+        self.assertTrue(first["hasMore"])
+        self.assertEqual(first["nextCursor"], "stream-2")
+        self.assertEqual([feed["id"] for feed in second["feeds"]], ["stream-3"])
+        self.assertFalse(second["hasMore"])
+        self.assertIsNone(second["nextCursor"])
+
+    def test_operator_feed_catalog_rejects_unbounded_pages(self):
+        for query in ({"limit": 0}, {"limit": 201}, {"limit": "invalid"}):
+            with self.subTest(query=query), self.assertRaises(HTTPError) as raised:
+                self.operator_catalog(**query)
+            self.assertEqual(raised.exception.code, 400)
+            raised.exception.close()
+
+        with self.assertRaises(HTTPError) as raised:
+            self.operator_catalog(cursor="x" * 513)
+        self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
 
     def test_worker_can_drain_after_registration(self):
         self.assignment()

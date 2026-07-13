@@ -187,6 +187,10 @@ class SecureProxyApiTest(unittest.TestCase):
             self.request("/state.json")
         self.assertEqual(raised.exception.code, 401)
         raised.exception.close()
+        with self.assertRaises(HTTPError) as raised:
+            self.request("/api/operator/feeds")
+        self.assertEqual(raised.exception.code, 401)
+        raised.exception.close()
 
         headers = {
             "X-VideoSim-Proxy-Secret": SECRET,
@@ -194,6 +198,8 @@ class SecureProxyApiTest(unittest.TestCase):
             "X-VideoSim-Groups": "videosim-viewer",
         }
         with self.request("/state.json", headers=headers) as response:
+            self.assertEqual(response.status, 200)
+        with self.request("/api/operator/feeds", headers=headers) as response:
             self.assertEqual(response.status, 200)
 
     def test_viewer_feed_routes_do_not_mutate_shared_selection(self):

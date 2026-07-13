@@ -40,18 +40,9 @@ def validate_config(config: VideoFeedConfig) -> ValidationReport:
 
 def _validate_srt(config: VideoFeedConfig, report: ValidationReport) -> ValidationReport:
     if config.passive:
-        if _expected_tracks_present(
-            config.endpoint, {"video": True, "audio": True, "captions": True}
-        ):
-            report.reachable = True
-            report.video_present = True
-            report.audio_present = True
-            report.captions_present = True
-            report.passed = True
-            return report
         report.video_present = _track_present(config.endpoint, "video")
-        report.audio_present = _track_present(config.endpoint, "audio")
         report.captions_present = report.video_present and _captions_present(config.endpoint)
+        report.audio_present = _track_present(config.endpoint, "audio")
         report.reachable = report.video_present or report.audio_present or report.captions_present
         if not report.reachable:
             report.errors.append("feed unreachable or no streams detected")
@@ -210,6 +201,7 @@ def _expected_tracks_present(endpoint, expected):
 
 def _track_present(endpoint, track):
     parser = "h264parse" if track == "video" else "aacparse"
+    caps = "video/x-h264" if track == "video" else "audio/mpeg"
     return _receiver_succeeds(
         [
             "gst-launch-1.0",
@@ -222,6 +214,8 @@ def _track_present(endpoint, track):
             "demux.",
             "!",
             "queue",
+            "!",
+            caps,
             "!",
             parser,
             "!",
@@ -230,32 +224,50 @@ def _track_present(endpoint, track):
             "num-buffers=5",
         ],
         timeout=8,
+        attempts=3,
     )
 
 
 def _captions_present(endpoint):
+    args = [
+        "gst-launch-1.0",
+        "-q",
+        "srtsrc",
+        f"uri={endpoint}",
+        "!",
+        "tsdemux",
+        "name=demux",
+        "demux.",
+        "!",
+        "queue",
+        "!",
+        "video/x-h264",
+        "!",
+        "h264parse",
+        "!",
+        "h264ccextractor",
+        "!",
+        "identity",
+        "eos-after=1",
+        "!",
+        "fdsink",
+        "fd=1",
+        "sync=false",
+    ]
+    audio_drain = [
+        "demux.",
+        "!",
+        "queue",
+        "!",
+        "audio/mpeg",
+        "!",
+        "fakesink",
+        "sync=false",
+    ]
     return _receiver_succeeds(
-        [
-            "gst-launch-1.0",
-            "-q",
-            "srtsrc",
-            f"uri={endpoint}",
-            "!",
-            "tsdemux",
-            "name=demux",
-            "demux.",
-            "!",
-            "queue",
-            "!",
-            "h264parse",
-            "!",
-            "h264ccextractor",
-            "!",
-            "fakesink",
-            "sync=false",
-            "num-buffers=3",
-        ],
-        timeout=8,
+        args + audio_drain, timeout=4, attempts=2, require_output=True
+    ) or _receiver_succeeds(
+        args, timeout=4, attempts=2, require_output=True
     )
 
 
@@ -463,7 +475,7 @@ def _read_dash_rgb_frames(config: VideoFeedConfig, segment: Path | bytes, count:
     return result.stdout[: frame_size * count]
 
 
-def _receiver_succeeds(args, timeout, attempts=1):
+def _receiver_succeeds(args, timeout, attempts=1, require_output=False):
     attempt_timeout = timeout / attempts
     for attempt in range(attempts):
         bounded_timeout = probe_timeout(attempt_timeout)
@@ -472,7 +484,7 @@ def _receiver_succeeds(args, timeout, attempts=1):
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
+                text=not require_output,
                 timeout=bounded_timeout,
             )
         except subprocess.TimeoutExpired as exc:
@@ -481,7 +493,11 @@ def _receiver_succeeds(args, timeout, attempts=1):
             if attempt + 1 == attempts:
                 return False
             continue
-        return result.returncode == 0
+        if result.returncode == 0 and (not require_output or bool(result.stdout)):
+            return True
+        if attempt + 1 == attempts:
+            return False
+    return False
 
 
 def _fetch_url(url: str, timeout: float = 8) -> bytes:

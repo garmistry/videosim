@@ -42,6 +42,62 @@ class ValidatorOutputTest(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertEqual(run.call_args.kwargs["timeout"], 5)
 
+    def test_gstreamer_receiver_retries_failed_handshake(self):
+        from videosim.validator import _receiver_succeeds
+
+        with patch(
+            "videosim.validator.subprocess.run",
+            side_effect=[
+                subprocess.CompletedProcess([], 1),
+                subprocess.CompletedProcess([], 0),
+            ],
+        ) as run:
+            self.assertTrue(
+                _receiver_succeeds(["gst-launch-1.0"], timeout=8, attempts=2)
+            )
+
+        self.assertEqual(run.call_count, 2)
+
+    def test_gstreamer_receiver_requires_actual_output_when_requested(self):
+        from videosim.validator import _receiver_succeeds
+
+        with patch(
+            "videosim.validator.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout=b"", stderr=b""),
+        ):
+            self.assertFalse(
+                _receiver_succeeds(
+                    ["gst-launch-1.0"], timeout=8, require_output=True
+                )
+            )
+
+        with patch(
+            "videosim.validator.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=b"\xfc\xb0\x32", stderr=b""
+            ),
+        ) as run:
+            self.assertTrue(
+                _receiver_succeeds(
+                    ["gst-launch-1.0"], timeout=8, require_output=True
+                )
+            )
+
+        self.assertFalse(run.call_args.kwargs["text"])
+
+    def test_caption_probe_retries_without_audio_drain(self):
+        from videosim.validator import _captions_present
+
+        with patch(
+            "videosim.validator._receiver_succeeds", side_effect=[False, True]
+        ) as receive:
+            self.assertTrue(
+                _captions_present("srt://127.0.0.1:9000?mode=caller")
+            )
+
+        self.assertIn("audio/mpeg", receive.call_args_list[0].args[0])
+        self.assertNotIn("audio/mpeg", receive.call_args_list[1].args[0])
+
     def test_stream_budget_bounds_dash_polling(self):
         from videosim.validator import _wait_for_dash_manifest
 
@@ -120,34 +176,38 @@ class ValidatorOutputTest(unittest.TestCase):
 
         with patch("videosim.validator._track_present", side_effect=lambda _endpoint, track: track == "audio"), patch(
             "videosim.validator._captions_present", return_value=False
-        ), patch("videosim.validator._expected_tracks_present", return_value=False) as expected:
+        ), patch("videosim.validator._expected_tracks_present") as expected:
             report = validate_config(config)
 
-        expected.assert_called_once_with(
-            config.endpoint, {"video": True, "audio": True, "captions": True}
-        )
+        expected.assert_not_called()
         self.assertTrue(report.passed)
         self.assertTrue(report.reachable)
         self.assertFalse(report.video_present)
         self.assertTrue(report.audio_present)
         self.assertFalse(report.captions_present)
 
-    def test_passive_srt_validation_uses_one_receiver_for_healthy_media(self):
+    def test_passive_srt_validation_probes_actual_healthy_media(self):
         config = VideoFeedConfig(
             external_endpoint="srt://camera.local:9999?mode=caller", passive=True
         )
+        probes = []
 
-        with patch(
-            "videosim.validator._expected_tracks_present", return_value=True
-        ), patch("videosim.validator._track_present") as track, patch(
-            "videosim.validator._captions_present"
-        ) as captions:
+        def track(_endpoint, kind):
+            probes.append(kind)
+            return True
+
+        def captions(_endpoint):
+            probes.append("captions")
+            return True
+
+        with patch("videosim.validator._track_present", side_effect=track), patch(
+            "videosim.validator._captions_present", side_effect=captions
+        ), patch("videosim.validator._expected_tracks_present") as expected:
             report = validate_config(config)
 
-        track.assert_not_called()
-        captions.assert_not_called()
+        expected.assert_not_called()
+        self.assertEqual(probes, ["video", "captions", "audio"])
         self.assertTrue(report.passed)
-        self.assertTrue(report.reachable)
         self.assertTrue(report.video_present)
         self.assertTrue(report.audio_present)
         self.assertTrue(report.captions_present)

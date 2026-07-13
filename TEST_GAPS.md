@@ -74,6 +74,10 @@ implementation and must pass before those milestones advance.
   policy and `capacity-check` now fail closed on missing/tampered artifacts,
   weak workload/headroom declarations, skipped checks, or incomplete admission
   criteria; this verifier is not the missing workload or evidence bundle.
+- Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
+  child peak RSS, and Linux post-batch descriptor count. There is no time-series
+  retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
+  representative per-check baseline, or saturation curve yet.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

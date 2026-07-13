@@ -2351,6 +2351,10 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
             "lastValidationDeferred",
             "lastDeepDeferred",
             "lastBatchDurationMs",
+            "lastBatchCpuMs",
+            "processPeakRssBytes",
+            "childPeakRssBytes",
+            "openFileDescriptors",
             "spoolBlocked",
             "spoolQueuedReports",
             "spoolBytes",
@@ -2361,6 +2365,9 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
             "assignedStreams",
             "lastValidationDeferred",
             "lastDeepDeferred",
+            "processPeakRssBytes",
+            "childPeakRssBytes",
+            "openFileDescriptors",
             "spoolQueuedReports",
             "spoolBytes",
         ):
@@ -2377,16 +2384,17 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
                 raise WorkerReportValidationError(
                     f"capacity.pressure.{field} must be a boolean"
                 )
-        duration = pressure.get("lastBatchDurationMs")
-        if duration is not None and (
-            isinstance(duration, bool)
-            or not isinstance(duration, (int, float))
-            or not math.isfinite(duration)
-            or duration < 0
-        ):
-            raise WorkerReportValidationError(
-                "capacity.pressure.lastBatchDurationMs must be a finite non-negative number"
-            )
+        for field in ("lastBatchDurationMs", "lastBatchCpuMs"):
+            duration = pressure.get(field)
+            if duration is not None and (
+                isinstance(duration, bool)
+                or not isinstance(duration, (int, float))
+                or not math.isfinite(duration)
+                or duration < 0
+            ):
+                raise WorkerReportValidationError(
+                    f"capacity.pressure.{field} must be a finite non-negative number"
+                )
     return dict(capacity)
 
 

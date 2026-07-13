@@ -115,7 +115,10 @@
   excludes a spool-blocked worker and reports resulting shortfall, but there is
   no queue, pressure history, hysteresis, alerting, recovery SLO evaluation,
   automatic key rotation, quarantine/repair tool, priority eviction, or
-  production outage/disk-pressure evidence. Black/frozen validation can still
+  production outage/disk-pressure evidence. Batch CPU and worker/child peak RSS
+  are exposed; RSS is a cumulative single-process peak, descriptor count is
+  Linux-only, and neither replaces representative resource/capacity runs.
+  Black/frozen validation can still
   be expensive and there are no weighted check-cost or tenant tokens.
 - PostgreSQL worker-v2 reports now commit direct monitor projection atomically
   with fenced results, so a local JSON write cannot lag operator reads. The

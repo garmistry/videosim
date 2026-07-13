@@ -4,6 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from unittest.mock import Mock, patch
 
@@ -24,6 +25,8 @@ from videosim.worker import (
     post_report,
     run_worker,
     worker_pressure_from_state,
+    worker_resource_pressure,
+    worker_resource_snapshot,
 )
 
 
@@ -191,6 +194,40 @@ class WorkerTest(unittest.TestCase):
                 "lastValidationDeferred": 1,
                 "lastDeepDeferred": 1,
                 "lastBatchDurationMs": 125.5,
+            },
+        )
+
+    def test_worker_resource_pressure_reports_cpu_rss_and_open_fds(self):
+        usage = [
+            SimpleNamespace(ru_utime=1.0, ru_stime=0.5, ru_maxrss=10),
+            SimpleNamespace(ru_utime=2.0, ru_stime=1.0, ru_maxrss=20),
+        ]
+        with patch(
+            "videosim.worker.resource.getrusage", side_effect=usage
+        ), patch(
+            "videosim.worker.Path.iterdir",
+            return_value=iter(("fd-1", "fd-2", "fd-3")),
+        ), patch(
+            "videosim.worker.sys.platform", "linux"
+        ):
+            after = worker_resource_snapshot()
+
+        pressure = worker_resource_pressure(
+            {
+                "totalCpuSeconds": 4.0,
+                "processPeakRssBytes": 0,
+                "childPeakRssBytes": 0,
+            },
+            after,
+        )
+
+        self.assertEqual(
+            pressure,
+            {
+                "lastBatchCpuMs": 500.0,
+                "processPeakRssBytes": 10 * 1024,
+                "childPeakRssBytes": 20 * 1024,
+                "openFileDescriptors": 3,
             },
         )
 

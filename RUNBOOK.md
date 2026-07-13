@@ -488,8 +488,11 @@ curl -fsS http://127.0.0.1:8080/state.json | jq '.workers[] | {id, pressure}'
 `cycleActive` identifies an in-progress cycle; `lastValidationDeferred`,
 `lastDeepDeferred`, and `lastBatchDurationMs` describe the previous completed
 cycle; `spoolBlocked`, `spoolQueuedReports`, and `spoolBytes` describe local
-delivery pressure. The snapshot advances on heartbeats and has no history or
-alert policy; retain external observations when diagnosing saturation/recovery.
+delivery pressure. `lastBatchCpuMs` is worker plus reaped media-tool CPU for the
+completed batch; `processPeakRssBytes` and `childPeakRssBytes` are cumulative
+process peaks, and `openFileDescriptors` is sampled on Linux after the batch.
+The snapshot advances on heartbeats and has no history or alert policy; retain
+external observations when sizing workers or diagnosing saturation/recovery.
 In durable PostgreSQL mode, `spoolBlocked=true` removes the worker from
 assignment placement. Healthy workers may receive higher-epoch replacement
 leases on their next assignment poll; if their advertised limits cannot absorb

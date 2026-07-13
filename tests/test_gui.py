@@ -45,6 +45,8 @@ class GuiTest(unittest.TestCase):
             {"pressure": {"assignedStreams": -1}},
             {"pressure": {"cycleActive": 1}},
             {"pressure": {"lastBatchDurationMs": float("inf")}},
+            {"pressure": {"lastBatchCpuMs": -1}},
+            {"pressure": {"openFileDescriptors": True}},
             {"pressure": {"unknown": 1}},
             {"streamBudgetSeconds": float("inf")},
             {"deepCheckIntervalSeconds": "60"},
@@ -56,6 +58,18 @@ class GuiTest(unittest.TestCase):
                 WorkerReportValidationError
             ):
                 normalize_worker_capacity(capacity)
+
+    def test_worker_capacity_accepts_bounded_resource_pressure(self):
+        capacity = {
+            "pressure": {
+                "lastBatchCpuMs": 250.5,
+                "processPeakRssBytes": 10_000_000,
+                "childPeakRssBytes": 20_000_000,
+                "openFileDescriptors": 12,
+            }
+        }
+
+        self.assertEqual(normalize_worker_capacity(capacity), capacity)
 
     def test_capacity_aware_assignments_leave_over_capacity_streams_unassigned(self):
         state = GuiState()

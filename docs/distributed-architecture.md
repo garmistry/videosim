@@ -84,7 +84,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - Independent worker heartbeats persist a schema-bounded latest pressure
   snapshot inside durable capacity metadata. Assignment responses retain it and
   PostgreSQL `/state.json` exposes per-worker cycle-active, prior deferral/batch,
-  and current spool fields without adding unbounded metric labels.
+  current spool, completed-batch CPU, worker/child peak RSS, and Linux
+  post-batch descriptor fields without adding unbounded metric labels.
 - Durable assignment excludes workers reporting `spoolBlocked=true`. Healthy
   workers can receive higher-epoch replacement leases, while insufficient or
   all-blocked capacity produces explicit shortfall instead of new authority on

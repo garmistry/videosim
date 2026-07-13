@@ -89,7 +89,9 @@ capacity or a durable fleet queue.
 Long-running workers publish a bounded `capacity.pressure` snapshot on their
 independent heartbeat. PostgreSQL `/state.json` exposes it as
 `workers[].pressure`, including active-cycle, deferral, batch-duration, and
-spool-occupancy fields. This is current state, not historical capacity evidence.
+spool-occupancy fields. Completed batches also publish aggregate CPU time,
+worker/child peak RSS, and Linux open-file-descriptor count. This is current
+state for sizing runs, not historical capacity evidence.
 When a durable worker reports `spoolBlocked=true`, assignment excludes that
 worker and reports any resulting `capacityShortfall` instead of granting it new
 lease authority. This is fail-closed load shedding, not a durable fleet queue.

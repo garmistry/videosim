@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import math
 import random
+import resource
 import signal
 import socket
 import ssl
+import sys
 import threading
 import time
 import uuid
@@ -457,6 +459,42 @@ def worker_pressure_from_state(state: dict, assigned_streams: int) -> dict:
     }
 
 
+def worker_resource_snapshot() -> dict:
+    own = resource.getrusage(resource.RUSAGE_SELF)
+    children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    rss_scale = 1 if sys.platform == "darwin" else 1024
+    snapshot = {
+        "totalCpuSeconds": own.ru_utime
+        + own.ru_stime
+        + children.ru_utime
+        + children.ru_stime,
+        "processPeakRssBytes": max(0, int(own.ru_maxrss * rss_scale)),
+        "childPeakRssBytes": max(0, int(children.ru_maxrss * rss_scale)),
+    }
+    try:
+        snapshot["openFileDescriptors"] = sum(
+            1 for _ in Path("/proc/self/fd").iterdir()
+        )
+    except OSError:
+        pass
+    return snapshot
+
+
+def worker_resource_pressure(before: dict, after: dict) -> dict:
+    pressure = {
+        "lastBatchCpuMs": round(
+            max(0.0, after["totalCpuSeconds"] - before["totalCpuSeconds"])
+            * 1000,
+            3,
+        ),
+        "processPeakRssBytes": after["processPeakRssBytes"],
+        "childPeakRssBytes": after["childPeakRssBytes"],
+    }
+    if "openFileDescriptors" in after:
+        pressure["openFileDescriptors"] = after["openFileDescriptors"]
+    return pressure
+
+
 def run_worker(
     control_plane_url: str,
     worker_id: str,
@@ -520,6 +558,7 @@ def run_worker(
     )
     spool_blocked = False
     spool_stats = report_spool.stats() if report_spool is not None else {}
+    initial_resources = worker_resource_snapshot()
     pressure_lock = threading.Lock()
     pressure = {
         "assignedStreams": 0,
@@ -527,10 +566,17 @@ def run_worker(
         "lastValidationDeferred": 0,
         "lastDeepDeferred": 0,
         "lastBatchDurationMs": 0,
+        "lastBatchCpuMs": 0,
+        "processPeakRssBytes": initial_resources["processPeakRssBytes"],
+        "childPeakRssBytes": initial_resources["childPeakRssBytes"],
         "spoolBlocked": False,
         "spoolQueuedReports": int(spool_stats.get("queuedReports", 0)),
         "spoolBytes": int(spool_stats.get("bytes", 0)),
     }
+    if "openFileDescriptors" in initial_resources:
+        pressure["openFileDescriptors"] = initial_resources[
+            "openFileDescriptors"
+        ]
 
     def update_pressure(**values):
         with pressure_lock:
@@ -744,6 +790,7 @@ def run_worker(
                 )
             if batch_budget_seconds:
                 monitor_kwargs["batch_budget_seconds"] = batch_budget_seconds
+            resources_before = worker_resource_snapshot()
             state = run_monitor_once(
                 {"streams": streams},
                 state,
@@ -754,7 +801,12 @@ def run_worker(
                 **monitor_kwargs,
             )
             state = monitor_state_for_stream_ids(state, stream_ids)
-            update_pressure(**worker_pressure_from_state(state, len(streams)))
+            update_pressure(
+                **worker_pressure_from_state(state, len(streams)),
+                **worker_resource_pressure(
+                    resources_before, worker_resource_snapshot()
+                ),
+            )
             report_sequence += 1
             lease_sequences, report_lease_sequences = advance_lease_sequences(
                 streams, lease_sequences

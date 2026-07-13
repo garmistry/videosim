@@ -539,6 +539,11 @@ Deliver:
 
 Gate: assumptions are signed off; benchmark is reproducible; evidence bundle includes workload manifest/schema and raw resource report; no 1,000-stream claim yet.
 
+Current implementation publishes latest completed-batch CPU, worker/child peak
+RSS, and Linux descriptor count through worker pressure. Per-check/media-byte
+accounting, time-series retention, representative baselines, and the raw
+resource report remain open.
+
 Rollback: instrumentation flags off within one release operation; no data migration or accepted data loss.
 
 ### Phase 1 — secure and bound the existing slice (**must have before non-lab use**)

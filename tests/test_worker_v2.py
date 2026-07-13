@@ -1294,6 +1294,99 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
             replica_thread.join(timeout=2)
             replica_store.close()
 
+    def test_operator_catalog_replica_pages_current_external_feeds(self):
+        replica_store = PostgresControlPlaneStore(
+            DATABASE_URL,
+            tenant_id=self.tenant_id,
+            min_pool_size=1,
+            max_pool_size=2,
+        )
+        replica_state = GuiState(feed_store=replica_store)
+        replica_handler = type(
+            "ReplicaOperatorHandler", (GuiHandler,), {"state": replica_state}
+        )
+        replica_server = ThreadingHTTPServer(("127.0.0.1", 0), replica_handler)
+        replica_thread = threading.Thread(
+            target=replica_server.serve_forever, daemon=True
+        )
+        replica_thread.start()
+        replica_url = f"http://127.0.0.1:{replica_server.server_port}"
+        try:
+            second = self.state.create_stream(
+                name="Operator page second",
+                source="external",
+                external_url="srt://example.test:9001?mode=caller",
+            )
+            third = self.state.create_stream(
+                name="Operator page third",
+                source="external",
+                external_url="srt://example.test:9002?mode=caller",
+            )
+            self.assertEqual(set(replica_state.streams), {self.stream_id})
+
+            _, first_page = self.get_json(
+                "/api/operator/feeds", {"limit": "2"}, base_url=replica_url
+            )
+            _, second_page = self.get_json(
+                "/api/operator/feeds",
+                {"limit": "2", "cursor": first_page["nextCursor"]},
+                base_url=replica_url,
+            )
+            self.assertEqual(
+                [feed["id"] for feed in first_page["feeds"]],
+                [self.stream_id, second.id],
+            )
+            self.assertTrue(first_page["hasMore"])
+            self.assertEqual(
+                [feed["id"] for feed in second_page["feeds"]], [third.id]
+            )
+
+            self.assertTrue(
+                self.state.update_stream(
+                    second.id,
+                    mode="video_only",
+                    external_url="srt://example.test:9003?mode=caller",
+                )
+            )
+            self.assertTrue(self.state.delete_stream(third.id))
+            _, current = self.get_json(
+                "/api/operator/feeds", {"limit": "200"}, base_url=replica_url
+            )
+            by_id = {feed["id"]: feed for feed in current["feeds"]}
+            self.assertEqual(set(by_id), {self.stream_id, second.id})
+            self.assertEqual(by_id[second.id]["mode"], "video_only")
+            self.assertEqual(
+                by_id[second.id]["endpoint"],
+                "srt://example.test:9003?mode=caller",
+            )
+            self.assertEqual(
+                by_id[second.id]["configVersion"],
+                self.state.streams[second.id].config_version,
+            )
+            self.assertEqual(set(replica_state.streams), {self.stream_id})
+        finally:
+            replica_server.shutdown()
+            replica_server.server_close()
+            replica_thread.join(timeout=2)
+            replica_store.close()
+
+    def test_operator_catalog_fails_closed_on_invalid_durable_feed(self):
+        with self.store._pool.connection() as connection:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE feeds SET config = '{}'::jsonb
+                    WHERE tenant_id = %s AND id = %s
+                    """,
+                    (self.tenant_id, self.stream_id),
+                )
+
+        _, failed = self.get_json(
+            "/api/operator/feeds", {"limit": "10"}, expected_status=503
+        )
+
+        self.assertIn("invalid durable feed configuration", failed["error"])
+
     def test_concurrent_v2_assignment_polls_partition_streams_once(self):
         second_stream = self.state.create_stream(
             name="Concurrent worker v2 feed",

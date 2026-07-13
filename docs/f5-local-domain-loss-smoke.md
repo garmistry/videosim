@@ -16,7 +16,7 @@ candidate. It is not F5 capacity admission.
 - A local OAuth proxy stub replaced the production OIDC flow. Operator OIDC
   was not tested. Worker mTLS was tested.
 
-The server files from commit `461c31e` were copied into the existing Linux app
+The exact task-only server files were copied into the existing Linux app
 container and the process was restarted. The worker code path was unchanged.
 This is exact-source local smoke, not immutable-image or multi-host evidence.
 

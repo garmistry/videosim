@@ -643,8 +643,13 @@ python -m videosim control-plane-load --streams 1000 --workers <n> --duration 24
 python -m videosim verify-assignments --require-single-authority
 python -m videosim verify-alarm-consistency --results <capture>
 python -m videosim chaos --scenario worker-partition|db-failover|event-storm
-python -m videosim capacity-check --report <report.json> --policy <gate.yaml>
+python -m videosim capacity-check --report <report.json> --policy <gate.json>
 ```
+
+`capacity-check` is now implemented with JSON evidence/policy inputs and the
+versioned F5 policy at `scale/policies/f5-1000.json`. The remaining proposed
+harnesses and the production-like evidence they must generate are not
+implemented; verifier availability is not scale admission.
 
 CI should run unit/contract/security fixture tests. Representative load, soak, failover, and DR run in a production-like scheduled environment and publish immutable reports tied to code, config, infrastructure version, and dataset.
 

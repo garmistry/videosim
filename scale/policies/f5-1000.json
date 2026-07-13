@@ -1,0 +1,33 @@
+{
+  "allowSkippedChecks": false,
+  "minimumDurationSeconds": 86400,
+  "minimumHeadroomPercent": 30,
+  "minimumUnavailableFailureDomains": 1,
+  "policyVersion": "videosim-f5-1000-2026-07-11",
+  "requireCleanSource": true,
+  "requiredArtifactKinds": [
+    "change-manifest",
+    "migration-manifest",
+    "raw-metrics",
+    "test-results",
+    "docker-logs",
+    "dashboard-export",
+    "security-report",
+    "restore-report",
+    "rollback-record"
+  ],
+  "requiredCriteria": [
+    "assignment-correctness",
+    "bounded-failover",
+    "no-duplicate-authority",
+    "alarm-consistency",
+    "backpressure",
+    "sustained-load",
+    "security",
+    "durability",
+    "operability",
+    "rollback"
+  ],
+  "schemaVersion": "videosim.capacity-policy/v1",
+  "targetStreams": 1000
+}

@@ -162,6 +162,18 @@ python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterat
 
 This command runs no media probes and is not evidence of 1,000-stream monitoring capacity.
 
+Verify a completed scale-evidence bundle against the fail-closed F5 policy:
+
+```sh
+python3 -m videosim capacity-check \
+  --report artifacts/scale/evidence.json \
+  --policy scale/policies/f5-1000.json
+```
+
+The verifier checks workload/headroom/failure-domain declarations, all ten
+admission criteria, run duration, skipped checks, artifact paths and SHA-256
+hashes. It does not generate the required 24-hour production-like evidence.
+
 ## Documentation
 
 - [Runbook](RUNBOOK.md): install, run, verify, operate, and troubleshoot.

@@ -542,6 +542,30 @@ The report must say `scope=in_process_control_plane_only`,
 coverage, unique ownership, contract metadata, and report acceptance in one
 process. It does not run SRT/DASH media checks or satisfy a scale-admission gate.
 
+### Scale evidence admission
+
+After a production-like run has produced its immutable bundle, verify it against
+the versioned F5 policy:
+
+```sh
+python3 -m videosim capacity-check \
+  --report artifacts/scale/evidence.json \
+  --policy scale/policies/f5-1000.json --json
+```
+
+Artifact paths must be relative to the evidence report and every declared
+SHA-256 must match. The workload must declare the protocol/source mix,
+region/zone placement, check cadence, endpoint and event-storm distributions,
+worker/failure-domain shape, infrastructure versions, 24-hour duration, 1,000
+target streams, 1,300 load streams, and one unavailable failure domain. Survivor
+total/SRT/DASH tokens must carry that declared load. The report must have a
+clean source commit, immutable image digests, all required raw artifacts, no
+skipped checks, and passing detail for all ten admission criteria.
+
+Exit zero proves only that a complete, untampered bundle satisfies the policy.
+The repository does not yet contain the production-like run or evidence needed
+for 1,000-stream admission.
+
 The monitor also samples MPEG-2 TS bytes and raises TR 101 290 priority 1/2 TS
 alarms plus parser-backed priority 3 PSI/SI, unreferenced-PID, and T-STD timing
 alarms when checks fail. Video-present feeds get an FFprobe frame-rate check

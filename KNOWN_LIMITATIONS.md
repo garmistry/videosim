@@ -71,7 +71,8 @@
   demand must not be treated as measured media capacity. See
   `docs/production-readiness-audit.md` and
   `docs/distributed-implementation-progress.md` for remaining blockers and
-  gates.
+  gates. `capacity-check` now rejects incomplete or tampered F5 bundles, but no
+  production-like workload result exists for it to admit.
 
 ## Monitoring
 

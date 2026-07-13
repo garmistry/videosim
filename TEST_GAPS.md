@@ -70,7 +70,10 @@ implementation and must pass before those milestones advance.
   HA remain open F2/F4 P0 gates.
 - The control-plane benchmark runs no SRT/DASH probes. Representative media
   load, failure storms, 24-hour soak, security, restore, and 1,000/5,000/10,000
-  admission evidence remain missing and must not be inferred from it.
+  admission evidence remain missing and must not be inferred from it. The F5
+  policy and `capacity-check` now fail closed on missing/tampered artifacts,
+  weak workload/headroom declarations, skipped checks, or incomplete admission
+  criteria; this verifier is not the missing workload or evidence bundle.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

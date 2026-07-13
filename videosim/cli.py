@@ -23,6 +23,8 @@ from .nats_publisher import NatsPublisherError, ensure_event_stream, run_outbox_
 from .postgres_store import PostgresControlPlaneStore, PostgresStoreError
 from .profile import ProfileError, load_profile
 from .report_spool import ReportSpoolError
+from .scale_evidence import check_scale_evidence
+from .scale_evidence import human_summary as scale_evidence_summary
 from .security import SecurityConfig
 from .soak import check_reports
 from .soak import check_summary
@@ -185,6 +187,14 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_benchmark.add_argument("--warmup-iterations", type=int, default=1)
     control_plane_benchmark.add_argument("--seed", type=int, default=1)
     control_plane_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    capacity_check = subparsers.add_parser(
+        "capacity-check",
+        help="fail closed unless a scale-evidence bundle satisfies its policy",
+    )
+    capacity_check.add_argument("--report", required=True)
+    capacity_check.add_argument("--policy", required=True)
+    capacity_check.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -440,6 +450,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.seed,
             )
             print(report.to_json() if args.json else control_plane_benchmark_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "capacity-check":
+            report = check_scale_evidence(args.report, args.policy)
+            print(report.to_json() if args.json else scale_evidence_summary(report))
             return 0 if report.passed else 1
 
         if args.command == "worker":

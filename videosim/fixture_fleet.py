@@ -17,6 +17,8 @@ from .feed import require_gst_launch
 
 FIXTURE_SCHEMA = "videosim.fixture-fleet/v1"
 BEHAVIORS = ("healthy", "slow", "dead", "malformed")
+# ponytail: fixed batching; tune only from fixture-host media saturation evidence.
+SRT_FANOUT_SIZE = 16
 SRT_MULTICAST_GROUP = "239.255.42.42"
 
 
@@ -220,12 +222,33 @@ def srt_fixture_commands(manifest: dict) -> list[list[str]]:
         )
         offset += counts[behavior]
 
-    def listener(port: int, *, wait: bool = False) -> list[str]:
+    def listener(port: int) -> list[str]:
         return [
             "!",
             "srtsink",
             f"uri=srt://:{port}?mode=listener",
-            f"wait-for-connection={'true' if wait else 'false'}",
+            "wait-for-connection=false",
+            "async=false",
+        ]
+
+    def fanout(source: list[str], listener_ports: list[int]) -> list[str]:
+        command = [gst_launch, "-q", *source, "!", "tee", "name=fanout"]
+        for port in listener_ports:
+            command.extend(
+                [
+                    "fanout.",
+                    "!",
+                    "queue",
+                    *listener(port),
+                ]
+            )
+        return command
+
+    def batches(listener_ports: range) -> list[list[int]]:
+        values = list(listener_ports)
+        return [
+            values[offset : offset + SRT_FANOUT_SIZE]
+            for offset in range(0, len(values), SRT_FANOUT_SIZE)
         ]
 
     def feed(port: int) -> list[str]:
@@ -271,52 +294,44 @@ def srt_fixture_commands(manifest: dict) -> list[list[str]]:
                 "async=false",
             ],
         ]
-        for port in healthy_ports:
-            commands.append(
-                [
-                    gst_launch,
-                    "-q",
-                    "udpsrc",
-                    f"address={SRT_MULTICAST_GROUP}",
-                    f"port={multicast_port}",
-                    "auto-multicast=true",
-                    "caps=video/mpegts,systemstream=(boolean)true,packetsize=(int)188",
-                    *listener(port, wait=True),
-                ]
-            )
-    for port in ports["slow"]:
-        commands.append(
-            [
-                gst_launch,
-                "-q",
-                "fakesrc",
-                "is-live=true",
-                "do-timestamp=true",
-                "sizetype=fixed",
-                "sizemax=188",
-                "filltype=zero",
-                "!",
-                "identity",
-                f"sleep-time={int(manifest['slowDelaySeconds'] * 1_000_000)}",
-                *listener(port),
-            ]
+        healthy_source = [
+            "udpsrc",
+            f"address={SRT_MULTICAST_GROUP}",
+            f"port={multicast_port}",
+            "auto-multicast=true",
+            "caps=video/mpegts,systemstream=(boolean)true,packetsize=(int)188",
+        ]
+        commands.extend(
+            fanout(healthy_source, batch) for batch in batches(healthy_ports)
         )
-    for port in ports["malformed"]:
-        commands.append(
-            [
-                gst_launch,
-                "-q",
-                "fakesrc",
-                "is-live=true",
-                "do-timestamp=true",
-                "sizetype=fixed",
-                "sizemax=188",
-                "filltype=pattern",
-                "datarate=1880",
-                "sync=true",
-                *listener(port),
-            ]
-        )
+    slow_source = [
+        "fakesrc",
+        "is-live=true",
+        "do-timestamp=true",
+        "sizetype=fixed",
+        "sizemax=188",
+        "filltype=zero",
+        "!",
+        "identity",
+        f"sleep-time={int(manifest['slowDelaySeconds'] * 1_000_000)}",
+    ]
+    commands.extend(
+        fanout(slow_source, batch) for batch in batches(ports["slow"])
+    )
+    malformed_source = [
+        "fakesrc",
+        "is-live=true",
+        "do-timestamp=true",
+        "sizetype=fixed",
+        "sizemax=188",
+        "filltype=pattern",
+        "datarate=1880",
+        "sync=true",
+    ]
+    commands.extend(
+        fanout(malformed_source, batch)
+        for batch in batches(ports["malformed"])
+    )
     return commands
 
 

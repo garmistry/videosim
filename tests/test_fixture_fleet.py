@@ -28,13 +28,16 @@ class FixtureFleetTest(unittest.TestCase):
         )
 
         commands = srt_fixture_commands(manifest)
+        parts = [part for command in commands for part in command]
 
-        self.assertEqual(len(commands), 477)
+        self.assertEqual(len(commands), 33)
         self.assertEqual(sum("videosim" in command for command in commands), 1)
-        self.assertEqual(sum("udpsrc" in command for command in commands), 400)
-        self.assertEqual(
-            sum("filltype=pattern" in command for command in commands), 25
-        )
+        self.assertEqual(sum("udpsrc" in command for command in commands), 25)
+        self.assertEqual(parts.count("srtsink"), 475)
+        self.assertEqual(parts.count("queue"), 475)
+        self.assertEqual(parts.count("tee"), 31)
+        self.assertEqual(parts.count("filltype=pattern"), 2)
+        self.assertLessEqual(max(command.count("srtsink") for command in commands), 16)
 
     def test_repository_endpoint_manifests_build_exact_500_url_mix(self):
         for protocol in ("srt", "dash"):
@@ -183,22 +186,23 @@ class FixtureFleetTest(unittest.TestCase):
 
         self.assertEqual(len(state["streams"]), 6)
         self.assertEqual(len({stream["endpoint"] for stream in state["streams"]}), 6)
-        self.assertEqual(len(commands), 7)
+        self.assertEqual(len(commands), 5)
         self.assertIn("19087", commands[0])
         self.assertIn("uri=srt://127.0.0.1:19087?mode=caller", commands[1])
         self.assertIn("host=239.255.42.42", commands[1])
         self.assertIn("port=19088", commands[1])
         self.assertIn("address=239.255.42.42", commands[2])
+        self.assertEqual(commands[2].count("fanout."), 2)
         self.assertIn("uri=srt://:19081?mode=listener", commands[2])
-        self.assertIn("wait-for-connection=true", commands[2])
-        self.assertIn("address=239.255.42.42", commands[3])
-        self.assertIn("uri=srt://:19082?mode=listener", commands[3])
-        self.assertIn("uri=srt://:19083?mode=listener", commands[4])
+        self.assertIn("uri=srt://:19082?mode=listener", commands[2])
+        self.assertEqual(commands[2].count("wait-for-connection=false"), 2)
+        self.assertEqual(commands[2].count("async=false"), 2)
+        self.assertIn("uri=srt://:19083?mode=listener", commands[3])
         self.assertNotIn(
             "19084", " ".join(part for command in commands for part in command)
         )
-        self.assertIn("uri=srt://:19085?mode=listener", commands[5])
-        self.assertIn("uri=srt://:19086?mode=listener", commands[-1])
+        self.assertIn("uri=srt://:19085?mode=listener", commands[4])
+        self.assertIn("uri=srt://:19086?mode=listener", commands[4])
 
     def test_fixture_fleet_rejects_unsupported_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

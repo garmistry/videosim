@@ -172,8 +172,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - `durable-fixture-startup.py` composes one local source shard into an exact
   440-stream catalog, boots fresh PostgreSQL plus the API and 11 real workers,
   and fails closed on lease balance, latest behavior outcomes, alarm shape,
-  paginated operator API parity, process state, resources, or Docker logs. Its
-  output is explicitly same-host, non-capacity startup evidence.
+  paginated operator API parity, final fixture/application process state and
+  resources, or Docker logs. A digest-pinned same-host run passes all 440 paths;
+  its output remains explicitly one-domain, non-capacity startup evidence.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

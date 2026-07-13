@@ -159,13 +159,12 @@ implementation and must pass before those milestones advance.
 - `durable-fixture-startup.py` now boots fresh PostgreSQL, composes/imports one
   exact 440-stream source shard, starts the API and 11 real workers, validates
   latest behavior outcomes and alarms, pages the operator API, and captures
-  Docker state/resources/logs. Its corrected marked eight-path/two-worker run
-  passed in 30.486 seconds. An earlier exploratory exact-440 run converged
-  leases/results but left 28/176 nominal healthy SRT paths inconclusive; it used
-  a superseded combined receiver that did not prove caption bytes, and its
-  database inherited an exploratory migration. It is transport-only negative
-  diagnosis. A clean full-shape pass on independent fixture and worker hosts
-  remains open.
+  final fixture/PostgreSQL/API/worker state/resources/logs. Its marked
+  eight-path/two-worker contract passes. A corrected digest-pinned exact-440 run
+  passed all 440 behavior outcomes with byte-backed SRT captions, exact balanced
+  leases/alarms/API parity, and 15 stable containers in 144.861 seconds. The
+  earlier 148/176 combined-receiver result is superseded. Three independent
+  fixture/worker hosts, loss/headroom, and the 24-hour run remain open.
 - Composed fixture states can now be imported into an exclusive PostgreSQL feed
   catalog through the production feed-generation and lease semantics. The
   importer validates complete external-feed configs, rejects shared endpoints

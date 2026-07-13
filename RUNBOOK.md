@@ -802,9 +802,9 @@ alarms per malformed feed. Any black/frozen alarm fails the run.
 
 The API path pages `/api/operator/feeds?limit=200`, requiring 440 unique source
 endpoints, exact protocol counts, and config version one. The workflow also
-requires every container to remain running with zero restarts, captures Docker
-stats and timestamped fixture/PostgreSQL/API/worker logs, and rejects traceback
-or fixture-process-exit markers. Retain:
+requires every fixture/PostgreSQL/API/worker container to remain running with
+zero restarts, captures final loaded Docker stats for all of them plus
+timestamped logs, and rejects traceback or fixture-process-exit markers. Retain:
 
 - `result.json`
 - `durable-summary.json`
@@ -834,7 +834,8 @@ The marked test uses eight distinct matrix endpoints and two real workers. The
 default 440-path workflow is a same-host diagnostic and always reports
 `capacityCertified=false` and `independentHosts=false`; it cannot replace the
 three fixture hosts, three worker hosts, mTLS path, failure events, or 24-hour
-F5 evidence.
+F5 evidence. A digest-pinned exact-440 run passed this local gate; use it only as
+one-domain readiness evidence.
 
 ### Load and validate the candidate catalog
 

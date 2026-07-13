@@ -122,15 +122,14 @@
   feeds remain distinguishable inside the 15-second stream budget. This needs
   multiple SRT handshakes. The earlier 171/176 combined-receiver diagnostic is
   superseded because process success did not prove every requested branch.
-- The fail-closed durable startup workflow passed its marked eight-path,
-  two-worker API/media/alarm/log test. An exploratory exact-440/11-worker run
-  reached balanced 40-stream leases and all 440 latest results, but only
-  148/176 healthy SRT paths were nominally healthy and 28 timed out, but that
-  run used the superseded combined receiver and did not require caption bytes.
-  It also produced exact 176/176 healthy DASH, 44 expected malformed-DASH
-  alarms, and zero false black/frozen alarms. The exploratory database contained
-  an inherited extra migration, so this is transport-only negative diagnosis,
-  not essence or admission evidence.
+- The fail-closed durable startup workflow passes both its marked eight-path
+  contract and a digest-pinned exact-440/11-worker same-host run. The full shard
+  produced balanced 40-stream leases, all 176 healthy paths per protocol, exact
+  slow/dead/malformed outcomes, 44 expected malformed-DASH alarms, and zero
+  false black/frozen alarms with byte-backed SRT captions. Its loaded SRT source
+  used 429.73% CPU, 1.633 GiB, and 1,912 PIDs. This proves one shared-source
+  domain, not independent-host headroom, domain-loss recovery, or admission.
+  The earlier 148/176 combined-receiver result remains superseded diagnosis.
 - Correcting the budget does not make the current single-host environment
   sufficient. A 22-survivor, 12-token, 15-second run failed the 90-second gate
   on 14 workers and saturated local CPU/process capacity. This repository has

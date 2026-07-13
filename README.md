@@ -199,6 +199,11 @@ The output has exact 50/50 protocol and 80/10/5/5 healthy/slow/dead/malformed
 counts, but reuses the eight physical fixture endpoints. It is a bounded-worker
 stress input, not independent-stream or capacity evidence.
 
+To fail unless cursor rotation starts validation for every logical stream, add
+`--require-full-validation-coverage` and run enough measured iterations. With
+eight validation tokens, the checked-in 1,000-stream scenario requires at least
+125 cycles when each aggregate budget admits one window.
+
 ```sh
 python3 -m videosim worker-benchmark \
   --scenario artifacts/dash-fixtures/state.json \
@@ -207,8 +212,8 @@ python3 -m videosim worker-benchmark \
 ```
 
 This runs real media probes and reports latency, CPU, peak RSS, descriptors, and
-outcomes. It measures only the supplied worker scenario and does not certify
-fleet capacity.
+outcomes plus unique validation coverage. It measures only the supplied worker
+scenario and does not certify fleet capacity.
 
 Verify a completed scale-evidence bundle against the fail-closed F5 policy:
 

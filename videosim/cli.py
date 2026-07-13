@@ -213,6 +213,11 @@ def build_parser() -> argparse.ArgumentParser:
     worker_benchmark.add_argument("--stream-budget-seconds", type=float, default=0)
     worker_benchmark.add_argument("--deep-check-interval-seconds", type=float, default=0)
     worker_benchmark.add_argument("--batch-budget-seconds", type=float, default=0)
+    worker_benchmark.add_argument(
+        "--require-full-validation-coverage",
+        action="store_true",
+        help="fail unless every running stream starts validation during measured cycles",
+    )
     worker_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     fixture_fleet = subparsers.add_parser(
@@ -504,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.stream_budget_seconds,
                 args.deep_check_interval_seconds,
                 args.batch_budget_seconds,
+                args.require_full_validation_coverage,
             )
             print(report.to_json() if args.json else worker_benchmark_summary(report))
             return 0 if report.passed else 1

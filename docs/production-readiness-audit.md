@@ -655,10 +655,12 @@ python -m videosim capacity-check --report <report.json> --policy <gate.json>
 fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
 slow/dead/malformed matrices; the worker command runs real probes from their
 states; the fixture-scenario command can create an exact seeded 1,000-logical-
-stream mix that explicitly reuses eight endpoints; the capacity command checks
-JSON evidence/policy inputs against `scale/policies/f5-1000.json`. Independent
-endpoints, source cross-products, remaining proposed harnesses, and production-
-like evidence are not implemented; harness availability is not scale admission.
+stream mix that explicitly reuses eight endpoints; the worker benchmark can
+fail unless validation rotation covers every logical stream; the capacity
+command checks JSON evidence/policy inputs against
+`scale/policies/f5-1000.json`. Independent endpoints, source cross-products,
+remaining proposed harnesses, and production-like evidence are not implemented;
+harness availability is not scale admission.
 
 CI should run unit/contract/security fixture tests. Representative load, soak, failover, and DR run in a production-like scheduled environment and publish immutable reports tied to code, config, infrastructure version, and dataset.
 

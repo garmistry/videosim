@@ -78,7 +78,9 @@
   decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
   dead/malformed matrices. `fixture-scenario` can expand them into 1,000 unique
   logical streams, but those streams reuse eight physical endpoints and provide
-  neither distributed load nor capacity evidence.
+  neither distributed load nor capacity evidence. `worker-benchmark` can now
+  fail unless every assignment starts validation across measured cycles; that
+  proves cursor coverage, not detection freshness or sustained capacity.
 
 ## Monitoring
 

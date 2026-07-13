@@ -94,8 +94,8 @@ VideoSim should split into a master control plane and many worker nodes:
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 - `python -m videosim worker-benchmark` runs the real monitor/media-probe path
   for one worker from a hashed exported-state scenario. It reports cycle/CPU
-  percentiles, outcomes, peak RSS, and descriptors, but makes no fleet-capacity
-  claim.
+  percentiles, outcomes, unique validation-start coverage, peak RSS, and
+  descriptors, but makes no fleet-capacity claim.
 - `python -m videosim fixture-fleet` writes benchmark-state scenarios for
   deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
   It reuses the existing generators, a standard-library DASH HTTP service, and

@@ -28,6 +28,9 @@ class WorkerBenchmarkReport:
     stream_counts: tuple[int, ...]
     check_counts: tuple[int, ...]
     outcomes: dict[str, int]
+    require_full_validation_coverage: bool
+    validation_attempted_streams: int
+    cycles_to_full_validation_coverage: int | None
     process_peak_rss_bytes: int
     child_peak_rss_bytes: int
     open_file_descriptors: int | None
@@ -37,7 +40,15 @@ class WorkerBenchmarkReport:
         return (
             len(self.cycle_durations_ms) == self.iterations
             and all(count == self.stream_count for count in self.stream_counts)
+            and (
+                not self.require_full_validation_coverage
+                or self.validation_attempted_streams == self.stream_count
+            )
         )
+
+    @property
+    def validation_coverage_percent(self) -> float:
+        return round(self.validation_attempted_streams * 100 / self.stream_count, 3)
 
     def payload(self) -> dict:
         return {
@@ -54,6 +65,7 @@ class WorkerBenchmarkReport:
             "workload": {
                 "iterations": self.iterations,
                 "warmupIterations": self.warmup_iterations,
+                "requireFullValidationCoverage": self.require_full_validation_coverage,
             },
             "environment": {
                 "python": sys.version.split()[0],
@@ -65,6 +77,9 @@ class WorkerBenchmarkReport:
                 "streamCounts": list(self.stream_counts),
                 "checkCounts": list(self.check_counts),
                 "outcomes": dict(sorted(self.outcomes.items())),
+                "validationAttemptedStreams": self.validation_attempted_streams,
+                "validationCoveragePercent": self.validation_coverage_percent,
+                "cyclesToFullValidationCoverage": self.cycles_to_full_validation_coverage,
                 "processPeakRssBytes": self.process_peak_rss_bytes,
                 "childPeakRssBytes": self.child_peak_rss_bytes,
                 "openFileDescriptors": self.open_file_descriptors,
@@ -132,6 +147,7 @@ def run_worker_benchmark(
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
     batch_budget_seconds: float,
+    require_full_validation_coverage: bool = False,
     *,
     monitor: Callable = run_monitor_once,
     resource_snapshot: Callable[[], dict] = worker_resource_snapshot,
@@ -141,6 +157,11 @@ def run_worker_benchmark(
         raise ValueError("iterations must be positive and warmup iterations non-negative")
     scenario, scenario_sha256, stream_count = load_scenario(scenario_path)
     state = empty_monitor_state()
+    running_stream_ids = {
+        stream["id"]
+        for stream in scenario["streams"]
+        if stream.get("status") == "running"
+    }
     durations = []
     cpu = []
     stream_counts = []
@@ -149,6 +170,8 @@ def run_worker_benchmark(
     process_peak = 0
     child_peak = 0
     open_fds = None
+    validation_attempted_stream_ids = set()
+    cycles_to_full_validation_coverage = None
     for cycle in range(iterations + warmup_iterations):
         before = resource_snapshot()
         started = monotonic()
@@ -176,6 +199,19 @@ def run_worker_benchmark(
         cpu.append(resources["lastBatchCpuMs"])
         stream_counts.append(int(metrics.get("streamCount", 0)))
         check_counts.append(int(metrics.get("checkCount", 0)))
+        for item in metrics.get("streams", []):
+            if (
+                isinstance(item, dict)
+                and item.get("check") == "validation"
+                and item.get("outcome") != "skipped"
+                and item.get("streamId") in running_stream_ids
+            ):
+                validation_attempted_stream_ids.add(item["streamId"])
+        if (
+            cycles_to_full_validation_coverage is None
+            and validation_attempted_stream_ids == running_stream_ids
+        ):
+            cycles_to_full_validation_coverage = cycle - warmup_iterations + 1
         for outcome, count in metrics.get("outcomes", {}).items():
             outcomes[str(outcome)] = outcomes.get(str(outcome), 0) + int(count)
         process_peak = max(process_peak, resources["processPeakRssBytes"])
@@ -193,6 +229,9 @@ def run_worker_benchmark(
         stream_counts=tuple(stream_counts),
         check_counts=tuple(check_counts),
         outcomes=outcomes,
+        require_full_validation_coverage=require_full_validation_coverage,
+        validation_attempted_streams=len(validation_attempted_stream_ids),
+        cycles_to_full_validation_coverage=cycles_to_full_validation_coverage,
         process_peak_rss_bytes=process_peak,
         child_peak_rss_bytes=child_peak,
         open_file_descriptors=open_fds,

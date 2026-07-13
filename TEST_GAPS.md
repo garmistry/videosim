@@ -86,6 +86,11 @@ implementation and must pass before those milestones advance.
   at 1,000 logical streams, but reuses eight physical endpoints. Independent
   endpoints, the generated/external source cross-product, storm scheduling, and
   long-run fixture reliability remain open.
+- The worker benchmark can require and report unique validation-start coverage;
+  a 125-cycle Linux run covered all 1,000 mixed logical streams with eight
+  admissions per cycle. Its 30 ms stream and 1 ms aggregate budgets are pressure
+  controls, not approved freshness SLOs, and the run is not a soak or capacity
+  curve.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

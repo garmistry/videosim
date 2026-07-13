@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -89,6 +90,71 @@ class WorkerBenchmarkTest(unittest.TestCase):
         self.assertEqual(payload["results"]["batchCpuMs"]["p50"], 250)
         self.assertEqual(payload["results"]["processPeakRssBytes"], 13)
         self.assertEqual(payload["results"]["openFileDescriptors"], 6)
+        self.assertEqual(payload["results"]["validationCoveragePercent"], 0)
+
+    def test_full_validation_coverage_gate_tracks_rotation_across_cycles(self):
+        cycle = 0
+
+        def monitor(*_args, **_kwargs):
+            nonlocal cycle
+            cycle += 1
+            attempted = {1, 2} if cycle == 1 else {3, 4}
+            streams = [
+                {
+                    "streamId": f"stream-{index}",
+                    "check": "validation",
+                    "outcome": "success" if index in attempted else "skipped",
+                }
+                for index in range(1, 5)
+            ]
+            return {
+                "probeMetrics": {
+                    "streamCount": 4,
+                    "checkCount": 4,
+                    "outcomes": {"success": 2, "skipped": 2},
+                    "streams": streams,
+                }
+            }
+
+        snapshot = {
+            "totalCpuSeconds": 0,
+            "processPeakRssBytes": 10,
+            "childPeakRssBytes": 20,
+            "openFileDescriptors": 3,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            scenario = Path(directory) / "state.json"
+            scenario.write_text(
+                json.dumps(
+                    {
+                        "streams": [
+                            {"id": f"stream-{index}", "status": "running"}
+                            for index in range(1, 5)
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report = run_worker_benchmark(
+                scenario,
+                2,
+                0,
+                "127.0.0.1",
+                2,
+                1,
+                1,
+                0,
+                1,
+                True,
+                monitor=monitor,
+                resource_snapshot=lambda: snapshot,
+                monotonic=iter((0, 0.1, 1, 1.1)).__next__,
+            )
+
+        self.assertTrue(report.passed)
+        self.assertEqual(report.validation_attempted_streams, 4)
+        self.assertEqual(report.cycles_to_full_validation_coverage, 2)
+        self.assertFalse(replace(report, validation_attempted_streams=3).passed)
 
     def test_worker_benchmark_rejects_scenario_without_running_streams(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,74 @@
+name: videosim-fixture-domain
+
+x-fixture-environment: &fixture-environment
+  HOME: /tmp
+  VIDEOSIM_FIXTURE_ADVERTISED_HOST: "${VIDEOSIM_FIXTURE_ADVERTISED_HOST:?set the fixture host advertised to workers}"
+
+x-fixture: &fixture
+  image: "${VIDEOSIM_FIXTURE_IMAGE:?set an immutable fixture image digest}"
+  init: true
+  read_only: true
+  network_mode: host
+  tmpfs:
+    - /tmp:size=2g,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 4096
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  restart: unless-stopped
+  stop_grace_period: 2m
+  logging:
+    driver: local
+    options:
+      max-size: 50m
+      max-file: "5"
+  volumes:
+    - type: bind
+      source: "${VIDEOSIM_FIXTURE_STATE_DIR:?set the fixture state directory}"
+      target: /artifacts
+      bind:
+        create_host_path: false
+  entrypoint: ["/bin/sh", "-ec"]
+
+services:
+  srt:
+    <<: *fixture
+    environment:
+      <<: *fixture-environment
+      VIDEOSIM_FIXTURE_MANIFEST: "${VIDEOSIM_SRT_FIXTURE_MANIFEST:-scale/fixtures/srt-endpoints-220-domain.json}"
+    command:
+      - |
+        exec python -m videosim fixture-fleet \
+          --manifest "$${VIDEOSIM_FIXTURE_MANIFEST}" \
+          --state-path /artifacts/srt-state.json \
+          --advertised-host "$${VIDEOSIM_FIXTURE_ADVERTISED_HOST}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; raise SystemExit(not Path('/artifacts/srt-state.json').is_file())"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 5s
+
+  dash:
+    <<: *fixture
+    environment:
+      <<: *fixture-environment
+      VIDEOSIM_FIXTURE_MANIFEST: "${VIDEOSIM_DASH_FIXTURE_MANIFEST:-scale/fixtures/dash-endpoints-220-domain.json}"
+      VIDEOSIM_DASH_FIXTURE_HTTP_PORT: "${VIDEOSIM_DASH_FIXTURE_HTTP_PORT:-18083}"
+    command:
+      - |
+        exec python -m videosim fixture-fleet \
+          --manifest "$${VIDEOSIM_FIXTURE_MANIFEST}" \
+          --state-path /artifacts/dash-state.json \
+          --advertised-host "$${VIDEOSIM_FIXTURE_ADVERTISED_HOST}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from urllib.request import urlopen; urlopen('http://127.0.0.1:' + '$${VIDEOSIM_DASH_FIXTURE_HTTP_PORT}' + '/healthz', timeout=2).read()\""]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 5s

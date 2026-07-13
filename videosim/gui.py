@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .alert_profile import alert_profile_payload, normalize_alert_delay, normalize_enabled_alerts
 from .control_plane import (
+    DEFAULT_WORKER_FRESHNESS_SECONDS,
     MAX_IDENTIFIER_LENGTH,
     MAX_REPORT_STREAMS,
     WORKER_API_VERSION,
@@ -83,7 +84,7 @@ MODE_CONTROLS = {
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_MONITOR_STATE_PATH = "/tmp/videosim-monitor/state.json"
-WORKER_TTL_SECONDS = 60
+WORKER_TTL_SECONDS = DEFAULT_WORKER_FRESHNESS_SECONDS
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 OPERATOR_API_VERSION = "videosim.operator/v1"
 DEFAULT_FEED_PAGE_SIZE = 100
@@ -2785,7 +2786,7 @@ def worker_assignments_payload(
                     (stream.id for stream in assigned_streams),
                     worker_id,
                     worker_incarnation_id,
-                    ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
+                    ttl_seconds=store.worker_freshness_seconds,
                     _connection=connection,
                 )
             }
@@ -3484,7 +3485,7 @@ def acknowledge_worker_leases(state: GuiState, worker_id: str, payload: dict) ->
             requested,
             worker_id,
             incarnation,
-            ttl_seconds=max(1, int(WORKER_TTL_SECONDS)),
+            ttl_seconds=store.worker_freshness_seconds,
         )
     ]
     return {

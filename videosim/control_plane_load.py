@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .assignment_verifier import _workload_spec
+from .control_plane import DEFAULT_WORKER_FRESHNESS_SECONDS
 from .distributed_benchmark import percentile
 from .postgres_store import CheckResult, FencedReport, PostgresControlPlaneStore
 from .worker import worker_resource_snapshot
@@ -75,7 +76,7 @@ def run_control_plane_load(
     duration_seconds: float,
     *,
     tick_seconds: float = 20,
-    worker_freshness_seconds: int = 60,
+    worker_freshness_seconds: int = DEFAULT_WORKER_FRESHNESS_SECONDS,
     output_path: str = "",
 ) -> ControlPlaneLoadReport:
     if not math.isfinite(duration_seconds) or duration_seconds <= 0:

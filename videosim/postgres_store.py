@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Mapping
 
+from .control_plane import DEFAULT_WORKER_FRESHNESS_SECONDS
 from .monitor_catalog import SPEC_BY_ID
 
 
@@ -158,7 +159,7 @@ class PostgresControlPlaneStore:
         tenant_id: str = DEFAULT_TENANT_ID,
         min_pool_size: int = 1,
         max_pool_size: int = 10,
-        worker_freshness_seconds: int = 60,
+        worker_freshness_seconds: int = DEFAULT_WORKER_FRESHNESS_SECONDS,
         max_future_skew_seconds: int = 30,
         result_freshness_seconds: int = 120,
         alarm_repeat_seconds: int = DEFAULT_ALARM_REPEAT_SECONDS,

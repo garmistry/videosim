@@ -16,6 +16,10 @@ from .assignment_verifier import run_assignment_verification
 from .control_plane_load import human_summary as control_plane_load_summary
 from .control_plane_load import parse_duration
 from .control_plane_load import run_control_plane_load
+from .control_plane import (
+    DEFAULT_WORKER_FRESHNESS_SECONDS,
+    DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS,
+)
 from .distributed_benchmark import (
     BenchmarkInvariantError,
     human_summary as control_plane_benchmark_summary,
@@ -129,7 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument("--repeat-interval-seconds", type=float, default=5)
     worker.add_argument("--history-limit", type=int, default=1000)
     worker.add_argument("--srt-host", default="127.0.0.1")
-    worker.add_argument("--heartbeat-interval-seconds", type=float, default=20)
+    worker.add_argument(
+        "--heartbeat-interval-seconds",
+        type=float,
+        default=DEFAULT_WORKER_HEARTBEAT_INTERVAL_SECONDS,
+    )
     worker.add_argument("--tls-ca-file", default="")
     worker.add_argument("--tls-cert-file", default="")
     worker.add_argument("--tls-key-file", default="")
@@ -208,7 +216,11 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_load.add_argument("--workload", required=True)
     control_plane_load.add_argument("--duration", required=True, type=parse_duration)
     control_plane_load.add_argument("--tick-seconds", type=float, default=20)
-    control_plane_load.add_argument("--worker-freshness-seconds", type=int, default=60)
+    control_plane_load.add_argument(
+        "--worker-freshness-seconds",
+        type=int,
+        default=DEFAULT_WORKER_FRESHNESS_SECONDS,
+    )
     control_plane_load.add_argument("--output", required=True)
     control_plane_load.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"

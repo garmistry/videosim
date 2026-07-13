@@ -148,6 +148,15 @@ class AssignmentVerifierTest(unittest.TestCase):
         self.assertFalse(report.passed)
         self.assertTrue(any("lack authority" in error for error in report.errors))
 
+    def test_baseline_from_another_tenant_fails_closed(self):
+        current = copy.deepcopy(self.baseline)
+        current["tenantId"] = "other-tenant"
+
+        report = verify_assignment_snapshot(current, WORKLOAD, self.baseline)
+
+        self.assertFalse(report.passed)
+        self.assertIn("baseline and current snapshot tenants differ", report.errors)
+
 
 @unittest.skipUnless(DATABASE_URL, "VIDEOSIM_TEST_POSTGRES_URL is not configured")
 class AssignmentSnapshotPostgresIntegrationTest(unittest.TestCase):

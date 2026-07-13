@@ -147,6 +147,8 @@ def verify_assignment_snapshot(
             errors.extend(baseline_errors)
             if baseline_metrics["phase"] != "baseline":
                 errors.append("baseline snapshot must contain every declared failure domain")
+            if metrics["tenantId"] != baseline_metrics["tenantId"]:
+                errors.append("baseline and current snapshot tenants differ")
             if signatures != baseline_signatures:
                 errors.append("baseline and current desired stream catalogs differ")
             if not baseline_errors and signatures == baseline_signatures:
@@ -228,6 +230,8 @@ def human_summary(report: AssignmentVerificationReport) -> str:
 def _analyze(snapshot: dict, spec: dict, label: str):
     if snapshot.get("schemaVersion") != SNAPSHOT_SCHEMA:
         raise ValueError(f"{label}.schemaVersion must be {SNAPSHOT_SCHEMA}")
+    if not isinstance(snapshot.get("tenantId"), str) or not snapshot["tenantId"]:
+        raise ValueError(f"{label}.tenantId must be a non-empty string")
     captured_at = _time(snapshot.get("capturedAt"), f"{label}.capturedAt")
     feeds = _index(snapshot.get("feeds"), "streamId", f"{label}.feeds")
     workers = _index(snapshot.get("workers"), "workerId", f"{label}.workers")

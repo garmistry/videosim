@@ -100,6 +100,15 @@ implementation and must pass before those milestones advance.
   the 30 ms stream, 1 ms aggregate, and 90-second limits are test criteria, not
   approved freshness SLOs. Healthy URLs still share one source per protocol;
   this is not independent media load, a soak, or a capacity curve.
+- Checked-in 660-SRT, 660-DASH, and mixed-1,320 manifests provide a 32%
+  headroom regression input. A ten-worker Linux run split it into balanced
+  132-stream, 66/66 protocol shards. With five-second stream budgets, all URLs
+  received at least two attempts and first coverage stayed at or below 86.404
+  seconds, but two workers failed the 90-second repeated-gap gate and the worst
+  upper bound was 91.473 seconds. Outcomes were 1,056 success, 66 issue, and
+  1,598 timeout; SRT fixture memory rose from 2.717 GiB before load to 3.732
+  GiB afterward. This is failed single-host saturation evidence, not actual
+  failure-domain loss, sufficient healthy-outcome coverage, or F5 admission.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

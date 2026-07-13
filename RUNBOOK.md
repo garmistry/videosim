@@ -625,6 +625,17 @@ resource-controlled Linux load host. The 500 DASH paths share one generator and
 HTTP origin. Distinct URLs prove request/socket fan-out only; they do not prove
 independent source generation or capacity.
 
+For a 32%-headroom candidate, substitute
+`scale/fixtures/srt-endpoints-660.json`,
+`scale/fixtures/dash-endpoints-660.json`, and
+`scale/fixtures/mixed-1320.json`. They compose 1,320 distinct URLs with an
+exact 660/660 protocol and 1,056/132/66/66 behavior mix. Split the composed
+state into ten 132-stream worker scenarios with 66 SRT and 66 DASH assignments
+each before running workers concurrently. This is a saturation input only. The
+recorded five-second-budget run covered every URL at least twice but failed the
+90-second gap gate on two workers (worst upper bound 91.473 seconds) and must
+not be used as F5 evidence.
+
 For a strict rotation run with eight admitted validations per cycle:
 
 ```sh

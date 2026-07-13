@@ -84,6 +84,11 @@
   wall-time limits. The wall-time metric is a conservative cycle-boundary upper
   bound, not a per-probe timestamp or an approved detection-freshness SLO, and
   neither gate proves sustained capacity.
+- The 1,320-distinct-URL fixture input represents 32% logical headroom, but its
+  ten-worker single-host run failed the 90-second freshness gate on two shards
+  and produced 1,598 timeouts. It uses shared protocol sources and does not
+  inject or recover from a real failure-domain loss, so it is negative
+  saturation evidence rather than F5 capacity evidence.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

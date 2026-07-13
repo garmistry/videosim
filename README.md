@@ -211,6 +211,12 @@ relay for each healthy listener; slow and malformed listeners remain separate
 fault processes. The DASH URLs still share one generator/origin. These are load
 inputs, not capacity evidence, until the complete F5 gate passes.
 
+The corresponding `*-endpoints-660.json` manifests and `mixed-1320.json`
+provide a deterministic 1,320-URL input, or 32% logical headroom over the F5
+1,000-stream target. They are a reproducible saturation/regression workload,
+not admitted capacity: the recorded ten-worker run failed the 90-second
+freshness gate on two shards, and healthy URLs still share protocol sources.
+
 To fail unless cursor rotation starts validation for every logical stream, add
 `--require-full-validation-coverage` and run enough measured iterations. Add
 `--max-validation-gap-cycles` and `--max-validation-gap-seconds` to require at

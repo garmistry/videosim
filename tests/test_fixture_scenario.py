@@ -60,6 +60,39 @@ class FixtureScenarioTest(unittest.TestCase):
             {"srt": 500, "dash": 500},
         )
 
+    def test_repository_headroom_manifests_compose_1320_distinct_urls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            states = {}
+            for protocol in ("srt", "dash"):
+                manifest, digest = load_fixture_manifest(
+                    ROOT / f"scale/fixtures/{protocol}-endpoints-660.json"
+                )
+                path = Path(directory) / f"{protocol}.json"
+                path.write_text(
+                    json.dumps(fixture_state(manifest, digest)), encoding="utf-8"
+                )
+                states[protocol] = path
+            output = Path(directory) / "output.json"
+            with patch("builtins.print"):
+                run_fixture_scenario(
+                    str(ROOT / "scale/fixtures/mixed-1320.json"),
+                    str(states["srt"]),
+                    str(states["dash"]),
+                    str(output),
+                )
+            scenario = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertFalse(scenario["logicalStreamsShareEndpoints"])
+        self.assertEqual(scenario["protocolCounts"], {"srt": 660, "dash": 660})
+        self.assertEqual(
+            scenario["behaviorCounts"],
+            {"healthy": 1056, "slow": 132, "dead": 66, "malformed": 66},
+        )
+        self.assertEqual(len(scenario["streams"]), 1320)
+        self.assertEqual(
+            len({stream["endpoint"] for stream in scenario["streams"]}), 1320
+        )
+
     def test_rejects_invalid_percentages_and_missing_fixture_behavior(self):
         with tempfile.TemporaryDirectory() as directory:
             srt = self.write_fixture_state(directory, "srt")

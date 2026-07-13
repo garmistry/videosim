@@ -75,8 +75,10 @@ implementation and must pass before those milestones advance.
   weak workload/headroom declarations, skipped checks, or incomplete admission
   criteria. `scale/workloads/f5-1000-candidate.json` passes that workload
   contract with 33 workers across three domains and exact 1,320/660/660
-  total/SRT/DASH survivor tokens after one domain loss, but it has not been run
-  or approved and is not the missing evidence bundle.
+  total/SRT/DASH survivor tokens after one domain loss. Three local Compose
+  domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
+  has not run on independent hosts or passed media/headroom/24-hour admission.
+  The local smoke is not the missing approved evidence bundle.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
@@ -126,26 +128,32 @@ implementation and must pass before those milestones advance.
   SRT 41 success/124 issue/1,155 timeout and DASH 1,056 success/66 issue/198
   timeout. The single host reached 5.31 GiB, 7,386 processes/threads, and about
   954% worker CPU before fixture CPU. The checked-in 33-worker candidate moves
-  this survivor shape across three domains, but multi-host failure-domain
-  capacity remains untested and is required before another F5 claim.
+  this survivor shape across three domains. Its local control-plane hard-loss
+  smoke passed, but multi-host media capacity remains untested and is required
+  before another F5 claim.
 - The capacity-aware scheduler model now places the 1,320-stream candidate at
   40 streams per worker before loss and exact 60-stream, 30-SRT/30-DASH loads
   on each of 22 survivors afterward. Only the failed domain's 440 assignments
-  move. This does not exercise PostgreSQL lease expiry, worker processes,
-  network partitions, media probes, or separate infrastructure hosts.
+  move. A local PostgreSQL/33-container hard-kill smoke reproduced that exact
+  result, with the final replacement acknowledged in 64.709 seconds and no
+  survivor restart. This still does not exercise network partitions,
+  representative media probes, or separate infrastructure hosts.
 - `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
   with unique mTLS identities and the candidate's exact admission/concurrency
-  limits. It has not been booted on three independent hosts, and no production
-  image digest, certificates, network path, host sizing, or domain-loss log/API
-  capture exists. Compose rendering is not deployment or capacity evidence.
+  limits. Three instances were booted on one local Docker host and exercised
+  through mTLS API plus Docker-log checks. It has not been booted on three
+  independent hosts, and no production image digest, certificates, network
+  path, or host sizing evidence exists. The local smoke is not deployment or
+  capacity admission evidence.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;
   the durable scheduler now limits the equivalent modeled loss to the 130
   required moves while preserving scale-out rebalance. A one-second DB-time
   HTTP test covers survivor heartbeat renewal, failed worker/lease expiry,
-  higher-epoch reassignment, and stale-report rejection. Production 60-second
-  recovery timing, partitions, and real failure-domain recovery remain open.
+  higher-epoch reassignment, and stale-report rejection. The local 60-second
+  TTL hard-loss path recovered in 64.709 seconds. Partitions, multi-host timing,
+  and production failure-domain recovery remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker
@@ -157,12 +165,14 @@ implementation and must pass before those milestones advance.
   trickle-resistant HTTP cancellation, tenant fairness, durable fleet queue
   backpressure, measured media capacity, and 1,000-stream failure/soak evidence
   remain open.
-- Lease offer/renew and acknowledgement arrays now remove per-lease transaction
-  overhead and roll back atomically, but still issue per-stream SQL inside each
-  transaction. Tenant-scoped PostgreSQL transaction leadership now serializes
-  assignment decisions and rolls back on scheduler-session loss. Production
-  PostgreSQL saturation, lock-wait/deadlock metrics, persistent leadership,
-  replicated deployment, and 1,000-stream poll cadence remain open.
+- Lease offer/renew and acknowledgement arrays now use a worker-fence query and
+  one set-based PostgreSQL lease statement per request while retaining atomic
+  rollback. Tenant-scoped PostgreSQL transaction leadership still serializes
+  assignment decisions and rolls back on scheduler-session loss. The local
+  fault window recorded 33 client timeouts, mostly report uploads, despite
+  successful spool recovery. Report-ingestion saturation, lock-wait/deadlock
+  metrics, persistent leadership, replicated deployment, and sustained
+  1,000-stream poll cadence remain open.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A
   configured cadence staggers deep work; aggregate budget exhaustion stops new

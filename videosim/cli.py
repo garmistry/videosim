@@ -250,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_alarm_consistency.add_argument("--database-url", default="")
     verify_alarm_consistency.add_argument("--workload", required=True)
+    verify_alarm_consistency.add_argument("--tenant-id", default="")
     verify_alarm_consistency.add_argument("--output", default="")
     verify_alarm_consistency.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"
@@ -602,11 +603,10 @@ def main(argv: list[str] | None = None) -> int:
             database_url = args.database_url or configured_database_url()
             if not database_url:
                 raise ValueError("PostgreSQL database URL is required")
-            report = run_alarm_consistency(
-                database_url,
-                args.workload,
-                output_path=args.output,
-            )
+            options = {"output_path": args.output}
+            if args.tenant_id:
+                options["tenant_id"] = args.tenant_id
+            report = run_alarm_consistency(database_url, args.workload, **options)
             print(
                 report.to_json() if args.json else alarm_consistency_summary(report)
             )

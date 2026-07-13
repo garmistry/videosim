@@ -661,6 +661,14 @@ service for the supplied logical assignments under this test threshold, not an
 approved freshness SLO, production probe budgets, or independent media
 capacity.
 
+Inspect `results.validationOutcomesByProtocol` before interpreting a passing
+rotation gate. The scaled SRT relay validates a fresh connection quickly but
+needs about 10 seconds for repeated full media validation; a five-second stream
+budget therefore records SRT timeouts even when DASH remains healthy. A local
+16-URL calibration produced 8 SRT successes/8 timeouts at five seconds and 16
+SRT successes at 15 seconds. Select a measured protocol budget before using a
+run as quality evidence.
+
 To benchmark an existing app instead, capture its state:
 
 ```sh
@@ -677,8 +685,9 @@ python3 -m videosim worker-benchmark \
 
 The scenario uses the existing GUI `/state.json` shape and must contain unique
 running stream IDs with endpoints reachable from the benchmark host. The report
-hashes that scenario and records real probe cycle/CPU percentiles, outcomes,
-worker/child peak RSS, and post-cycle Linux descriptors. A passing report means
+hashes that scenario and records real probe cycle/CPU percentiles, aggregate
+and per-protocol validation outcomes, worker/child peak RSS, and post-cycle
+Linux descriptors. A passing report means
 every running stream produced probe metrics in every measured cycle; outage
 outcomes remain measurements. Run separate scenarios at increasing per-worker
 stream counts to build a saturation curve.

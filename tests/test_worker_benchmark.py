@@ -16,8 +16,16 @@ class WorkerBenchmarkTest(unittest.TestCase):
             json.dumps(
                 {
                     "streams": [
-                        {"id": "stream-1", "status": "running" if running else "stopped"},
-                        {"id": "stream-2", "status": "running" if running else "stopped"},
+                        {
+                            "id": "stream-1",
+                            "protocol": "srt",
+                            "status": "running" if running else "stopped",
+                        },
+                        {
+                            "id": "stream-2",
+                            "protocol": "dash",
+                            "status": "running" if running else "stopped",
+                        },
                     ]
                 }
             ),
@@ -60,7 +68,19 @@ class WorkerBenchmarkTest(unittest.TestCase):
                 "probeMetrics": {
                     "streamCount": 2,
                     "checkCount": 4,
-                    "outcomes": {"success": 4},
+                    "outcomes": {"success": 3, "timeout": 1},
+                    "streams": [
+                        {
+                            "streamId": "stream-1",
+                            "check": "validation",
+                            "outcome": "timeout",
+                        },
+                        {
+                            "streamId": "stream-2",
+                            "check": "validation",
+                            "outcome": "success",
+                        },
+                    ],
                 }
             }
 
@@ -90,7 +110,11 @@ class WorkerBenchmarkTest(unittest.TestCase):
         self.assertEqual(payload["results"]["batchCpuMs"]["p50"], 250)
         self.assertEqual(payload["results"]["processPeakRssBytes"], 13)
         self.assertEqual(payload["results"]["openFileDescriptors"], 6)
-        self.assertEqual(payload["results"]["validationCoveragePercent"], 0)
+        self.assertEqual(payload["results"]["validationCoveragePercent"], 100)
+        self.assertEqual(
+            payload["results"]["validationOutcomesByProtocol"],
+            {"dash": {"success": 1}, "srt": {"timeout": 1}},
+        )
 
     def test_full_validation_coverage_gate_tracks_rotation_across_cycles(self):
         cycle = 0
@@ -159,6 +183,10 @@ class WorkerBenchmarkTest(unittest.TestCase):
         self.assertEqual(report.minimum_validation_attempts, 2)
         self.assertEqual(report.maximum_validation_gap_cycles, 2)
         self.assertAlmostEqual(report.maximum_validation_gap_seconds_upper_bound, 2.1)
+        self.assertEqual(
+            report.validation_outcomes_by_protocol,
+            {"unknown": {"skipped": 8, "success": 8}},
+        )
         self.assertFalse(replace(report, validation_attempted_streams=3).passed)
         self.assertFalse(replace(report, minimum_validation_attempts=1).passed)
         self.assertFalse(replace(report, maximum_validation_gap_cycles=3).passed)

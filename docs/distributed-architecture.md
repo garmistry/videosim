@@ -106,9 +106,9 @@ VideoSim should split into a master control plane and many worker nodes:
   placement churn while explicitly disclaiming durable or media capacity.
 - `python -m videosim worker-benchmark` runs the real monitor/media-probe path
   for one worker from a hashed exported-state scenario. It reports cycle/CPU
-  percentiles, outcomes, unique validation-start coverage, conservative
-  cycle-boundary wall-time freshness bounds, peak RSS, and descriptors, but
-  makes no fleet-capacity claim.
+  percentiles, aggregate and per-protocol validation outcomes, unique
+  validation-start coverage, conservative cycle-boundary wall-time freshness
+  bounds, peak RSS, and descriptors, but makes no fleet-capacity claim.
 - `python -m videosim fixture-fleet` writes benchmark-state scenarios for
   deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
   It reuses the existing generators, a standard-library DASH HTTP service, and

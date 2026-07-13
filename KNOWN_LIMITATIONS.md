@@ -89,6 +89,10 @@
   and produced 1,598 timeouts. It uses shared protocol sources and does not
   inject or recover from a real failure-domain loss, so it is negative
   saturation evidence rather than F5 capacity evidence.
+- Scaled SRT fixture reconnect validation takes about 10 seconds after the
+  first caller. `validationOutcomesByProtocol` exposes this separately from
+  DASH; a stream budget below that value cannot support a healthy-SRT capacity
+  claim even when cursor freshness passes.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

@@ -29,6 +29,7 @@ class WorkerBenchmarkReport:
     stream_counts: tuple[int, ...]
     check_counts: tuple[int, ...]
     outcomes: dict[str, int]
+    validation_outcomes_by_protocol: dict[str, dict[str, int]]
     require_full_validation_coverage: bool
     max_validation_gap_cycles: int
     max_validation_gap_seconds: float
@@ -105,6 +106,12 @@ class WorkerBenchmarkReport:
                 "streamCounts": list(self.stream_counts),
                 "checkCounts": list(self.check_counts),
                 "outcomes": dict(sorted(self.outcomes.items())),
+                "validationOutcomesByProtocol": {
+                    protocol: dict(sorted(outcomes.items()))
+                    for protocol, outcomes in sorted(
+                        self.validation_outcomes_by_protocol.items()
+                    )
+                },
                 "validationAttemptedStreams": self.validation_attempted_streams,
                 "validationCoveragePercent": self.validation_coverage_percent,
                 "cyclesToFullValidationCoverage": self.cycles_to_full_validation_coverage,
@@ -210,11 +217,21 @@ def run_worker_benchmark(
         for stream in scenario["streams"]
         if stream.get("status") == "running"
     }
+    protocol_by_stream_id = {
+        stream["id"]: (
+            str(stream["protocol"])
+            if stream.get("protocol") in {"srt", "dash"}
+            else "unknown"
+        )
+        for stream in scenario["streams"]
+        if stream.get("status") == "running"
+    }
     durations = []
     cpu = []
     stream_counts = []
     check_counts = []
     outcomes: dict[str, int] = {}
+    validation_outcomes_by_protocol: dict[str, dict[str, int]] = {}
     process_peak = 0
     child_peak = 0
     open_fds = None
@@ -261,13 +278,20 @@ def run_worker_benchmark(
         check_counts.append(int(metrics.get("checkCount", 0)))
         attempted_this_cycle = set()
         for item in metrics.get("streams", []):
-            if (
-                isinstance(item, dict)
-                and item.get("check") == "validation"
-                and item.get("outcome") != "skipped"
-                and item.get("streamId") in running_stream_ids
-            ):
-                attempted_this_cycle.add(item["streamId"])
+            if not isinstance(item, dict) or item.get("check") != "validation":
+                continue
+            stream_id = item.get("streamId")
+            if stream_id not in running_stream_ids:
+                continue
+            outcome = str(item.get("outcome") or "unknown")
+            if outcome not in {"success", "issue", "error", "timeout", "skipped"}:
+                outcome = "unknown"
+            protocol_outcomes = validation_outcomes_by_protocol.setdefault(
+                protocol_by_stream_id[stream_id], {}
+            )
+            protocol_outcomes[outcome] = protocol_outcomes.get(outcome, 0) + 1
+            if outcome != "skipped":
+                attempted_this_cycle.add(stream_id)
         measured_cycle = cycle - warmup_iterations + 1
         for stream_id in attempted_this_cycle:
             previous_cycle = last_validation_attempt_cycles.get(stream_id)
@@ -332,6 +356,7 @@ def run_worker_benchmark(
         stream_counts=tuple(stream_counts),
         check_counts=tuple(check_counts),
         outcomes=outcomes,
+        validation_outcomes_by_protocol=validation_outcomes_by_protocol,
         require_full_validation_coverage=require_full_validation_coverage,
         max_validation_gap_cycles=max_validation_gap_cycles,
         max_validation_gap_seconds=max_validation_gap_seconds,
@@ -360,6 +385,7 @@ def human_summary(report: WorkerBenchmarkReport) -> str:
             f"Measured iterations: {report.iterations}",
             f"Validation minimum attempts/max gap: {report.minimum_validation_attempts}/{report.maximum_validation_gap_cycles} cycles",
             f"Validation wall-time gap upper bound: {rounded(report.maximum_validation_gap_seconds_upper_bound)} seconds",
+            f"Validation outcomes by protocol: {json.dumps(report.validation_outcomes_by_protocol, sort_keys=True)}",
             f"Cycle p50/p95/p99: {duration['p50']}/{duration['p95']}/{duration['p99']} ms",
             f"CPU p50/p95/p99: {cpu['p50']}/{cpu['p95']}/{cpu['p99']} ms",
         ]

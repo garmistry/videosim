@@ -233,9 +233,10 @@ python3 -m videosim worker-benchmark \
   --max-concurrent-checks 8 --max-concurrent-deep-checks 2 --json
 ```
 
-This runs real media probes and reports latency, CPU, peak RSS, descriptors, and
-outcomes plus unique validation coverage. It measures only the supplied worker
-scenario and does not certify fleet capacity.
+This runs real media probes and reports latency, CPU, peak RSS, descriptors,
+aggregate outcomes, per-protocol validation outcomes, and unique validation
+coverage. It measures only the supplied worker scenario and does not certify
+fleet capacity.
 
 Verify a completed scale-evidence bundle against the fail-closed F5 policy:
 

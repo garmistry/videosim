@@ -109,6 +109,13 @@ implementation and must pass before those milestones advance.
   1,598 timeout; SRT fixture memory rose from 2.717 GiB before load to 3.732
   GiB afterward. This is failed single-host saturation evidence, not actual
   failure-domain loss, sufficient healthy-outcome coverage, or F5 admission.
+- Worker reports now separate validation outcomes by protocol. A low-load
+  8-SRT/8-DASH repeated calibration showed DASH at 16/16 success while SRT
+  produced 8 success/8 timeout with a five-second budget. Raising the budget to
+  15 seconds produced 16/16 SRT and 16/16 DASH success, with 9.845-10.013 second
+  cycles. The 1,320 run's five-second SRT outcomes are therefore under-budget
+  evidence; representative protocol budgets and a new headroom run remain
+  required.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

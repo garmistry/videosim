@@ -941,6 +941,115 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         self.assertEqual(len(collision.accepted_result_ids), 1)
         self.assertEqual(collision.rejected[0]["reason"], "check_sequence_conflict")
 
+    def test_60_stream_probe_report_uses_bounded_queries(self):
+        feed_ids = [f"report-scale-{uuid.uuid4()}" for _ in range(60)]
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        report_id = uuid.uuid4()
+        execute_count = 0
+        original_connection = self.store._pool.connection
+
+        class CountingConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, *args, **kwargs):
+                nonlocal execute_count
+                execute_count += 1
+                return self.connection.execute(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        class CountingContext:
+            def __init__(self):
+                self.context = original_connection()
+
+            def __enter__(self):
+                return CountingConnection(self.context.__enter__())
+
+            def __exit__(self, *args):
+                return self.context.__exit__(*args)
+
+        try:
+            for feed_id in feed_ids:
+                self.store.upsert(feed(feed_id))
+            self.store.register_worker(
+                worker_id, incarnation, f"CN={worker_id}"
+            )
+            offered = self.store.reconcile_leases(
+                feed_ids, worker_id, incarnation, ttl_seconds=60
+            )
+            active = self.store.acknowledge_leases(
+                [
+                    (lease.stream_id, lease.epoch, lease.config_version)
+                    for lease in offered
+                ],
+                worker_id,
+                incarnation,
+                ttl_seconds=60,
+            )
+            leases = {lease.stream_id: lease for lease in active}
+            observed_at = datetime.now(timezone.utc)
+            results = tuple(
+                CheckResult(
+                    uuid.uuid4(),
+                    feed_id,
+                    check_id,
+                    leases[feed_id].epoch,
+                    leases[feed_id].config_version,
+                    1,
+                    "healthy",
+                    observed_at,
+                    {},
+                )
+                for feed_id in feed_ids
+                for check_id in ("probe.validation", "probe.deep")
+            )
+
+            with patch.object(
+                self.store._pool,
+                "connection",
+                side_effect=CountingContext,
+            ):
+                disposition = self.store.ingest_report(
+                    FencedReport(
+                        report_id,
+                        "default",
+                        worker_id,
+                        incarnation,
+                        results,
+                    )
+                )
+
+            self.assertEqual(len(disposition.accepted_result_ids), 120)
+            self.assertLessEqual(execute_count, 140)
+            with self.store._pool.connection() as connection:
+                projected = connection.execute(
+                    """
+                    SELECT count(*) AS count
+                    FROM current_check_state
+                    WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
+                    """,
+                    (self.store.tenant_id, feed_ids),
+                ).fetchone()["count"]
+            self.assertEqual(projected, 120)
+        finally:
+            with self.store._pool.connection() as connection:
+                with connection.transaction():
+                    connection.execute(
+                        "DELETE FROM feeds WHERE tenant_id = %s AND id = ANY(%s::text[])",
+                        (self.store.tenant_id, feed_ids),
+                    )
+                    connection.execute(
+                        "DELETE FROM worker_reports WHERE tenant_id = %s AND worker_id = %s",
+                        (self.store.tenant_id, worker_id),
+                    )
+                    connection.execute(
+                        "DELETE FROM workers WHERE tenant_id = %s AND worker_id = %s",
+                        (self.store.tenant_id, worker_id),
+                    )
+
     def test_observation_clock_and_monotonic_time_are_fenced(self):
         feed_id = f"feed-{uuid.uuid4()}"
         version = self.store.upsert(feed(feed_id))

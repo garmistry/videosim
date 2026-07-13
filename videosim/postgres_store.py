@@ -1358,29 +1358,93 @@ class PostgresControlPlaneStore:
                 rejected: list[dict] = []
                 max_sequences: dict[str, int] = {}
                 projection_fences: dict[str, tuple[int, int, int]] = {}
-                for result in sorted(report.results, key=lambda item: (item.stream_id, item.sequence, item.check_id)):
+                current_updates: dict[tuple[str, str], CheckResult] = {}
+                ordered_results = sorted(
+                    report.results,
+                    key=lambda item: (
+                        item.stream_id,
+                        item.sequence,
+                        item.check_id,
+                    ),
+                )
+                feeds = {}
+                leases = {}
+                existing_results = {}
+                current_observations = {}
+                if ordered_results and not worker_reason:
+                    stream_ids = sorted(
+                        {result.stream_id for result in ordered_results}
+                    )
+                    feeds = {
+                        row["id"]: row
+                        for row in connection.execute(
+                            """
+                            SELECT id, config, config_version
+                            FROM feeds
+                            WHERE tenant_id = %s AND id = ANY(%s::text[])
+                            ORDER BY id
+                            FOR SHARE
+                            """,
+                            (report.tenant_id, stream_ids),
+                        ).fetchall()
+                    }
+                    leases = {
+                        row["stream_id"]: row
+                        for row in connection.execute(
+                            """
+                            SELECT stream_id, worker_id,
+                                   worker_incarnation_id, epoch,
+                                   config_version, expires_at,
+                                   expires_at <= clock_timestamp() AS expired,
+                                   state, last_sequence
+                            FROM leases
+                            WHERE tenant_id = %s
+                              AND stream_id = ANY(%s::text[])
+                            ORDER BY stream_id
+                            FOR UPDATE
+                            """,
+                            (report.tenant_id, stream_ids),
+                        ).fetchall()
+                    }
+                    existing_results = {
+                        row["result_id"]: row["payload_sha256"]
+                        for row in connection.execute(
+                            """
+                            SELECT result_id, payload_sha256
+                            FROM check_results
+                            WHERE result_id = ANY(%s::uuid[])
+                            """,
+                            ([result.result_id for result in ordered_results],),
+                        ).fetchall()
+                    }
+                    current_observations = {
+                        (row["stream_id"], row["check_id"]): row["observed_at"]
+                        for row in connection.execute(
+                            """
+                            SELECT stream_id, check_id, observed_at
+                            FROM current_check_state
+                            WHERE tenant_id = %s
+                              AND stream_id = ANY(%s::text[])
+                              AND check_id = ANY(%s::text[])
+                            """,
+                            (
+                                report.tenant_id,
+                                stream_ids,
+                                sorted(
+                                    {
+                                        result.check_id
+                                        for result in ordered_results
+                                    }
+                                ),
+                            ),
+                        ).fetchall()
+                    }
+                for result in ordered_results:
                     if worker_reason:
                         rejected.append({"resultId": str(result.result_id), "reason": worker_reason})
                         continue
-                    feed = connection.execute(
-                        """
-                        SELECT config, config_version FROM feeds
-                        WHERE tenant_id = %s AND id = %s
-                        FOR SHARE
-                        """,
-                        (report.tenant_id, result.stream_id),
-                    ).fetchone()
-                    lease = connection.execute(
-                        """
-                        SELECT worker_id, worker_incarnation_id, epoch, config_version,
-                               expires_at, expires_at <= clock_timestamp() AS expired,
-                               state, last_sequence
-                        FROM leases
-                        WHERE tenant_id = %s AND stream_id = %s
-                        FOR UPDATE
-                        """,
-                        (report.tenant_id, result.stream_id),
-                    ).fetchone()
+                    feed = feeds.get(result.stream_id)
+                    lease = leases.get(result.stream_id)
                     reason = _lease_rejection(
                         lease,
                         report,
@@ -1395,12 +1459,8 @@ class PostgresControlPlaneStore:
                             result.payload(), sort_keys=True, separators=(",", ":")
                         ).encode("utf-8")
                     ).hexdigest()
-                    existing_result = connection.execute(
-                        "SELECT payload_sha256 FROM check_results WHERE result_id = %s",
-                        (result.result_id,),
-                    ).fetchone()
-                    if existing_result is not None:
-                        if existing_result["payload_sha256"] == result_hash:
+                    if result.result_id in existing_results:
+                        if existing_results[result.result_id] == result_hash:
                             duplicate_results.append(str(result.result_id))
                         else:
                             rejected.append(
@@ -1416,16 +1476,12 @@ class PostgresControlPlaneStore:
                     if result.observed_at < database_now - timedelta(seconds=self.result_freshness_seconds):
                         rejected.append({"resultId": str(result.result_id), "reason": "observation_too_old"})
                         continue
-                    current_observation = connection.execute(
-                        """
-                        SELECT observed_at FROM current_check_state
-                        WHERE tenant_id = %s AND stream_id = %s AND check_id = %s
-                        """,
-                        (report.tenant_id, result.stream_id, result.check_id),
-                    ).fetchone()
+                    current_observation = current_observations.get(
+                        (result.stream_id, result.check_id)
+                    )
                     if (
                         current_observation is not None
-                        and result.observed_at < current_observation["observed_at"]
+                        and result.observed_at < current_observation
                     ):
                         rejected.append({"resultId": str(result.result_id), "reason": "observation_older_than_current"})
                         continue
@@ -1480,45 +1536,18 @@ class PostgresControlPlaneStore:
                                 }
                             )
                         continue
-                    connection.execute(
-                        """
-                        INSERT INTO current_check_state (
-                            tenant_id, stream_id, check_id, result_id, lease_epoch,
-                            config_version, sequence, status, observed_at, expires_at, evidence
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                  %s + (%s * interval '1 second'), %s::jsonb)
-                        ON CONFLICT (tenant_id, stream_id, check_id) DO UPDATE SET
-                            result_id = EXCLUDED.result_id,
-                            lease_epoch = EXCLUDED.lease_epoch,
-                            config_version = EXCLUDED.config_version,
-                            sequence = EXCLUDED.sequence,
-                            status = EXCLUDED.status,
-                            observed_at = EXCLUDED.observed_at,
-                            expires_at = EXCLUDED.expires_at,
-                            evidence = EXCLUDED.evidence
-                        WHERE (current_check_state.lease_epoch, current_check_state.config_version, current_check_state.sequence)
-                            < (EXCLUDED.lease_epoch, EXCLUDED.config_version, EXCLUDED.sequence)
-                        """,
-                        (
-                            report.tenant_id,
-                            result.stream_id,
-                            result.check_id,
-                            result.result_id,
-                            result.lease_epoch,
-                            result.config_version,
-                            result.sequence,
-                            result.status,
-                            result.observed_at,
-                            result.observed_at,
-                            self.result_freshness_seconds,
-                            json.dumps(dict(result.evidence), sort_keys=True),
-                        ),
-                    )
+                    existing_results[result.result_id] = result_hash
+                    current_key = (result.stream_id, result.check_id)
+                    current_observations[current_key] = result.observed_at
+                    current_updates[current_key] = result
                     self._apply_alarm_transition(
                         connection, report, result, dict(feed["config"])
                     )
                     accepted.append(str(result.result_id))
-                    max_sequences[result.stream_id] = max(max_sequences.get(result.stream_id, prior_sequence), result.sequence)
+                    max_sequences[result.stream_id] = max(
+                        max_sequences.get(result.stream_id, prior_sequence),
+                        result.sequence,
+                    )
                     projection_fences[result.stream_id] = (
                         result.lease_epoch,
                         result.config_version,
@@ -1531,19 +1560,102 @@ class PostgresControlPlaneStore:
                         ),
                     )
 
-                for stream_id, sequence in max_sequences.items():
+                if current_updates:
                     connection.execute(
                         """
-                        UPDATE leases SET last_sequence = GREATEST(last_sequence, %s)
-                        WHERE tenant_id = %s AND stream_id = %s
+                        WITH updates AS (
+                            SELECT *
+                            FROM jsonb_to_recordset(%s::jsonb) AS item(
+                                result_id uuid,
+                                stream_id text,
+                                check_id text,
+                                lease_epoch bigint,
+                                config_version bigint,
+                                sequence bigint,
+                                status text,
+                                observed_at timestamptz,
+                                evidence jsonb
+                            )
+                        )
+                        INSERT INTO current_check_state (
+                            tenant_id, stream_id, check_id, result_id,
+                            lease_epoch, config_version, sequence, status,
+                            observed_at, expires_at, evidence
+                        )
+                        SELECT %s, stream_id, check_id, result_id,
+                               lease_epoch, config_version, sequence, status,
+                               observed_at,
+                               observed_at + (%s * interval '1 second'),
+                               evidence
+                        FROM updates
+                        ON CONFLICT (tenant_id, stream_id, check_id)
+                        DO UPDATE SET
+                            result_id = EXCLUDED.result_id,
+                            lease_epoch = EXCLUDED.lease_epoch,
+                            config_version = EXCLUDED.config_version,
+                            sequence = EXCLUDED.sequence,
+                            status = EXCLUDED.status,
+                            observed_at = EXCLUDED.observed_at,
+                            expires_at = EXCLUDED.expires_at,
+                            evidence = EXCLUDED.evidence
+                        WHERE (
+                            current_check_state.lease_epoch,
+                            current_check_state.config_version,
+                            current_check_state.sequence
+                        ) < (
+                            EXCLUDED.lease_epoch,
+                            EXCLUDED.config_version,
+                            EXCLUDED.sequence
+                        )
                         """,
-                        (sequence, report.tenant_id, stream_id),
+                        (
+                            json.dumps(
+                                [
+                                    {
+                                        "result_id": str(result.result_id),
+                                        "stream_id": result.stream_id,
+                                        "check_id": result.check_id,
+                                        "lease_epoch": result.lease_epoch,
+                                        "config_version": result.config_version,
+                                        "sequence": result.sequence,
+                                        "status": result.status,
+                                        "observed_at": result.observed_at.isoformat(),
+                                        "evidence": dict(result.evidence),
+                                    }
+                                    for result in current_updates.values()
+                                ],
+                                sort_keys=True,
+                            ),
+                            report.tenant_id,
+                            self.result_freshness_seconds,
+                        ),
+                    )
+
+                if max_sequences:
+                    sequence_updates = sorted(max_sequences.items())
+                    connection.execute(
+                        """
+                        UPDATE leases AS lease
+                        SET last_sequence = GREATEST(
+                            lease.last_sequence, updates.sequence
+                        )
+                        FROM unnest(%s::text[], %s::bigint[])
+                            AS updates(stream_id, sequence)
+                        WHERE lease.tenant_id = %s
+                          AND lease.stream_id = updates.stream_id
+                        """,
+                        (
+                            [item[0] for item in sequence_updates],
+                            [item[1] for item in sequence_updates],
+                            report.tenant_id,
+                        ),
                     )
 
                 # Enforce age retention even during steady-state reports that
                 # do not generate a new transition event.
-                for stream_id in projection_fences:
-                    self._prune_alarm_events(connection, report.tenant_id, stream_id)
+                self._prune_alarm_events(
+                    connection, report.tenant_id, projection_fences
+                )
 
                 if report.projection_sha256:
                     for stream_id, (
@@ -2496,26 +2608,45 @@ class PostgresControlPlaneStore:
         )
         self._prune_alarm_events(connection, report.tenant_id, result.stream_id)
 
-    def _prune_alarm_events(self, connection, tenant_id: str, stream_id: str):
+    def _prune_alarm_events(
+        self,
+        connection,
+        tenant_id: str,
+        stream_ids: str | Iterable[str],
+    ):
+        stream_ids = (
+            [stream_ids]
+            if isinstance(stream_ids, str)
+            else sorted(set(stream_ids))
+        )
+        if not stream_ids:
+            return
         connection.execute(
             """
             DELETE FROM alarm_events
-            WHERE tenant_id = %s AND stream_id = %s
+            WHERE tenant_id = %s AND stream_id = ANY(%s::text[])
               AND created_at < clock_timestamp() - (%s * interval '1 second')
             """,
-            (tenant_id, stream_id, self.alarm_event_retention_seconds),
+            (tenant_id, stream_ids, self.alarm_event_retention_seconds),
         )
         connection.execute(
             """
-            DELETE FROM alarm_events
-            WHERE event_id IN (
-                SELECT event_id FROM alarm_events
-                WHERE tenant_id = %s AND stream_id = %s
-                ORDER BY created_at DESC, event_id DESC
-                OFFSET %s
+            WITH ranked AS (
+                SELECT event_id,
+                       row_number() OVER (
+                           PARTITION BY stream_id
+                           ORDER BY created_at DESC, event_id DESC
+                       ) AS position
+                FROM alarm_events
+                WHERE tenant_id = %s
+                  AND stream_id = ANY(%s::text[])
             )
+            DELETE FROM alarm_events
+            USING ranked
+            WHERE alarm_events.event_id = ranked.event_id
+              AND ranked.position > %s
             """,
-            (tenant_id, stream_id, self.alarm_event_history_limit),
+            (tenant_id, stream_ids, self.alarm_event_history_limit),
         )
 
 

@@ -636,6 +636,14 @@ recorded five-second-budget run covered every URL at least twice but failed the
 90-second gap gate on two workers (worst upper bound 91.473 seconds) and must
 not be used as F5 evidence.
 
+A calibrated follow-up used 22 balanced 60-stream survivors, 12 validation
+tokens each, and the measured 15-second SRT budget. Fourteen workers still
+failed the 90-second gate; the worst upper bound was 99.052 seconds. The
+single Docker host reached 5.31 GiB and 7,386 processes/threads during load,
+with about 954% aggregate worker CPU before fixture CPU. Do not raise local
+concurrency further; distribute this workload across real failure domains and
+rerun the same strict reports.
+
 For a strict rotation run with eight admitted validations per cycle:
 
 ```sh

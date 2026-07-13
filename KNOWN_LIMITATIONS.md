@@ -93,6 +93,10 @@
   first caller. `validationOutcomesByProtocol` exposes this separately from
   DASH; a stream budget below that value cannot support a healthy-SRT capacity
   claim even when cursor freshness passes.
+- Correcting the budget does not make the current single-host environment
+  sufficient. A 22-survivor, 12-token, 15-second run failed the 90-second gate
+  on 14 workers and saturated local CPU/process capacity. This repository has
+  no measured multi-host failure-domain deployment to replace that failed run.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

@@ -116,6 +116,14 @@ implementation and must pass before those milestones advance.
   cycles. The 1,320 run's five-second SRT outcomes are therefore under-budget
   evidence; representative protocol budgets and a new headroom run remain
   required.
+- A calibrated 1,320-URL run used 22 concurrent balanced workers, 60 streams
+  and 12 validation tokens each, plus a 15-second stream budget. All streams
+  received at least two attempts, but only eight workers passed the 90-second
+  gap gate and the worst upper bound was 99.052 seconds. Protocol outcomes were
+  SRT 41 success/124 issue/1,155 timeout and DASH 1,056 success/66 issue/198
+  timeout. The single host reached 5.31 GiB, 7,386 processes/threads, and about
+  954% worker CPU before fixture CPU. Multi-host failure-domain capacity remains
+  untested and is required before another F5 claim.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

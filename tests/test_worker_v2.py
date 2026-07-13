@@ -1797,7 +1797,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         self.assertGreater(new_epoch, old_epoch)
         self.assertTrue(survivor["ok"])
 
-    def test_hard_kill_reassigns_only_after_database_ttl_expiry(self):
+    def test_hard_kill_reassigns_only_after_configured_database_ttl_expiry(self):
         self.state.create_stream(
             name="Worker v2 TTL survivor feed",
             source="external",
@@ -1809,7 +1809,7 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         survivor_incarnation = uuid.uuid4()
         self.store.worker_freshness_seconds = 1
 
-        with patch("videosim.gui.WORKER_TTL_SECONDS", 1):
+        with patch("videosim.gui.WORKER_TTL_SECONDS", 60):
             failed_before = self.assignment(
                 failed_worker, failed_incarnation, expected_count=2
             )

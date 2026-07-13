@@ -19,7 +19,10 @@ class GeneratedRuntimeComposeTest(unittest.TestCase):
             "POSTGRES_APP_PASSWORD": "app-password",
             "POSTGRES_PUBLISHER_PASSWORD": "publisher-password",
             "POSTGRES_PRUNER_PASSWORD": "pruner-password",
+            "POSTGRES_CONSUMER_PASSWORD": "consumer-password",
             "NATS_PASSWORD": "nats-password",
+            "VIDEOSIM_WORKER_FRESHNESS_SECONDS": "30",
+            "VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS": "5",
             "VIDEOSIM_PROXY_SHARED_SECRET": "x" * 32,
             "OIDC_ISSUER_URL": "https://identity.example.test",
             "OIDC_CLIENT_ID": "videosim",
@@ -48,6 +51,14 @@ class GeneratedRuntimeComposeTest(unittest.TestCase):
         runtime = services["generated-feed-runtime"]
         origin = services["generated-dash-origin"]
 
+        self.assertEqual(
+            services["app"]["environment"]["VIDEOSIM_WORKER_FRESHNESS_SECONDS"],
+            "30",
+        )
+        self.assertIn(
+            "--heartbeat-interval-seconds 5",
+            " ".join(services["worker"]["command"]),
+        )
         self.assertIn("videosim.generated_runtime", " ".join(runtime["command"]))
         self.assertEqual(runtime["init"], True)
         self.assertEqual(runtime["restart"], "unless-stopped")

@@ -29,6 +29,7 @@ class WorkerDomainComposeTest(unittest.TestCase):
             "VIDEOSIM_WORKER_DATA_DIR": "/tmp/videosim-worker-data",
             "VIDEOSIM_STREAM_BUDGET_SECONDS": "15",
             "VIDEOSIM_DEEP_CHECK_INTERVAL_SECONDS": "3600",
+            "VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS": "5",
         }
         result = subprocess.run(
             [
@@ -61,6 +62,11 @@ class WorkerDomainComposeTest(unittest.TestCase):
         )
         for service in services.values():
             command = " ".join(service["command"])
+            self.assertEqual(
+                service["environment"]["VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS"],
+                "5",
+            )
+            self.assertIn("--heartbeat-interval-seconds", command)
             for option, value in (
                 ("--max-streams", shape["maxStreams"]),
                 ("--max-srt-streams", shape["maxSrtStreams"]),

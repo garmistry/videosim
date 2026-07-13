@@ -9,6 +9,8 @@ import time
 import uuid
 from dataclasses import replace
 
+from .alarm_consistency import human_summary as alarm_consistency_summary
+from .alarm_consistency import run_alarm_consistency
 from .assignment_verifier import human_summary as assignment_verification_summary
 from .assignment_verifier import run_assignment_verification
 from .distributed_benchmark import (
@@ -212,6 +214,17 @@ def build_parser() -> argparse.ArgumentParser:
     verify_assignments.add_argument("--baseline", default="")
     verify_assignments.add_argument("--output", default="")
     verify_assignments.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    verify_alarm_consistency = subparsers.add_parser(
+        "verify-alarm-consistency",
+        help="reconcile durable PostgreSQL check and alarm projections",
+    )
+    verify_alarm_consistency.add_argument("--database-url", default="")
+    verify_alarm_consistency.add_argument("--workload", required=True)
+    verify_alarm_consistency.add_argument("--output", default="")
+    verify_alarm_consistency.add_argument(
+        "--json", action="store_true", help="print machine-readable JSON"
+    )
 
     worker_benchmark = subparsers.add_parser(
         "worker-benchmark",
@@ -538,6 +551,20 @@ def main(argv: list[str] | None = None) -> int:
                 report.to_json()
                 if args.json
                 else assignment_verification_summary(report)
+            )
+            return 0 if report.passed else 1
+
+        if args.command == "verify-alarm-consistency":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            report = run_alarm_consistency(
+                database_url,
+                args.workload,
+                output_path=args.output,
+            )
+            print(
+                report.to_json() if args.json else alarm_consistency_summary(report)
             )
             return 0 if report.passed else 1
 

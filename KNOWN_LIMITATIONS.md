@@ -100,6 +100,12 @@
   and produced 1,598 timeouts. It uses shared protocol sources and does not
   inject or recover from a real failure-domain loss, so it is negative
   saturation evidence rather than F5 capacity evidence.
+- `import-fixture-scenario` now gives the composed state a fail-closed,
+  transaction-atomic path into an exclusive durable feed catalog and verifies
+  exact persisted parity. Its report and local seven-page API check prove
+  catalog identity only. They do not prove endpoint reachability, worker probe
+  freshness, alarm transitions, source independence, host headroom, or
+  admission capacity.
 - Scaled SRT fixture reconnect validation takes about 10 seconds after the
   first caller. `validationOutcomesByProtocol` exposes this separately from
   DASH; a stream budget below that value cannot support a healthy-SRT capacity

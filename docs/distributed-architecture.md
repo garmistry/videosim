@@ -154,6 +154,12 @@ VideoSim should split into a master control plane and many worker nodes:
   protocol state options aggregate source-host shards, retain their hashes, and
   reject duplicate cross-shard endpoints. The checked-in 1,000-stream scenario
   reuses eight endpoints and is not a capacity workload.
+- `python -m videosim import-fixture-scenario` validates that composed state,
+  converts each entry to the existing complete external-feed configuration,
+  and atomically reconciles a dedicated PostgreSQL catalog. It rejects shared
+  endpoints and unrelated rows by default, verifies exact persisted parity,
+  and emits a report that cannot certify media or capacity. Workers then read
+  those real URLs through the normal scheduler/lease path.
 - `docker-compose.fixture-domain.yml` runs one 220-SRT/220-DASH source shard
   on a Linux load host. Three uniquely advertised shards compose exact
   1,320/660/660 headroom input; the marked startup validator checks exact

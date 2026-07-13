@@ -749,6 +749,59 @@ shard still shares one encoder and each DASH shard one generator/origin, so
 this topology reduces shared fate without proving per-stream source
 independence.
 
+### Load and validate the candidate catalog
+
+Boot the migrated production control plane first and use a dedicated default
+tenant catalog with operator writes paused. Set `VIDEOSIM_DATABASE_URL` to the
+same PostgreSQL authority used by the API, then import the composed state before
+any candidate worker starts polling:
+
+```sh
+python3 -m videosim import-fixture-scenario \
+  --state artifacts/mixed-1320.json \
+  --output artifacts/fixture-catalog-import.json
+```
+
+The import fails before mutation if the state schema, IDs, protocol/behavior
+counts, running external-feed fields, or endpoint-sharing markers are invalid.
+Distinct endpoints are required by default. It briefly locks catalog writes,
+rejects any feed ID not listed by the scenario, applies all 1,320 definitions
+in one transaction, then rereads and compares every persisted configuration.
+Do not use `--allow-shared-endpoints` for F5 evidence. Run this before worker
+boot because a changed feed configuration revokes its current lease.
+
+Require the report to contain `passed=true`, `catalogExclusive=true`,
+`streamsInspected=1320`, exact 660/660 protocol and 1,056/132/66/66 behavior
+counts, `distinctEndpointCount=1320`, one catalog config SHA-256, and
+`minimumConfigVersion=maximumConfigVersion=1` on the fresh catalog. An
+idempotent rerun must report zero changed and 1,320 unchanged feeds. The report
+deliberately keeps `capacityCertified=false` and
+`allEndpointMediaValidated=false`.
+
+Through the OIDC-authenticated Chrome UI, confirm the catalog loads without an
+error and inspect representative SRT and DASH detail pages. For an authenticated
+API capture, page `GET /api/operator/feeds?limit=200` using each returned
+`nextCursor`; require seven pages, 1,320 unique IDs, exact source-state endpoint
+and protocol matches, and no extra row. Also retain `GET /healthz`, production
+Compose `ps`, a Docker resource snapshot, and timestamped app/PostgreSQL logs.
+Fail startup on a non-200 API response, duplicate/missing endpoint, restart,
+traceback, fatal/error marker, or source/report digest mismatch.
+
+Run the marked catalog and existing API-startup contracts on a disposable
+PostgreSQL database and Docker host:
+
+```sh
+VIDEOSIM_TEST_POSTGRES_URL="$VIDEOSIM_TEST_POSTGRES_URL" \
+  python3 -m unittest tests.test_fixture_catalog
+VIDEOSIM_STARTUP_INTEGRATION=1 \
+  python3 -m unittest tests.test_startup_workflow
+```
+
+The first contract proves atomic rollback, idempotence, exclusive-catalog
+rejection, report integrity, and real scheduler/lease output. The second boots
+the app/worker stack, validates through APIs and real media probes, and captures
+Docker logs. Neither replaces the three-host all-path run.
+
 ### Boot the candidate worker domains
 
 Run `docker-compose.worker-domain.yml` on three separate Linux hosts. On each

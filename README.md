@@ -248,6 +248,22 @@ shares one source per protocol and startup validation is not saturation
 evidence. The fault workflow samples two paths; durable worker alarms must
 separately prove every affected endpoint transition.
 
+Load a distinct-endpoint scenario into a dedicated migrated PostgreSQL catalog
+before booting candidate workers:
+
+```sh
+python3 -m videosim import-fixture-scenario \
+  --state artifacts/mixed-1320.json \
+  --output artifacts/fixture-catalog-import.json
+```
+
+The command validates the composed state, maps every fixture ID and endpoint to
+the existing durable external-feed contract, rejects any unlisted catalog row,
+imports all rows in one transaction, verifies the persisted catalog, and writes
+an idempotent evidence report. Shared endpoints fail by default. This proves
+catalog identity and assignment input only; the report permanently leaves
+media-capacity and all-endpoint validation certification false.
+
 To fail unless cursor rotation starts validation for every logical stream, add
 `--require-full-validation-coverage` and run enough measured iterations. Add
 `--max-validation-gap-cycles` and `--max-validation-gap-seconds` to require at

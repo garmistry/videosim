@@ -152,6 +152,16 @@ implementation and must pass before those milestones advance.
   after restart. That still proves only two paths on one VM, not all 440 worker
   observations/alarms, per-stream source independence, concurrent reconnect
   pressure, independent source-domain loss, or sustained capacity.
+- Composed fixture states can now be imported into an exclusive PostgreSQL feed
+  catalog through the production feed-generation and lease semantics. The
+  importer validates complete external-feed configs, rejects shared endpoints
+  and unlisted rows by default, uses one transaction, verifies persisted
+  parity, and retains a report that cannot claim capacity. A local exact
+  1,320-row run changed every row in 4.428 seconds, changed zero on rerun, and a
+  newly booted API returned all 1,320 unique source-matching endpoints in seven
+  pages with zero container restarts and clean logs. This closes the missing
+  scenario-to-worker-catalog bridge, not the independent three-host all-path
+  media, alarm-transition, reconnect-headroom, HA, or 24-hour admission gaps.
 - The worker benchmark can require and report unique validation-start coverage
   plus repeated cycle and wall-time cadence. A 250-cycle Linux run against 1,000
   distinct SRT/DASH URLs covered every stream at least twice with eight

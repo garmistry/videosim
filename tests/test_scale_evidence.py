@@ -3,9 +3,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from videosim.cli import main
+from videosim.gui import capacity_aware_assignments
 from videosim.scale_evidence import (
     ADMISSION_CRITERIA,
     BASELINE_ARTIFACT_KINDS,
@@ -271,6 +273,74 @@ class ScaleEvidenceTest(unittest.TestCase):
             ),
             (22, 1320, 660, 660),
         )
+
+    def test_checked_in_candidate_survives_one_scheduler_domain_loss(self):
+        root = Path(__file__).resolve().parents[1]
+        workload = json.loads(
+            (root / "scale/workloads/f5-1000-candidate.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        shape = workload["workerShape"]
+        streams = [
+            SimpleNamespace(id=f"{protocol}-{index}", protocol=protocol)
+            for protocol, percent in (
+                ("srt", workload["protocolMix"]["srtPercent"]),
+                ("dash", workload["protocolMix"]["dashPercent"]),
+            )
+            for index in range(int(workload["loadStreams"] * percent / 100))
+        ]
+        workers = [
+            {
+                "id": f"worker-{index:02d}",
+                "capacity": {
+                    "maxStreams": shape["maxStreams"],
+                    "maxSrtStreams": shape["maxSrtStreams"],
+                    "maxDashStreams": shape["maxDashStreams"],
+                },
+            }
+            for index in range(shape["count"])
+        ]
+        initial, initial_shortfall = capacity_aware_assignments(workers, streams)
+        failed_workers = {
+            worker["id"]
+            for worker in workers[: max(shape["failureDomainWorkerCounts"])]
+        }
+        preferred_owners = {
+            stream.id: worker_id
+            for worker_id, assigned in initial.items()
+            for stream in assigned
+        }
+
+        reassigned, shortfall = capacity_aware_assignments(
+            [worker for worker in workers if worker["id"] not in failed_workers],
+            streams,
+            preferred_owners=preferred_owners,
+        )
+        new_owners = {
+            stream.id: worker_id
+            for worker_id, assigned in reassigned.items()
+            for stream in assigned
+        }
+
+        self.assertEqual((initial_shortfall, shortfall), (0, 0))
+        self.assertEqual(
+            {
+                stream_id
+                for stream_id, owner in preferred_owners.items()
+                if new_owners[stream_id] != owner
+            },
+            {
+                stream_id
+                for stream_id, owner in preferred_owners.items()
+                if owner in failed_workers
+            },
+        )
+        self.assertEqual(sum(len(initial[worker]) for worker in failed_workers), 440)
+        for assigned in reassigned.values():
+            self.assertEqual(len(assigned), 60)
+            self.assertEqual(sum(stream.protocol == "srt" for stream in assigned), 30)
+            self.assertEqual(sum(stream.protocol == "dash" for stream in assigned), 30)
 
 
 if __name__ == "__main__":

@@ -128,6 +128,11 @@ implementation and must pass before those milestones advance.
   954% worker CPU before fixture CPU. The checked-in 33-worker candidate moves
   this survivor shape across three domains, but multi-host failure-domain
   capacity remains untested and is required before another F5 claim.
+- The capacity-aware scheduler model now places the 1,320-stream candidate at
+  40 streams per worker before loss and exact 60-stream, 30-SRT/30-DASH loads
+  on each of 22 survivors afterward. Only the failed domain's 440 assignments
+  move. This does not exercise PostgreSQL lease expiry, worker processes,
+  network partitions, media probes, or separate infrastructure hosts.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

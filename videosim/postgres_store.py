@@ -608,6 +608,28 @@ class PostgresControlPlaneStore:
             for row in rows
         ]
 
+    def active_lease_owners(self) -> dict[str, str]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT leases.stream_id, leases.worker_id
+                FROM leases
+                JOIN workers
+                  ON workers.tenant_id = leases.tenant_id
+                 AND workers.worker_id = leases.worker_id
+                 AND workers.incarnation_id = leases.worker_incarnation_id
+                WHERE leases.tenant_id = %s
+                  AND leases.state IN ('offered', 'active')
+                  AND leases.expires_at > clock_timestamp()
+                  AND workers.state = 'active'
+                  AND workers.last_heartbeat_at > clock_timestamp()
+                      - (%s * interval '1 second')
+                ORDER BY leases.stream_id
+                """,
+                (self.tenant_id, self.worker_freshness_seconds),
+            ).fetchall()
+        return {row["stream_id"]: row["worker_id"] for row in rows}
+
     def heartbeat(self, worker_id: str, incarnation_id: uuid.UUID) -> bool:
         with self._pool.connection() as connection:
             with connection.transaction():

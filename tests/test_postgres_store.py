@@ -250,6 +250,20 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         self.assertEqual(restarted.worker_incarnation_id, second_incarnation)
         self.assertEqual(restarted.state, "offered")
 
+    def test_active_lease_owners_exclude_stale_workers(self):
+        feed_id = f"feed-{uuid.uuid4()}"
+        self.store.upsert(feed(feed_id))
+        worker_id = f"worker-{uuid.uuid4()}"
+        incarnation = uuid.uuid4()
+        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        self.store.reconcile_lease(feed_id, worker_id, incarnation, ttl_seconds=60)
+
+        self.assertEqual(self.store.active_lease_owners()[feed_id], worker_id)
+
+        self.make_worker_stale(worker_id)
+
+        self.assertNotIn(feed_id, self.store.active_lease_owners())
+
     def test_new_epoch_resets_sequence_for_config_incarnation_expiry_and_restore(self):
         feed_id = f"feed-{uuid.uuid4()}"
         version = self.store.upsert(feed(feed_id))

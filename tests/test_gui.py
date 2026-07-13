@@ -305,6 +305,94 @@ class GuiTest(unittest.TestCase):
                 sum(stream.protocol == "dash" for stream in assigned), 73
             )
 
+    def test_preferred_owners_limit_worker_loss_to_required_moves(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Sticky SRT {index}",
+                protocol="srt",
+                source="external",
+                external_url=f"srt://example.test:{12000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(650)
+        ] + [
+            state.create_stream(
+                name=f"Sticky DASH {index}",
+                protocol="dash",
+                source="external",
+                external_url=f"https://example.test/sticky/{index}/manifest.mpd",
+                select=False,
+            )
+            for index in range(650)
+        ]
+        workers = [
+            {
+                "id": f"worker-{index:02d}",
+                "capacity": {
+                    "maxStreams": 145,
+                    "maxSrtStreams": 73,
+                    "maxDashStreams": 73,
+                },
+            }
+            for index in range(10)
+        ]
+        initial, initial_shortfall = capacity_aware_assignments(workers, streams)
+        preferred_owners = {
+            stream.id: worker_id
+            for worker_id, assigned in initial.items()
+            for stream in assigned
+        }
+        failed_stream_ids = {stream.id for stream in initial["worker-00"]}
+        workers[0]["capacity"]["pressure"] = {"spoolBlocked": True}
+
+        reassigned, shortfall = capacity_aware_assignments(
+            workers, streams, preferred_owners=preferred_owners
+        )
+        new_owners = {
+            stream.id: worker_id
+            for worker_id, assigned in reassigned.items()
+            for stream in assigned
+        }
+
+        self.assertEqual(initial_shortfall, 0)
+        self.assertEqual(shortfall, 0)
+        self.assertEqual(reassigned["worker-00"], [])
+        self.assertEqual(sum(map(len, reassigned.values())), 1300)
+        self.assertEqual(
+            {
+                stream_id
+                for stream_id, owner in preferred_owners.items()
+                if new_owners[stream_id] != owner
+            },
+            failed_stream_ids,
+        )
+
+    def test_preferred_owners_move_only_one_stream_for_worker_join(self):
+        state = GuiState()
+        streams = [
+            state.create_stream(
+                name=f"Join stream {index}",
+                source="external",
+                external_url=f"srt://example.test:{14000 + index}?mode=caller",
+                select=False,
+            )
+            for index in range(2)
+        ]
+        initial, _ = capacity_aware_assignments([{"id": "worker-a"}], streams)
+
+        reassigned, shortfall = capacity_aware_assignments(
+            [{"id": "worker-a"}, {"id": "worker-b"}],
+            streams,
+            preferred_owners={stream.id: "worker-a" for stream in initial["worker-a"]},
+        )
+
+        self.assertEqual(shortfall, 0)
+        self.assertEqual(
+            [len(reassigned[worker]) for worker in ("worker-a", "worker-b")],
+            [1, 1],
+        )
+
     def create_feed(self, state: GuiState, name: str = "Primary feed"):
         return state.create_stream(
             name=name,

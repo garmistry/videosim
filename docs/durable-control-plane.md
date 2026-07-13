@@ -123,9 +123,11 @@ When `VIDEOSIM_DATABASE_URL` selects PostgreSQL, worker endpoints require v2:
    heartbeat, acknowledgement, and report calls. A different incarnation cannot
    take over the same worker ID while the current one is heartbeat-fresh; crash
    replacement waits for freshness expiry, preventing old-process ABA revival.
-2. Assignment reads use DB-fresh worker membership and deterministic
-   round-robin placement. The scheduler revokes dropped leases and returns each
-   stream's offered/active epoch, config version, and expiry.
+2. Assignment reads use DB-fresh worker membership and deterministic balanced
+   placement. Fresh offered/active lease owners are retained up to each
+   worker's current total/protocol target; loss moves unavailable ownership,
+   while joins and capacity changes still rebalance. The scheduler revokes
+   dropped leases and returns each stream's epoch, config version, and expiry.
 3. The worker acknowledges the exact lease tuple before probing. Authenticated
    independent heartbeats extend only active leases for the same incarnation.
 4. Each lease tuple maintains its own positive sequence, resetting to one when

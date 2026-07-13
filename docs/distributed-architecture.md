@@ -87,9 +87,10 @@ VideoSim should split into a master control plane and many worker nodes:
   current spool, completed-batch CPU, worker/child peak RSS, and Linux
   post-batch descriptor fields without adding unbounded metric labels.
 - Durable assignment excludes workers reporting `spoolBlocked=true`. Healthy
-  workers can receive higher-epoch replacement leases, while insufficient or
-  all-blocked capacity produces explicit shortfall instead of new authority on
-  a worker that cannot deliver results.
+  fresh lease owners are retained up to the current balanced total/protocol
+  target, so worker loss moves only unavailable ownership while worker joins
+  still rebalance. Insufficient or all-blocked capacity produces explicit
+  shortfall instead of new authority on a worker that cannot deliver results.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process
   assignment/report invariants and optional worker removal. It requires complete

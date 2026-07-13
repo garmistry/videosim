@@ -2166,7 +2166,9 @@ def worker_assignments_payload(
                 key=lambda item: item.id,
             )
             assignments, capacity_shortfall = capacity_aware_assignments(
-                worker_records, running_streams
+                worker_records,
+                running_streams,
+                preferred_owners=store.active_lease_owners(),
             )
             assigned_streams = assignments[worker_id]
             store.revoke_unassigned_leases(
@@ -2222,7 +2224,9 @@ def control_plane_stream_payload(stream: FeedRecord, base_url: str, worker_id: s
 
 
 def capacity_aware_assignments(
-    worker_records: list[dict], streams: list[FeedRecord]
+    worker_records: list[dict],
+    streams: list[FeedRecord],
+    preferred_owners: dict[str, str] | None = None,
 ) -> tuple[dict[str, list[FeedRecord]], int]:
     """Assign streams without exceeding advertised durable-worker capacity."""
     workers = sorted(worker_records, key=lambda item: item["id"])
@@ -2242,36 +2246,85 @@ def capacity_aware_assignments(
     ]
     if not schedulable_workers:
         return assignments, len(streams)
+    schedulable_ids = {worker["id"] for worker in schedulable_workers}
+    protocol_counts = {
+        worker["id"]: {protocol: 0 for protocol in PROTOCOL_CAPACITY_FIELDS}
+        for worker in workers
+    }
+    preferred_owners = preferred_owners or {}
+    preservation_targets = None
+    preservation_protocol_targets = None
+    if preferred_owners:
+        target_assignments, _ = capacity_aware_assignments(worker_records, streams)
+        preservation_targets = {
+            worker_id: len(assigned)
+            for worker_id, assigned in target_assignments.items()
+        }
+        preservation_protocol_targets = {
+            worker_id: {
+                protocol: sum(stream.protocol == protocol for stream in assigned)
+                for protocol in PROTOCOL_CAPACITY_FIELDS
+            }
+            for worker_id, assigned in target_assignments.items()
+        }
+
+    def has_capacity(worker_id: str, stream: FeedRecord) -> bool:
+        capacity = capacities[worker_id]
+        if len(assignments[worker_id]) >= capacity.get("maxStreams", math.inf):
+            return False
+        protocol_field = PROTOCOL_CAPACITY_FIELDS.get(stream.protocol)
+        return not protocol_field or protocol_counts[worker_id][
+            stream.protocol
+        ] < capacity.get(protocol_field, math.inf)
+
+    def assign(worker_id: str, stream: FeedRecord) -> None:
+        assignments[worker_id].append(stream)
+        if stream.protocol in PROTOCOL_CAPACITY_FIELDS:
+            protocol_counts[worker_id][stream.protocol] += 1
+
+    def can_preserve(worker_id: str, stream: FeedRecord) -> bool:
+        if not has_capacity(worker_id, stream):
+            return False
+        if len(assignments[worker_id]) >= preservation_targets[worker_id]:
+            return False
+        return (
+            stream.protocol not in PROTOCOL_CAPACITY_FIELDS
+            or protocol_counts[worker_id][stream.protocol]
+            < preservation_protocol_targets[worker_id][stream.protocol]
+        )
+
+    remaining_streams = []
+    for stream in streams:
+        preferred_worker_id = preferred_owners.get(stream.id)
+        if (
+            preferred_worker_id in schedulable_ids
+            and can_preserve(preferred_worker_id, stream)
+        ):
+            assign(preferred_worker_id, stream)
+        else:
+            remaining_streams.append(stream)
+
     admission_fields = ("maxStreams", *PROTOCOL_CAPACITY_FIELDS.values())
     if not any(
         field in capacity
         for capacity in capacities.values()
         for field in admission_fields
     ):
-        for index, stream in enumerate(streams):
-            assignments[
-                schedulable_workers[index % len(schedulable_workers)]["id"]
-            ].append(stream)
+        for stream in remaining_streams:
+            worker_id = min(
+                schedulable_ids,
+                key=lambda item: (len(assignments[item]), item),
+            )
+            assign(worker_id, stream)
         return assignments, 0
 
-    protocol_counts = {
-        worker["id"]: {protocol: 0 for protocol in PROTOCOL_CAPACITY_FIELDS}
-        for worker in workers
-    }
     unassigned = 0
-    for stream in streams:
+    for stream in remaining_streams:
         protocol_field = PROTOCOL_CAPACITY_FIELDS.get(stream.protocol)
         eligible = []
         for worker in schedulable_workers:
             worker_id = worker["id"]
-            capacity = capacities[worker_id]
-            if len(assignments[worker_id]) >= capacity.get("maxStreams", math.inf):
-                continue
-            if (
-                protocol_field
-                and protocol_counts[worker_id][stream.protocol]
-                >= capacity.get(protocol_field, math.inf)
-            ):
+            if not has_capacity(worker_id, stream):
                 continue
             eligible.append(worker)
         if not eligible:
@@ -2301,9 +2354,7 @@ def capacity_aware_assignments(
             eligible,
             key=load,
         )
-        assignments[selected["id"]].append(stream)
-        if stream.protocol in PROTOCOL_CAPACITY_FIELDS:
-            protocol_counts[selected["id"]][stream.protocol] += 1
+        assign(selected["id"], stream)
     return assignments, unassigned
 
 

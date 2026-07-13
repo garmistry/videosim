@@ -19,11 +19,13 @@ class WorkerBenchmarkTest(unittest.TestCase):
                         {
                             "id": "stream-1",
                             "protocol": "srt",
+                            "fixtureBehavior": "slow",
                             "status": "running" if running else "stopped",
                         },
                         {
                             "id": "stream-2",
                             "protocol": "dash",
+                            "fixtureBehavior": "healthy",
                             "status": "running" if running else "stopped",
                         },
                     ]
@@ -115,6 +117,23 @@ class WorkerBenchmarkTest(unittest.TestCase):
             payload["results"]["validationOutcomesByProtocol"],
             {"dash": {"success": 1}, "srt": {"timeout": 1}},
         )
+        self.assertEqual(
+            payload["results"]["validationByFixtureBehavior"],
+            {
+                "healthy": {
+                    "streamCount": 1,
+                    "validationAttemptedStreams": 1,
+                    "validationCoveragePercent": 100.0,
+                    "outcomes": {"success": 1},
+                },
+                "slow": {
+                    "streamCount": 1,
+                    "validationAttemptedStreams": 1,
+                    "validationCoveragePercent": 100.0,
+                    "outcomes": {"timeout": 1},
+                },
+            },
+        )
 
     def test_full_validation_coverage_gate_tracks_rotation_across_cycles(self):
         cycle = 0
@@ -186,6 +205,17 @@ class WorkerBenchmarkTest(unittest.TestCase):
         self.assertEqual(
             report.validation_outcomes_by_protocol,
             {"unknown": {"skipped": 8, "success": 8}},
+        )
+        self.assertEqual(
+            report.validation_by_fixture_behavior,
+            {
+                "unknown": {
+                    "streamCount": 4,
+                    "validationAttemptedStreams": 4,
+                    "validationCoveragePercent": 100.0,
+                    "outcomes": {"skipped": 8, "success": 8},
+                }
+            },
         )
         self.assertFalse(replace(report, validation_attempted_streams=3).passed)
         self.assertFalse(replace(report, minimum_validation_attempts=1).passed)

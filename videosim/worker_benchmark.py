@@ -13,6 +13,7 @@ from typing import Callable
 
 from .control_plane import MAX_REPORT_STREAMS
 from .distributed_benchmark import percentile
+from .fixture_fleet import BEHAVIORS
 from .monitor import empty_monitor_state, run_monitor_once
 from .worker import worker_resource_pressure, worker_resource_snapshot
 
@@ -30,6 +31,7 @@ class WorkerBenchmarkReport:
     check_counts: tuple[int, ...]
     outcomes: dict[str, int]
     validation_outcomes_by_protocol: dict[str, dict[str, int]]
+    validation_by_fixture_behavior: dict[str, dict]
     require_full_validation_coverage: bool
     max_validation_gap_cycles: int
     max_validation_gap_seconds: float
@@ -112,6 +114,7 @@ class WorkerBenchmarkReport:
                         self.validation_outcomes_by_protocol.items()
                     )
                 },
+                "validationByFixtureBehavior": self.validation_by_fixture_behavior,
                 "validationAttemptedStreams": self.validation_attempted_streams,
                 "validationCoveragePercent": self.validation_coverage_percent,
                 "cyclesToFullValidationCoverage": self.cycles_to_full_validation_coverage,
@@ -226,12 +229,22 @@ def run_worker_benchmark(
         for stream in scenario["streams"]
         if stream.get("status") == "running"
     }
+    fixture_behavior_by_stream_id = {
+        stream["id"]: (
+            stream["fixtureBehavior"]
+            if stream.get("fixtureBehavior") in BEHAVIORS
+            else "unknown"
+        )
+        for stream in scenario["streams"]
+        if stream.get("status") == "running"
+    }
     durations = []
     cpu = []
     stream_counts = []
     check_counts = []
     outcomes: dict[str, int] = {}
     validation_outcomes_by_protocol: dict[str, dict[str, int]] = {}
+    validation_outcomes_by_fixture_behavior: dict[str, dict[str, int]] = {}
     process_peak = 0
     child_peak = 0
     open_fds = None
@@ -290,6 +303,10 @@ def run_worker_benchmark(
                 protocol_by_stream_id[stream_id], {}
             )
             protocol_outcomes[outcome] = protocol_outcomes.get(outcome, 0) + 1
+            behavior_outcomes = validation_outcomes_by_fixture_behavior.setdefault(
+                fixture_behavior_by_stream_id[stream_id], {}
+            )
+            behavior_outcomes[outcome] = behavior_outcomes.get(outcome, 0) + 1
             if outcome != "skipped":
                 attempted_this_cycle.add(stream_id)
         measured_cycle = cycle - warmup_iterations + 1
@@ -345,6 +362,22 @@ def run_worker_benchmark(
             maximum_validation_gap_seconds_upper_bound or 0,
             trailing_seconds_upper_bound,
         )
+    validation_by_fixture_behavior = {}
+    for behavior in sorted(set(fixture_behavior_by_stream_id.values())):
+        stream_ids = {
+            stream_id
+            for stream_id, value in fixture_behavior_by_stream_id.items()
+            if value == behavior
+        }
+        attempted = len(stream_ids & validation_attempted_stream_ids)
+        validation_by_fixture_behavior[behavior] = {
+            "streamCount": len(stream_ids),
+            "validationAttemptedStreams": attempted,
+            "validationCoveragePercent": round(attempted * 100 / len(stream_ids), 3),
+            "outcomes": dict(
+                sorted(validation_outcomes_by_fixture_behavior.get(behavior, {}).items())
+            ),
+        }
     return WorkerBenchmarkReport(
         scenario=str(scenario_path),
         scenario_sha256=scenario_sha256,
@@ -357,6 +390,7 @@ def run_worker_benchmark(
         check_counts=tuple(check_counts),
         outcomes=outcomes,
         validation_outcomes_by_protocol=validation_outcomes_by_protocol,
+        validation_by_fixture_behavior=validation_by_fixture_behavior,
         require_full_validation_coverage=require_full_validation_coverage,
         max_validation_gap_cycles=max_validation_gap_cycles,
         max_validation_gap_seconds=max_validation_gap_seconds,
@@ -386,6 +420,7 @@ def human_summary(report: WorkerBenchmarkReport) -> str:
             f"Validation minimum attempts/max gap: {report.minimum_validation_attempts}/{report.maximum_validation_gap_cycles} cycles",
             f"Validation wall-time gap upper bound: {rounded(report.maximum_validation_gap_seconds_upper_bound)} seconds",
             f"Validation outcomes by protocol: {json.dumps(report.validation_outcomes_by_protocol, sort_keys=True)}",
+            f"Validation by fixture behavior: {json.dumps(report.validation_by_fixture_behavior, sort_keys=True)}",
             f"Cycle p50/p95/p99: {duration['p50']}/{duration['p95']}/{duration['p99']} ms",
             f"CPU p50/p95/p99: {cpu['p50']}/{cpu['p95']}/{cpu['p99']} ms",
         ]

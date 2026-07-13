@@ -454,6 +454,9 @@ from representative SRT/DASH measurements.
 Use `--max-concurrent-checks N` to bound simultaneous stream checks. This is a
 local execution bound; combine it with the batch budget below to bound queued
 probe starts. It is not a deadline or capacity certification.
+Use `--max-concurrent-deep-checks N` to cap concurrent TR-101, frame-rate, and
+loudness streams independently. Zero inherits `--max-concurrent-checks`; choose
+both limits from measured validation/deep-check resource use.
 Use `--stream-budget-seconds N` to classify an over-budget stream as timed out
 and defer its remaining checks. Built-in GStreamer, FFmpeg, FFprobe, and DASH
 polling waits use the remaining budget; this is not cost-tier fairness,
@@ -467,8 +470,8 @@ probe metric and no health observation, preserving existing deep-check alarms.
 Zero keeps the existing every-cycle deep checks. Select the interval from
 measured freshness and worker-capacity evidence; this control is deterministic
 load shedding, not dynamic backpressure or capacity certification.
-Use `--batch-budget-seconds N` to submit at most one
-`--max-concurrent-checks`-sized validation window at a time. Once a completed
+Use `--batch-budget-seconds N` to submit at most one validation or deep window
+at a time, using each phase's configured concurrency. Once a completed
 window exhausts the aggregate cycle budget, no more validation probes start:
 the remaining streams emit inconclusive `validation=skipped` observations,
 retain prior alarms, rotate to the front of the next cycle, and the whole deep

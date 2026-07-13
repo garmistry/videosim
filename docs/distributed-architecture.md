@@ -68,9 +68,10 @@ VideoSim should split into a master control plane and many worker nodes:
   alarms remain active on inconclusive timeout/error observations. The same
   budget caps built-in GStreamer, FFmpeg, FFprobe, and DASH polling/socket waits.
 - Concurrent workers use one bounded two-phase pool and submit at most one
-  concurrency-sized window at a time. Admitted validation finishes before
-  TR-101, frame-rate, or loudness checks start; validation results and original
-  per-stream deadlines carry into the deep-check phase.
+  phase-specific concurrency window at a time. `--max-concurrent-deep-checks`
+  can cap TR-101/frame-rate/loudness streams below validation concurrency.
+  Admitted validation finishes first; its results and original per-stream
+  deadlines carry into the deep-check phase.
 - `--batch-budget-seconds` stops new validation windows after a completed window
   exhausts the aggregate cycle budget. Deferred validation is inconclusive,
   preserves alarms, and rotates to the front of the next worker cycle; the deep
@@ -128,9 +129,11 @@ VideoSim should split into a master control plane and many worker nodes:
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
   HTTP preemption, weighted check-cost/tenant tokens, fleet pressure/recovery
   telemetry, spool key rotation/repair, and durable fleet-queue backpressure
-  remain open. Workers bound local probe submissions to one concurrency window,
-  rotate validation deferred by aggregate budget pressure, shed the deep phase,
-  and stagger deep retries at stable per-stream offsets. Graceful workers finish
+  remain open. Workers bound local probe submissions to one phase-specific
+  concurrency window, rotate validation deferred by aggregate budget pressure,
+  shed the deep phase, and stagger deep retries at stable per-stream offsets.
+  The separate validation/deep tokens share one executor and are not measured
+  weighted cost. Graceful workers finish
   the current report, stop
   heartbeats, and transition their fenced incarnation/leases to `draining` for
   immediate higher-epoch reassignment; hard kills still rely on lease expiry.

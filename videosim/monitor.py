@@ -582,6 +582,7 @@ def _run_monitor_concurrent(
     history_limit: int,
     srt_host: str,
     max_concurrency: int,
+    max_deep_concurrency: int,
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
     batch_budget_seconds: float,
@@ -638,7 +639,9 @@ def _run_monitor_concurrent(
 
     # ponytail: concurrency-sized windows bound queued probe work; add a durable
     # queue only when multi-process workers require it.
-    with ThreadPoolExecutor(max_workers=min(max_concurrency, len(streams))) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(max(max_concurrency, max_deep_concurrency), len(streams))
+    ) as pool:
         for offset in range(0, len(validation_order), max_concurrency):
             if (
                 offset
@@ -693,8 +696,8 @@ def _run_monitor_concurrent(
             else ""
         )
         deep_results = []
-        for offset in range(0, len(streams), max_concurrency):
-            batch = streams[offset : offset + max_concurrency]
+        for offset in range(0, len(streams), max_deep_concurrency):
+            batch = streams[offset : offset + max_deep_concurrency]
             deep_results.extend(
                 pool.map(
                     lambda stream: monitor_stream(
@@ -734,6 +737,7 @@ def run_monitor_once(
     monotonic: Callable[[], float] = time.monotonic,
     *,
     max_concurrency: int = 1,
+    max_deep_concurrency: int = 0,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
     batch_budget_seconds: float = 0,
@@ -744,13 +748,16 @@ def run_monitor_once(
 ) -> dict:
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
+    if max_deep_concurrency < 0:
+        raise ValueError("max_deep_concurrency must be zero or greater")
+    max_deep_concurrency = max_deep_concurrency or max_concurrency
     if stream_budget_seconds < 0:
         raise ValueError("stream_budget_seconds must be zero or greater")
     if not math.isfinite(deep_check_interval_seconds) or deep_check_interval_seconds < 0:
         raise ValueError("deep_check_interval_seconds must be zero or greater")
     if not math.isfinite(batch_budget_seconds) or batch_budget_seconds < 0:
         raise ValueError("batch_budget_seconds must be zero or greater")
-    if (max_concurrency > 1 or batch_budget_seconds) and any(
+    if (max(max_concurrency, max_deep_concurrency) > 1 or batch_budget_seconds) and any(
         stream.get("status") == "running" for stream in gui_state.get("streams", [])
     ):
         return _run_monitor_concurrent(
@@ -761,6 +768,7 @@ def run_monitor_once(
             history_limit,
             srt_host,
             max_concurrency,
+            max_deep_concurrency,
             stream_budget_seconds,
             deep_check_interval_seconds,
             batch_budget_seconds,

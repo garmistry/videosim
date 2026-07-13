@@ -95,7 +95,9 @@
   or a durable fleet queue.
   `--max-srt-streams` and `--max-dash-streams` add static protocol admission
   caps, but they are operator counts rather than measured weighted check costs
-  and do not provide tenant fairness or separate runtime pools.
+  and do not provide tenant fairness. `--max-concurrent-deep-checks` adds a
+  separate deep-phase concurrency token, but both phases share one executor and
+  the limits remain operator settings rather than measured cost admission.
   `--stream-budget-seconds` defers remaining checks after budget exhaustion but
   now caps built-in media subprocess and DASH polling/socket waits. Arbitrary
   injected checker code and a trickling HTTP response are not preempted.

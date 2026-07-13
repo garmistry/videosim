@@ -285,6 +285,57 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(result["probeMetrics"]["streamCount"], 3)
         self.assertEqual(result["probeMetrics"]["checkCount"], 12)
 
+    def test_deep_phase_has_an_independent_concurrency_limit(self):
+        validation_barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        active = {"validation": 0, "deep": 0}
+        peak = {"validation": 0, "deep": 0}
+
+        def enter(phase):
+            with lock:
+                active[phase] += 1
+                peak[phase] = max(peak[phase], active[phase])
+
+        def leave(phase):
+            with lock:
+                active[phase] -= 1
+
+        def validator(config):
+            enter("validation")
+            validation_barrier.wait(timeout=2)
+            time.sleep(0.005)
+            leave("validation")
+            return ValidationReport(endpoint=config.endpoint, reachable=True)
+
+        def deep_checker(*_args):
+            enter("deep")
+            time.sleep(0.005)
+            leave("deep")
+            return []
+
+        streams = [
+            stream()
+            | {
+                "id": f"stream-{index}",
+                "endpoint": f"srt://127.0.0.1:{9000 + index}?mode=caller",
+            }
+            for index in range(4)
+        ]
+        run_monitor_once(
+            {"streams": streams},
+            empty_monitor_state(),
+            now=100,
+            repeat_seconds=5,
+            history_limit=20,
+            srt_host="app",
+            validator=validator,
+            tr101_checker=deep_checker,
+            max_concurrency=2,
+            max_deep_concurrency=1,
+        )
+
+        self.assertEqual(peak, {"validation": 2, "deep": 1})
+
     def test_batch_budget_defers_deep_checks_without_clearing_alarms(self):
         streams = [
             stream()
@@ -409,8 +460,8 @@ class MonitorTest(unittest.TestCase):
         first, first_ports = monitor(state)
         second, second_ports = monitor(first)
 
-        self.assertEqual(first_ports, [9001, 9002])
-        self.assertEqual(second_ports, [9003, 9004])
+        self.assertEqual(set(first_ports), {9001, 9002})
+        self.assertEqual(set(second_ports), {9003, 9004})
         self.assertEqual(first["validationCursor"], 2)
         self.assertEqual(second["validationCursor"], 0)
         self.assertEqual(first["probeMetrics"]["outcomes"], {"success": 2, "skipped": 6})
@@ -504,6 +555,17 @@ class MonitorTest(unittest.TestCase):
                 history_limit=20,
                 srt_host="app",
                 deep_check_interval_seconds=-1,
+            )
+
+        with self.assertRaisesRegex(ValueError, "max_deep_concurrency"):
+            run_monitor_once(
+                {"streams": []},
+                empty_monitor_state(),
+                now=100,
+                repeat_seconds=5,
+                history_limit=20,
+                srt_host="app",
+                max_deep_concurrency=-1,
             )
 
     def test_batch_budget_rejects_non_finite_values(self):

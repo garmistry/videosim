@@ -2304,6 +2304,7 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
         "maxSrtStreams",
         "maxDashStreams",
         "maxConcurrentChecks",
+        "maxConcurrentDeepChecks",
     ):
         value = capacity.get(field)
         if value is not None and (

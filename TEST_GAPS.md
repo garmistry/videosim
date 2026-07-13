@@ -75,11 +75,13 @@ implementation and must pass before those milestones advance.
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker
   admission can now enforce operator-set total/SRT/DASH counts. Execution bounds
-  submissions to one concurrency-sized window, rotates validation deferred by
-  the aggregate budget, and hard-bounds built-in media subprocess/poll waits.
-  Arbitrary-checker and trickle-resistant HTTP cancellation, weighted check-cost
-  and tenant fairness, durable fleet queue backpressure, measured media
-  capacity, and 1,000-stream failure/soak evidence remain open.
+  submissions to one phase-specific concurrency window, rotates validation
+  deferred by the aggregate budget, and hard-bounds built-in media
+  subprocess/poll waits. Validation/deep tokens are operator settings on one
+  executor, not measured weighted-cost pools. Arbitrary-checker and
+  trickle-resistant HTTP cancellation, tenant fairness, durable fleet queue
+  backpressure, measured media capacity, and 1,000-stream failure/soak evidence
+  remain open.
 - Concurrent workers complete admitted validation windows before starting
   TR-101/frame-rate/loudness work, with deterministic phase-order coverage. A
   configured cadence staggers deep work; aggregate budget exhaustion stops new

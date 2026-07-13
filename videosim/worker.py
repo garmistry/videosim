@@ -82,6 +82,7 @@ def post_heartbeat(
     max_srt_streams: int = 0,
     max_dash_streams: int = 0,
     max_concurrent_checks: int = 0,
+    max_concurrent_deep_checks: int = 0,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
     batch_budget_seconds: float = 0,
@@ -104,6 +105,8 @@ def post_heartbeat(
         capacity["maxDashStreams"] = max_dash_streams
     if max_concurrent_checks:
         capacity["maxConcurrentChecks"] = max_concurrent_checks
+    if max_concurrent_deep_checks:
+        capacity["maxConcurrentDeepChecks"] = max_concurrent_deep_checks
     if stream_budget_seconds:
         capacity["streamBudgetSeconds"] = stream_budget_seconds
     if deep_check_interval_seconds:
@@ -158,6 +161,7 @@ def _heartbeat_loop(
     max_srt_streams: int,
     max_dash_streams: int,
     max_concurrent_checks: int,
+    max_concurrent_deep_checks: int,
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
     batch_budget_seconds: float,
@@ -169,6 +173,7 @@ def _heartbeat_loop(
                 or max_srt_streams
                 or max_dash_streams
                 or max_concurrent_checks
+                or max_concurrent_deep_checks
                 or stream_budget_seconds
                 or deep_check_interval_seconds
                 or batch_budget_seconds
@@ -182,6 +187,7 @@ def _heartbeat_loop(
                     max_srt_streams,
                     max_dash_streams,
                     max_concurrent_checks,
+                    max_concurrent_deep_checks,
                     stream_budget_seconds,
                     deep_check_interval_seconds,
                     batch_budget_seconds,
@@ -429,6 +435,7 @@ def run_worker(
     max_srt_streams: int = 0,
     max_dash_streams: int = 0,
     max_concurrent_checks: int = 1,
+    max_concurrent_deep_checks: int = 0,
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
     batch_budget_seconds: float = 0,
@@ -447,6 +454,8 @@ def run_worker(
         raise ValueError("max_dash_streams must be zero or greater")
     if max_concurrent_checks < 1:
         raise ValueError("max_concurrent_checks must be at least 1")
+    if max_concurrent_deep_checks < 0:
+        raise ValueError("max_concurrent_deep_checks must be zero or greater")
     if stream_budget_seconds < 0:
         raise ValueError("stream_budget_seconds must be zero or greater")
     if not math.isfinite(deep_check_interval_seconds) or deep_check_interval_seconds < 0:
@@ -526,6 +535,7 @@ def run_worker(
             max_srt_streams,
             max_dash_streams,
             max_concurrent_checks if max_concurrent_checks > 1 else 0,
+            max_concurrent_deep_checks,
             stream_budget_seconds,
             deep_check_interval_seconds,
             batch_budget_seconds,
@@ -560,6 +570,7 @@ def run_worker(
             or max_srt_streams
             or max_dash_streams
             or max_concurrent_checks > 1
+            or max_concurrent_deep_checks
             or stream_budget_seconds
             or deep_check_interval_seconds
             or batch_budget_seconds
@@ -574,6 +585,7 @@ def run_worker(
                     max_srt_streams,
                     max_dash_streams,
                     max_concurrent_checks if max_concurrent_checks > 1 else 0,
+                    max_concurrent_deep_checks,
                     stream_budget_seconds,
                     deep_check_interval_seconds,
                     batch_budget_seconds,
@@ -652,6 +664,10 @@ def run_worker(
             monitor_kwargs = {}
             if max_concurrent_checks > 1:
                 monitor_kwargs["max_concurrency"] = max_concurrent_checks
+            if max_concurrent_deep_checks:
+                monitor_kwargs["max_deep_concurrency"] = (
+                    max_concurrent_deep_checks
+                )
             if stream_budget_seconds:
                 monitor_kwargs["stream_budget_seconds"] = stream_budget_seconds
             if deep_check_interval_seconds:

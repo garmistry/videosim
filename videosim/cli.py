@@ -147,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="bounded per-worker stream probe concurrency",
     )
     worker.add_argument(
+        "--max-concurrent-deep-checks",
+        type=int,
+        default=0,
+        help="deep-phase stream concurrency; zero inherits --max-concurrent-checks",
+    )
+    worker.add_argument(
         "--stream-budget-seconds",
         type=float,
         default=0,
@@ -457,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("max_dash_streams must be zero or greater")
             if args.max_concurrent_checks < 1:
                 raise ValueError("max_concurrent_checks must be at least 1")
+            if args.max_concurrent_deep_checks < 0:
+                raise ValueError("max_concurrent_deep_checks must be zero or greater")
             if args.stream_budget_seconds < 0:
                 raise ValueError("stream_budget_seconds must be zero or greater")
             if args.deep_check_interval_seconds < 0:
@@ -486,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
                 or args.max_srt_streams
                 or args.max_dash_streams
                 or args.max_concurrent_checks > 1
+                or args.max_concurrent_deep_checks
                 or args.stream_budget_seconds
                 or args.deep_check_interval_seconds
                 or args.batch_budget_seconds
@@ -507,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_srt_streams=args.max_srt_streams,
                     max_dash_streams=args.max_dash_streams,
                     max_concurrent_checks=args.max_concurrent_checks,
+                    max_concurrent_deep_checks=args.max_concurrent_deep_checks,
                     stream_budget_seconds=args.stream_budget_seconds,
                     deep_check_interval_seconds=args.deep_check_interval_seconds,
                     batch_budget_seconds=args.batch_budget_seconds,

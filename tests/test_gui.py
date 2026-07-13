@@ -40,6 +40,7 @@ class GuiTest(unittest.TestCase):
     def test_worker_capacity_rejects_invalid_probe_controls(self):
         for capacity in (
             {"maxConcurrentChecks": 0},
+            {"maxConcurrentDeepChecks": 0},
             {"streamBudgetSeconds": float("inf")},
             {"deepCheckIntervalSeconds": "60"},
             {"batchBudgetSeconds": 0},

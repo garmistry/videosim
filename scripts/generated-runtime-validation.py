@@ -246,6 +246,35 @@ class GeneratedRuntimeValidation:
 
             self.post_form(
                 self.api_b,
+                "/streams/create",
+                {
+                    "name": "Generated allocation peer",
+                    "source": "generated",
+                    "protocol": "srt",
+                    "mode": "normal",
+                    "framerate": "10",
+                },
+            )
+            allocated = self.get_json(
+                self.api_a, "/api/operator/feeds?limit=100"
+            )["feeds"]
+            endpoints = {
+                item["endpoint"]
+                for item in allocated
+                if item["name"]
+                in {"Generated runtime validation", "Generated allocation peer"}
+            }
+            expected_endpoints = {
+                f"srt://generated-feed-runtime:{self.feed_port}?mode=caller",
+                f"srt://generated-feed-runtime:{self.feed_port + 1}?mode=caller",
+            }
+            if endpoints != expected_endpoints:
+                raise RuntimeError(f"replicas allocated unexpected endpoints: {endpoints}")
+            result["allocatedEndpoints"] = sorted(endpoints)
+            result["checks"].append("replica_port_allocation_unique")
+
+            self.post_form(
+                self.api_b,
                 "/start",
                 {
                     "stream_id": feed_id,
@@ -271,6 +300,21 @@ class GeneratedRuntimeValidation:
                 and "started" in self.runtime_log(),
             )
             result["checks"].append("remote_start_reconciled")
+            observed = self.wait_for(
+                "runtime owner observation",
+                lambda: (
+                    candidate
+                    if (
+                        candidate := self.detail(self.api_a, feed_id)["streams"][0]
+                    ).get("runtimeKnown")
+                    else None
+                ),
+            )
+            if observed["runtime"]["ownerId"] != "generated-validation-runtime":
+                raise RuntimeError("API reported the wrong generated runtime owner")
+            first_session = observed["runtime"]["sessionStartedAt"]
+            result["runtimeObservationBeforeRestart"] = observed["runtime"]
+            result["checks"].append("runtime_owner_observed")
             time.sleep(4)
             result["validation"] = self.validate_media(
                 "validation-before-restart.txt", expect_pass=True
@@ -282,6 +326,13 @@ class GeneratedRuntimeValidation:
             )
             restart_started = time.monotonic()
             self.compose("kill", "generated-feed-runtime", timeout=30)
+            self.wait_for(
+                "runtime ownership release",
+                lambda: self.detail(self.api_b, feed_id)["streams"][0].get(
+                    "runtimeKnown"
+                )
+                is False,
+            )
             self.compose("rm", "-f", "generated-feed-runtime", timeout=30)
             self.compose("up", "-d", "--no-build", "generated-feed-runtime")
             self.wait_for(
@@ -289,6 +340,23 @@ class GeneratedRuntimeValidation:
                 lambda: feed_id in self.runtime_log()
                 and "started" in self.runtime_log(),
             )
+            recovered = self.wait_for(
+                "recovered runtime owner observation",
+                lambda: (
+                    candidate
+                    if (
+                        candidate := self.detail(self.api_b, feed_id)["streams"][0]
+                    ).get("runtimeKnown")
+                    else None
+                ),
+            )
+            if (
+                recovered["runtime"]["ownerId"] != "generated-validation-runtime"
+                or recovered["runtime"]["sessionStartedAt"] == first_session
+            ):
+                raise RuntimeError("API did not report a new recovered runtime session")
+            result["runtimeObservationAfterRestart"] = recovered["runtime"]
+            result["checks"].append("runtime_owner_recovered")
             result["runtimeRecoverySeconds"] = round(
                 time.monotonic() - restart_started, 3
             )
@@ -317,6 +385,8 @@ class GeneratedRuntimeValidation:
                 lambda: feed_id in self.runtime_log()
                 and "stopped" in self.runtime_log(),
             )
+            if self.detail(self.api_b, feed_id)["streams"][0]["runtimeKnown"]:
+                raise RuntimeError("stopped feed retained runtime ownership")
             self.validate_media("validation-after-stop.txt", expect_pass=False)
             result["checks"].append("remote_stop_unreachable")
             result["passed"] = True

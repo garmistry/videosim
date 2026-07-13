@@ -41,8 +41,11 @@ class GeneratedRuntimeStartupIntegrationTest(unittest.TestCase):
                 [
                     "two_apis_ready",
                     "replica_create_visible",
+                    "replica_port_allocation_unique",
                     "remote_start_reconciled",
+                    "runtime_owner_observed",
                     "media_validated_before_restart",
+                    "runtime_owner_recovered",
                     "media_validated_after_restart",
                     "remote_stop_unreachable",
                 ],

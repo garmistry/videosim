@@ -95,8 +95,10 @@ implementation and must pass before those milestones advance.
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;
   the durable scheduler now limits the equivalent modeled loss to the 130
-  required moves while preserving scale-out rebalance. Lease-TTL expiry,
-  partitions, and real failure-domain recovery remain open.
+  required moves while preserving scale-out rebalance. A one-second DB-time
+  HTTP test covers survivor heartbeat renewal, failed worker/lease expiry,
+  higher-epoch reassignment, and stale-report rejection. Production 60-second
+  recovery timing, partitions, and real failure-domain recovery remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

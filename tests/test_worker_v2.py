@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 import unittest
 import uuid
@@ -1309,6 +1310,82 @@ class DurableWorkerV2ApiIntegrationTest(unittest.TestCase):
         )
         self.assertGreater(new_epoch, old_epoch)
         self.assertTrue(survivor["ok"])
+
+    def test_hard_kill_reassigns_only_after_database_ttl_expiry(self):
+        self.state.create_stream(
+            name="Worker v2 TTL survivor feed",
+            source="external",
+            external_url="srt://example.test:9003?mode=caller",
+        )
+        failed_worker = "worker-v2-ttl-failed"
+        survivor_worker = "worker-v2-ttl-survivor"
+        failed_incarnation = uuid.uuid4()
+        survivor_incarnation = uuid.uuid4()
+        self.store.worker_freshness_seconds = 1
+
+        with patch("videosim.gui.WORKER_TTL_SECONDS", 1):
+            failed_before = self.assignment(
+                failed_worker, failed_incarnation, expected_count=2
+            )
+            self.acknowledge(failed_worker, failed_incarnation, failed_before)
+            survivor_before = self.assignment(
+                survivor_worker, survivor_incarnation
+            )
+            self.acknowledge(
+                survivor_worker, survivor_incarnation, survivor_before
+            )
+            survivor_stream_id = survivor_before["streams"][0]["id"]
+            failed_stream_id = next(
+                stream["id"]
+                for stream in failed_before["streams"]
+                if stream["id"] != survivor_stream_id
+            )
+            failed_epoch = next(
+                stream["lease"]["epoch"]
+                for stream in failed_before["streams"]
+                if stream["id"] == failed_stream_id
+            )
+            survivor_epoch = survivor_before["streams"][0]["lease"]["epoch"]
+
+            started = time.monotonic()
+            time.sleep(0.6)
+            before_expiry = self.assignment(
+                survivor_worker, survivor_incarnation
+            )
+            self.assertEqual(
+                [stream["id"] for stream in before_expiry["streams"]],
+                [survivor_stream_id],
+            )
+            self.assertEqual(
+                before_expiry["streams"][0]["lease"]["epoch"], survivor_epoch
+            )
+            time.sleep(0.6)
+            survivor_after = self.assignment(
+                survivor_worker, survivor_incarnation, expected_count=2
+            )
+            elapsed = time.monotonic() - started
+
+        epochs_after = {
+            stream["id"]: stream["lease"]["epoch"]
+            for stream in survivor_after["streams"]
+        }
+        stale = self.post_json(
+            "/api/workers/report",
+            self.report_payload(
+                failed_worker,
+                failed_incarnation,
+                failed_before,
+                1,
+                stream_id=failed_stream_id,
+            ),
+            expected_status=409,
+        )
+
+        self.assertGreaterEqual(elapsed, 1)
+        self.assertLess(elapsed, 3)
+        self.assertGreater(epochs_after[failed_stream_id], failed_epoch)
+        self.assertEqual(epochs_after[survivor_stream_id], survivor_epoch)
+        self.assertTrue(stale["retryAssignment"])
 
     def test_real_worker_once_completes_v2_register_offer_ack_and_report(self):
         with patch("videosim.worker.run_monitor_once", return_value=probe_state(self.stream_id)):

@@ -31,6 +31,9 @@ Confirmed in this unit:
   authority is `offered` until the matching worker incarnation explicitly
   acknowledges its epoch/config tuple; stale workers cannot offer, acknowledge,
   renew, or ingest. A restart, owner/config change, or expiry advances the epoch.
+  A one-second real-time HTTP integration test keeps one survivor heartbeating,
+  lets the failed worker and lease expire, preserves the survivor epoch, advances
+  the replacement epoch, and rejects the stale report.
 - A report can mutate current state only when tenant, worker ID, worker
   incarnation, lease epoch, feed config version, expiry, and sequence all pass
   in one transaction. Observation time is bounded against database time and

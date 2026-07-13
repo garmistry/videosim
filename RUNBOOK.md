@@ -523,6 +523,15 @@ incarnation and its live leases `draining`; the same incarnation cannot be
 reactivated by a late heartbeat, and another worker receives a higher lease
 epoch immediately. A hard-killed worker still relies on lease expiry; queued
 reports remain encrypted on the worker volume for replay or fenced discard.
+With the defaults, reassignment begins on a survivor poll after the 60-second
+database freshness/lease boundary. The integration suite exercises the same
+path with a one-second test TTL; production partition timing remains an
+environment gate:
+
+```sh
+VIDEOSIM_TEST_POSTGRES_URL=... python3 -m unittest \
+  tests.test_worker_v2.DurableWorkerV2ApiIntegrationTest.test_hard_kill_reassigns_only_after_database_ttl_expiry
+```
 
 Strict versioned reports are the default. During a controlled same-host upgrade,
 the GUI can temporarily accept old unversioned reporters with

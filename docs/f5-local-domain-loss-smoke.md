@@ -85,6 +85,49 @@ The HTTP 499s are an open report-ingestion saturation gap. Idempotent report
 IDs and encrypted spooling recovered this smoke run, but that is not a reason
 to accept the timeout rate for production.
 
+## Report-Ingestion Follow-Up
+
+The same local topology and 1,320 placeholder feeds were rerun after durable
+probe ingestion began bulk-reading feed, lease, result-ID, and current-state
+fences and batch-writing current state, lease sequences, and event retention.
+Immutable check-result inserts and alarm transitions remain per result.
+
+The steady 134-second baseline committed 667 reports. Report commit latency
+was 0.2200 seconds average, 0.6425 p95, 0.7545 p99, and 1.0823 maximum. Nginx
+recorded 2,202 requests, all HTTP 200, and all worker spools were empty.
+
+All 11 zone-A workers were then hard-killed. Docker recorded the last exit at
+`2026-07-13T08:46:05.216876469Z`.
+
+| Check | Result |
+|---|---:|
+| Fresh survivors | 22 |
+| Active leases after recovery | 1,320 |
+| Leases per survivor | 60 |
+| SRT/DASH per survivor | 30/30 |
+| Failed-domain streams moved | 440/440 |
+| Healthy-domain streams moved | 1/880 |
+| First replacement acknowledgement | 55.010 seconds |
+| Last replacement acknowledgement | 66.396 seconds |
+| Authority changes in recovered hold | 0 |
+| Survivor container restarts | 0 |
+
+The fault window contained 892 proxy requests: 891 HTTP 200, one expected
+HTTP 409 stale-authority response, zero HTTP 499, and zero HTTP 5xx. The 409
+report accepted 645 results and rejected three results after their
+stream authority moved. Across 259 committed reports, commit latency was
+0.2749 seconds average, 1.3693 p95, 1.7532 p99, and 2.4285 maximum. Nginx,
+the app, PostgreSQL, NATS, the outbox publisher, and the history pruner logged
+no critical error or traceback in the window, and transient spools drained.
+
+Direct mTLS assignment checks against one survivor in each remaining domain
+returned 60 streams, 30 SRT, 30 DASH, and zero shortfall. The same endpoint
+without a client certificate returned HTTP 400.
+
+This follow-up removes the reproduced local report-upload timeout symptom. It
+does not close production report-ingestion saturation, and the one
+healthy-owner move leaves zero-churn recovery unproven.
+
 ## Validation
 
 - `python3 -m unittest tests.test_cert_script`: 1 passed.
@@ -97,6 +140,13 @@ to accept the timeout rate for production.
 - Fresh-image startup was attempted first, but Docker Buildx made no progress
   before container creation for more than three minutes. It was canceled; the
   successful startup run reused existing local images.
+- Follow-up project-image unit discovery: 384 passed with 87 environment-gated
+  skips.
+- Follow-up isolated PostgreSQL suite: 47 passed with 4 runtime-role skips,
+  including the 60-stream/120-result query-bound check.
+- Follow-up startup API/media/log workflow in no-build mode: 1 passed in 13.348
+  seconds.
+- Documentation contract: 4 passed.
 
 ## Remaining Gates
 
@@ -104,8 +154,10 @@ to accept the timeout rate for production.
   and production certificates.
 - Exercise production OIDC, replicated API/scheduler instances, HA PostgreSQL,
   and HA NATS.
-- Remove or admit the observed report-upload timeout rate under representative
-  load.
+- Sustain representative report-ingestion load with lock-wait, deadlock,
+  latency, timeout, and spool-recovery evidence.
+- Prove zero healthy-owner churn during repeated domain loss or define and
+  admit an explicit churn budget.
 - Use independent media sources and prove validation freshness, resource
   headroom, alarm consistency, and backpressure during failure.
 - Produce the required clean, hashed, no-skip 24-hour evidence bundle and pass

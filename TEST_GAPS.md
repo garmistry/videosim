@@ -78,7 +78,10 @@ implementation and must pass before those milestones advance.
   total/SRT/DASH survivor tokens after one domain loss. Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
   has not run on independent hosts or passed media/headroom/24-hour admission.
-  The local smoke is not the missing approved evidence bundle.
+  The initial local smoke moved only the failed domain's 440 streams. A
+  report-ingestion follow-up moved all 440 failed-domain streams plus one of
+  880 healthy-domain streams, so repeated zero-churn recovery is not proven.
+  Neither local smoke is the missing approved evidence bundle.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
@@ -136,8 +139,10 @@ implementation and must pass before those milestones advance.
   on each of 22 survivors afterward. Only the failed domain's 440 assignments
   move. A local PostgreSQL/33-container hard-kill smoke reproduced that exact
   result, with the final replacement acknowledged in 64.709 seconds and no
-  survivor restart. This still does not exercise network partitions,
-  representative media probes, or separate infrastructure hosts.
+  survivor restart. A report-ingestion follow-up recovered in 66.396 seconds
+  but also moved one healthy stream. This still does not exercise repeated
+  loss, network partitions, representative media probes, or separate
+  infrastructure hosts.
 - `docker-compose.worker-domain.yml` now renders one hardened 11-worker domain
   with unique mTLS identities and the candidate's exact admission/concurrency
   limits. Three instances were booted on one local Docker host and exercised
@@ -168,9 +173,12 @@ implementation and must pass before those milestones advance.
 - Lease offer/renew and acknowledgement arrays now use a worker-fence query and
   one set-based PostgreSQL lease statement per request while retaining atomic
   rollback. Tenant-scoped PostgreSQL transaction leadership still serializes
-  assignment decisions and rolls back on scheduler-session loss. The local
-  fault window recorded 33 client timeouts, mostly report uploads, despite
-  successful spool recovery. Report-ingestion saturation, lock-wait/deadlock
+  assignment decisions and rolls back on scheduler-session loss. The first
+  local fault window recorded 33 client timeouts, mostly report uploads,
+  despite successful spool recovery. Probe-report ingestion now bulk-reads its
+  fences and batch-writes mutable projections; a same-shape follow-up recorded
+  zero HTTP 499/5xx, one stale-authority 409, 1.3693-second report commit p95,
+  and eventual empty spools. Sustained report saturation, lock-wait/deadlock
   metrics, persistent leadership, replicated deployment, and sustained
   1,000-stream poll cadence remain open.
 - Concurrent workers complete admitted validation windows before starting

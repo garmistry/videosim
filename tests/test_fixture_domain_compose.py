@@ -14,12 +14,44 @@ from videosim.fixture_fleet import fixture_state, load_fixture_manifest
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.fixture-domain.yml"
 STARTUP = runpy.run_path(str(ROOT / "scripts/fixture-domain-startup.py"))
+FAULT = runpy.run_path(str(ROOT / "scripts/fixture-domain-fault.py"))
 STARTUP_INTEGRATION = (
     os.environ.get("VIDEOSIM_FIXTURE_STARTUP_INTEGRATION") == "1"
 )
 
 
 class FixtureDomainStartupTest(unittest.TestCase):
+    def test_fault_outcomes_require_one_result_in_the_expected_state(self):
+        validate = FAULT["validate_media_outcomes"]
+
+        healthy = {
+            "results": {
+                "validationOutcomesByProtocol": {
+                    "srt": {"success": 1},
+                    "dash": {"success": 1},
+                }
+            }
+        }
+        faulted = {
+            "results": {
+                "validationOutcomesByProtocol": {
+                    "srt": {"timeout": 1},
+                    "dash": {"issue": 1},
+                }
+            }
+        }
+
+        self.assertEqual(
+            validate(healthy, healthy=True),
+            healthy["results"]["validationOutcomesByProtocol"],
+        )
+        self.assertEqual(
+            validate(faulted, healthy=False),
+            faulted["results"]["validationOutcomesByProtocol"],
+        )
+        with self.assertRaisesRegex(RuntimeError, "was not unreachable"):
+            validate(healthy, healthy=False)
+
     def test_inventory_requires_every_declared_endpoint_to_be_distinct(self):
         manifest_path = ROOT / "scale/fixtures/srt-endpoints-220-domain.json"
         manifest, digest = load_fixture_manifest(manifest_path)
@@ -106,10 +138,11 @@ class FixtureDomainComposeTest(unittest.TestCase):
     "set VIDEOSIM_FIXTURE_STARTUP_INTEGRATION=1 to run fixture startup validation",
 )
 class FixtureDomainStartupIntegrationTest(unittest.TestCase):
-    def test_boots_and_validates_srt_dash_media_and_logs(self):
+    def test_boots_faults_recovers_and_validates_srt_dash_media_and_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory) / "state"
             artifact_dir = Path(directory) / "artifacts"
+            fault_dir = Path(directory) / "fault"
             environment = os.environ | {
                 "VIDEOSIM_FIXTURE_IMAGE": os.environ.get(
                     "VIDEOSIM_FIXTURE_IMAGE",
@@ -118,23 +151,60 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
                 "VIDEOSIM_FIXTURE_ADVERTISED_HOST": "127.0.0.1",
                 "VIDEOSIM_FIXTURE_STATE_DIR": str(state_dir),
                 "VIDEOSIM_FIXTURE_STARTUP_ARTIFACT_DIR": str(artifact_dir),
+                "VIDEOSIM_FIXTURE_FAULT_ARTIFACT_DIR": str(fault_dir),
+                "VIDEOSIM_FIXTURE_FAULT_HOLD_SECONDS": "0",
                 "VIDEOSIM_FIXTURE_STARTUP_NO_PULL": "1",
                 "VIDEOSIM_FIXTURE_STARTUP_ALLOW_MUTABLE_IMAGE": "1",
+                "VIDEOSIM_FIXTURE_STARTUP_KEEP": "1",
                 "VIDEOSIM_SRT_FIXTURE_MANIFEST": "scale/fixtures/srt-matrix.json",
                 "VIDEOSIM_DASH_FIXTURE_MANIFEST": "scale/fixtures/dash-matrix.json",
                 "VIDEOSIM_DASH_FIXTURE_HTTP_PORT": "18081",
             }
-            result = subprocess.run(
-                [sys.executable, "scripts/fixture-domain-startup.py"],
-                cwd=ROOT,
-                env=environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=300,
-            )
+            try:
+                result = subprocess.run(
+                    [sys.executable, "scripts/fixture-domain-startup.py"],
+                    cwd=ROOT,
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=300,
+                )
+                fault_result = subprocess.run(
+                    [sys.executable, "scripts/fixture-domain-fault.py"],
+                    cwd=ROOT,
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=300,
+                )
+            finally:
+                subprocess.run(
+                    [
+                        "docker",
+                        "compose",
+                        "-p",
+                        environment.get(
+                            "VIDEOSIM_FIXTURE_STARTUP_PROJECT",
+                            "videosim-fixture-startup",
+                        ),
+                        "-f",
+                        str(COMPOSE),
+                        "down",
+                        "--remove-orphans",
+                    ],
+                    cwd=ROOT,
+                    env=environment,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=180,
+                )
             evidence = json.loads(
                 (artifact_dir / "result.json").read_text(encoding="utf-8")
+            )
+            fault_evidence = json.loads(
+                (fault_dir / "result.json").read_text(encoding="utf-8")
             )
             docker_log = (artifact_dir / "docker.log").read_text(encoding="utf-8")
             docker_stats = (artifact_dir / "docker-stats.json").read_text(
@@ -145,6 +215,7 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(fault_result.returncode, 0, fault_result.stdout)
         self.assertTrue(evidence["passed"])
         self.assertIn("dash_health_api", evidence["checks"])
         self.assertIn("fixture_inventory_validated", evidence["checks"])
@@ -163,6 +234,24 @@ class FixtureDomainStartupIntegrationTest(unittest.TestCase):
         for inventory in evidence["fixtureInventory"].values():
             self.assertEqual(inventory["streamCount"], 4)
             self.assertEqual(inventory["distinctEndpointCount"], 4)
+        self.assertTrue(fault_evidence["passed"])
+        self.assertTrue(fault_evidence["servicesRunningAtEnd"])
+        self.assertFalse(fault_evidence["capacityCertified"])
+        self.assertFalse(fault_evidence["allEndpointMediaValidated"])
+        self.assertEqual(
+            fault_evidence["baselineOutcomesByProtocol"],
+            {"dash": {"success": 1}, "srt": {"success": 1}},
+        )
+        self.assertNotIn(
+            "success", fault_evidence["faultOutcomesByProtocol"]["dash"]
+        )
+        self.assertNotIn(
+            "success", fault_evidence["faultOutcomesByProtocol"]["srt"]
+        )
+        self.assertEqual(
+            fault_evidence["recoveryOutcomesByProtocol"],
+            {"dash": {"success": 1}, "srt": {"success": 1}},
+        )
 
 
 if __name__ == "__main__":

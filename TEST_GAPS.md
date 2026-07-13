@@ -75,7 +75,13 @@ implementation and must pass before those milestones advance.
   weak workload/headroom declarations, skipped checks, or incomplete admission
   criteria. `scale/workloads/f5-1000-candidate.json` passes that workload
   contract with 33 workers across three domains and exact 1,320/660/660
-  total/SRT/DASH survivor tokens after one domain loss. Three local Compose
+  total/SRT/DASH survivor tokens after one domain loss. `verify-assignments`
+  now captures one consistent PostgreSQL assignment snapshot and verifies the
+  exact baseline/survivor shape, single current authority, balance, and
+  baseline-bounded ownership movement. Its exact 1,320-stream proof is
+  synthetic and its live PostgreSQL proof is small; it does not replace the
+  missing independent-host capture, stale-report/latency evidence, or soak.
+  Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate
   has not run on independent hosts or passed media/headroom/24-hour admission.
   The initial local smoke moved only the failed domain's 440 streams. A

@@ -645,27 +645,32 @@ Exact names are proposals and must be implemented before use:
 python -m videosim fixture-fleet --manifest <scenario.yaml>
 python -m videosim worker-benchmark --scenario <scenario.yaml> --json <report.json>
 python -m videosim control-plane-load --streams 1000 --workers <n> --duration 24h
-python -m videosim verify-assignments --require-single-authority
+python -m videosim verify-assignments --workload <manifest> --output <capture.json> [--baseline <capture.json>]
 python -m videosim verify-alarm-consistency --results <capture>
 python -m videosim chaos --scenario worker-partition|db-failover|event-storm
 python -m videosim capacity-check --report <report.json> --policy <gate.json>
 ```
 
-`fixture-fleet`, `worker-benchmark`, and `capacity-check` are now partially or
-fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
+`fixture-fleet`, `worker-benchmark`, `verify-assignments`, and `capacity-check`
+are now partially or fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
 slow/dead/malformed matrices; the worker command runs real probes from their
 states and reports outcomes by protocol; the fixture-scenario command can
 create exact seeded 1,000- and 1,320-URL mixes from one or more source-host
 states while rejecting duplicate shard endpoints; a Linux fixture-domain
 Compose/startup contract samples real SRT/DASH media and logs; and the worker
 benchmark can fail unless validation rotation covers every logical stream. The
-capacity command checks JSON evidence/policy inputs against
+assignment command captures one read-only repeatable PostgreSQL snapshot and
+fails closed on incomplete current authority, protocol/domain/capacity drift,
+unbalanced placement, duplicate authority, or ownership changes outside an
+unavailable baseline domain. The capacity command checks JSON evidence/policy inputs against
 `scale/policies/f5-1000.json`. The checked-in F5 candidate places 33 workers
 evenly across three domains so any 22 survivors retain exact 1,320/660/660
 total/SRT/DASH tokens. Reusable Compose files render one 11-worker domain and
 one 220-SRT/220-DASH fixture shard, but neither shape has been booted on three
-independent hosts. Per-stream independent sources, remaining proposed
-harnesses, and production-like evidence are not implemented; a valid candidate
+independent hosts. The assignment verifier has exact synthetic 1,320-stream and
+small live-PostgreSQL integration coverage, but no three-host capture. Per-stream
+independent sources, remaining proposed harnesses, and production-like evidence
+are not implemented; a valid candidate
 or deployment render is not scale admission.
 
 The control-plane benchmark also supports process-local worker removal. Its

@@ -775,14 +775,43 @@ blocked spool. Retain that response. Treat a restarting container, worker API
 authentication error, assignment shortfall, traceback, or fatal Docker-log
 entry as a failed startup.
 
+From a coordinator with read access to the same PostgreSQL database, set
+`VIDEOSIM_DATABASE_URL` and retain the converged authority baseline:
+
+```sh
+python3 -m videosim verify-assignments \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --output artifacts/assignments-baseline.json
+```
+
+Require `passed=true`, `phase=baseline`, 33 fresh workers, 1,320 authoritative
+assignments, 660 assignments per protocol, and exactly 40/20/20 total/SRT/DASH
+assignments per worker. The capture uses one read-only repeatable PostgreSQL
+snapshot and treats only an active, unexpired, current-config lease held by the
+fresh matching worker incarnation as authoritative.
+
 At the declared domain-loss offset, stop all 11 services on one host. After the
 lease TTL and assignment-poll bound, the authenticated state must contain 22
 fresh workers at 60 assignments each. The immutable assignment capture must
-also prove 30 SRT and 30 DASH leases per survivor, no duplicate authority, only
-the failed domain's 440 ownership changes, and stale report rejection. Restart
-the domain, retain the before/loss/recovery API, database, process, metric, and
-Docker-log artifacts, then continue the 24-hour run. A same-host Compose test
-or a successful config render is not failure-domain or capacity evidence.
+prove 30 SRT and 30 DASH leases per survivor, no duplicate authority, and only
+the failed domain's 440 ownership changes:
+
+```sh
+python3 -m videosim verify-assignments \
+  --workload scale/workloads/f5-1000-candidate.json \
+  --baseline artifacts/assignments-baseline.json \
+  --output artifacts/assignments-domain-loss.json
+```
+
+Require `passed=true`, `phase=1-domain-loss`, 22 fresh workers,
+`ownershipChanges=440`, and `expectedOwnershipChanges=440`. Restart the domain
+and rerun with the same baseline into `assignments-recovery.json`; require the
+baseline shape and zero ownership changes. Retain all three reports with the
+before/loss/recovery API, database, process, metric, and Docker-log artifacts,
+then continue the 24-hour run. This verifier does not prove stale-report
+rejection, failover latency, probe freshness, or media health; retain those
+separate chaos/API/worker evidence. A same-host Compose test or a successful
+config render is not failure-domain or capacity evidence.
 
 For a strict rotation run with eight admitted validations per cycle:
 

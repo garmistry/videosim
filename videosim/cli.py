@@ -13,6 +13,9 @@ from .alarm_consistency import human_summary as alarm_consistency_summary
 from .alarm_consistency import run_alarm_consistency
 from .assignment_verifier import human_summary as assignment_verification_summary
 from .assignment_verifier import run_assignment_verification
+from .control_plane_load import human_summary as control_plane_load_summary
+from .control_plane_load import parse_duration
+from .control_plane_load import run_control_plane_load
 from .distributed_benchmark import (
     BenchmarkInvariantError,
     human_summary as control_plane_benchmark_summary,
@@ -196,6 +199,19 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_benchmark.add_argument("--seed", type=int, default=1)
     control_plane_benchmark.add_argument("--fail-workers", type=int, default=0)
     control_plane_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    control_plane_load = subparsers.add_parser(
+        "control-plane-load",
+        help="sustain synthetic worker traffic through the durable PostgreSQL control plane",
+    )
+    control_plane_load.add_argument("--database-url", default="")
+    control_plane_load.add_argument("--workload", required=True)
+    control_plane_load.add_argument("--duration", required=True, type=parse_duration)
+    control_plane_load.add_argument("--tick-seconds", type=float, default=20)
+    control_plane_load.add_argument("--output", required=True)
+    control_plane_load.add_argument(
+        "--json", action="store_true", help="print machine-readable JSON"
+    )
 
     capacity_check = subparsers.add_parser(
         "capacity-check",
@@ -530,6 +546,20 @@ def main(argv: list[str] | None = None) -> int:
                 args.fail_workers,
             )
             print(report.to_json() if args.json else control_plane_benchmark_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "control-plane-load":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            report = run_control_plane_load(
+                database_url,
+                args.workload,
+                args.duration,
+                tick_seconds=args.tick_seconds,
+                output_path=args.output,
+            )
+            print(report.to_json() if args.json else control_plane_load_summary(report))
             return 0 if report.passed else 1
 
         if args.command == "capacity-check":

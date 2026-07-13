@@ -1,0 +1,75 @@
+x-videosim: &videosim
+  image: "${VIDEOSIM_VALIDATION_IMAGE:-videosim-generated-runtime-validation:latest}"
+  build: .
+  working_dir: /app
+  volumes:
+    - .:/app
+
+x-api: &api
+  <<: *videosim
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+  environment:
+    VIDEOSIM_DATABASE_URL: postgresql://postgres:videosim-test@postgres:5432/videosim
+    VIDEOSIM_GENERATED_SRT_HOST: generated-feed-runtime
+  command: >
+    python -m videosim gui --host 0.0.0.0 --http-port 8080
+    --feed-port "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609
+    environment:
+      POSTGRES_DB: videosim
+      POSTGRES_PASSWORD: videosim-test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d videosim"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  migrate:
+    <<: *videosim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      VIDEOSIM_DATABASE_URL: postgresql://postgres:videosim-test@postgres:5432/videosim
+    command: python -m videosim migrate
+
+  api-a:
+    <<: *api
+    ports:
+      - "${VIDEOSIM_GENERATED_VALIDATION_API_A_PORT:-18081}:8080"
+
+  api-b:
+    <<: *api
+    ports:
+      - "${VIDEOSIM_GENERATED_VALIDATION_API_B_PORT:-18082}:8080"
+
+  generated-feed-runtime:
+    <<: *videosim
+    init: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      VIDEOSIM_DATABASE_URL: postgresql://postgres:videosim-test@postgres:5432/videosim
+    command: >
+      python -m videosim.generated_runtime
+      --runtime-id generated-validation-runtime
+      --max-feeds 1
+      --srt-port-start "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
+      --srt-port-end "${VIDEOSIM_GENERATED_VALIDATION_FEED_PORT:-19100}"
+      --poll-interval-seconds 0.25
+    stop_grace_period: 20s
+
+  validator:
+    <<: *videosim
+    command: python -c "print('validator ready')"

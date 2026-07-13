@@ -9,6 +9,8 @@ import time
 import uuid
 from dataclasses import replace
 
+from .assignment_verifier import human_summary as assignment_verification_summary
+from .assignment_verifier import run_assignment_verification
 from .distributed_benchmark import (
     BenchmarkInvariantError,
     human_summary as control_plane_benchmark_summary,
@@ -200,6 +202,16 @@ def build_parser() -> argparse.ArgumentParser:
     capacity_check.add_argument("--report", required=True)
     capacity_check.add_argument("--policy", required=True)
     capacity_check.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    verify_assignments = subparsers.add_parser(
+        "verify-assignments",
+        help="capture and verify current durable PostgreSQL assignment authority",
+    )
+    verify_assignments.add_argument("--database-url", default="")
+    verify_assignments.add_argument("--workload", required=True)
+    verify_assignments.add_argument("--baseline", default="")
+    verify_assignments.add_argument("--output", default="")
+    verify_assignments.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     worker_benchmark = subparsers.add_parser(
         "worker-benchmark",
@@ -510,6 +522,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "capacity-check":
             report = check_scale_evidence(args.report, args.policy)
             print(report.to_json() if args.json else scale_evidence_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "verify-assignments":
+            database_url = args.database_url or configured_database_url()
+            if not database_url:
+                raise ValueError("PostgreSQL database URL is required")
+            report = run_assignment_verification(
+                database_url,
+                args.workload,
+                baseline_path=args.baseline,
+                output_path=args.output,
+            )
+            print(
+                report.to_json()
+                if args.json
+                else assignment_verification_summary(report)
+            )
             return 0 if report.passed else 1
 
         if args.command == "worker-benchmark":

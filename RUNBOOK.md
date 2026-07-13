@@ -800,6 +800,7 @@ python3 -m videosim control-plane-load \
   --database-url "$VIDEOSIM_LOAD_DATABASE_URL" \
   --workload scale/workloads/f5-1000-candidate.json \
   --duration 24h --tick-seconds 20 \
+  --worker-freshness-seconds 60 \
   --output artifacts/control-plane-load.json
 ```
 
@@ -812,13 +813,32 @@ one accepted-result outbox event per accepted report, 1,320 current checked
 streams and authoritative leases, and non-empty heartbeat/report/tick latency
 percentiles.
 
+After at least one baseline report, the declared worker-domain-loss event stops
+heartbeats and reports for the first workload domain. The harness waits for
+PostgreSQL freshness expiry, invokes the production capacity-aware scheduler,
+acknowledges replacement leases, attempts one stale failed-owner report, and
+forces a survivor report window. Require `status=recovered`, 11 failed and 22
+surviving workers, 440 affected and changed owners, zero healthy-domain owner
+changes, `staleReportAccepted=false` with an explicit rejection reason, full
+survivor report coverage, and authority-recovery p95/p99 at or below 45/90
+seconds. A run that reaches the event but cannot recover before its duration
+fails. A shorter run records `not_reached` and proves no failure behavior.
+
+`--worker-freshness-seconds` must equal the candidate deployment's actual
+freshness setting. The current control-plane default is 60 seconds, which
+cannot satisfy the 45-second p95 gate; do not lower only the harness value to
+manufacture a pass. The P0 integration test uses one second solely to compress
+wall-clock test time.
+
 The command intentionally retains the synthetic tenant, worker reports, check
 results, current state, leases, and immutable outbox rows. Retain a database
 snapshot with the JSON report, then destroy the disposable database as a whole;
 do not selectively delete immutable evidence. `mediaProbesExecuted=false` and
 `capacityCertified=false` are permanent report fields. This harness measures
 the PostgreSQL control-plane path only and cannot replace worker HTTP/mTLS,
-broker-consumer, independent media, domain-loss, or 24-hour admission evidence.
+broker-consumer, independent media, physical failure-domain, or 24-hour
+admission evidence. Declared endpoint-fault storms remain `out_of_scope`
+because they require real media probes.
 
 After the declared endpoint-fault storm has raised and cleared alarms, retain a
 durable projection report:

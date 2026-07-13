@@ -644,7 +644,7 @@ Exact names are proposals and must be implemented before use:
 ```text
 python -m videosim fixture-fleet --manifest <scenario.yaml>
 python -m videosim worker-benchmark --scenario <scenario.yaml> --json <report.json>
-python -m videosim control-plane-load --database-url <url> --workload <manifest> --duration 24h --output <report.json>
+python -m videosim control-plane-load --database-url <url> --workload <manifest> --duration 24h --worker-freshness-seconds <deployed-value> --output <report.json>
 python -m videosim verify-assignments --workload <manifest> --output <capture.json> [--baseline <capture.json>]
 python -m videosim verify-alarm-consistency --workload <manifest> --output <report.json>
 python -m videosim chaos --scenario worker-partition|db-failover|event-storm
@@ -663,9 +663,15 @@ benchmark can fail unless validation rotation covers every logical stream. The
 control-plane load command requires an empty disposable database and sustains
 workload-driven feeds, workers, balanced leases, heartbeats, profile-cadenced
 fenced synthetic results, current state, and accepted-result outbox rows while
-recording latency/resource/database metrics. It permanently disclaims media
-execution and capacity certification. Exact PostgreSQL coverage proves one
-1,320-stream/33-worker/two-profile tick; no 24-hour run exists. The
+recording latency/resource/database metrics. One declared worker-domain loss
+stops a domain's synthetic heartbeats, waits for real PostgreSQL expiry, uses
+the production scheduler, fences a stale report, and requires survivor report
+coverage plus 45/90-second p95/p99 authority recovery. It permanently
+disclaims media execution and capacity certification. Exact PostgreSQL
+coverage proves one 1,320-stream/33-worker/two-profile tick and compressed
+recovery of all 440 affected streams onto 22 survivors with zero healthy-owner
+churn. The one-second test TTL is not deployment evidence, and the current
+60-second default cannot meet the p95 gate; no 24-hour run exists. The
 assignment command captures one read-only repeatable PostgreSQL snapshot and
 fails closed on incomplete current authority, protocol/domain/capacity drift,
 unbalanced placement, duplicate authority, or ownership changes outside an

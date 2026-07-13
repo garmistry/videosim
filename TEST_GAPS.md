@@ -81,7 +81,7 @@ implementation and must pass before those milestones advance.
   tenant-matched baseline-bounded ownership movement. Exact synthetic and
   PostgreSQL-backed tests cover 1,320 streams, 33 baseline workers, 22
   survivors, and 440 required moves; they do not replace the missing
-  independent-host capture, stale-report/latency evidence, or soak.
+  independent-host capture, physical failover timing, media evidence, or soak.
   `verify-alarm-consistency` now reconciles latest results, current check state,
   pending/current alarms, retained transition payloads, and matching outbox rows
   from one read-only repeatable snapshot. Its P0 PostgreSQL test covers all
@@ -92,9 +92,15 @@ implementation and must pass before those milestones advance.
   `control-plane-load` now drives the exact 1,320-stream/33-worker shape through
   real PostgreSQL lease, heartbeat, fenced-result, current-state, and result-
   outbox transactions in an empty disposable database. Its P0 integration test
-  proves one complete two-profile tick and retained evidence, not sustained
-  load: no 24-hour run, worker HTTP/mTLS path, broker consumption, endpoint
-  behavior, media freshness, failure storm, or independent-host resource curve
+  proves one complete two-profile tick and retained evidence. A second P0 test
+  stops one synthetic domain, waits for real PostgreSQL freshness expiry, uses
+  the production scheduler to move exactly its 440 streams to 22 survivors,
+  preserves all healthy owners, rejects a stale failed-owner report, and
+  resumes complete reporting. It compresses freshness to one second and is not
+  sustained or deployment-timing evidence. The current 60-second control-plane
+  default cannot meet the 45-second p95 authority-recovery gate. No 24-hour
+  run, worker HTTP/mTLS path, broker consumption, endpoint-fault behavior,
+  media freshness, physical-domain timing, or independent-host resource curve
   has passed.
   Three local Compose
   domains passed a PostgreSQL control-plane hard-loss smoke, but the candidate

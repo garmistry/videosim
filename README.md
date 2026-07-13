@@ -271,14 +271,20 @@ and transactional-outbox paths with the checked-in F5 workload:
 python3 -m videosim control-plane-load \
   --database-url "$VIDEOSIM_LOAD_DATABASE_URL" \
   --workload scale/workloads/f5-1000-candidate.json \
-  --duration 24h \
+  --duration 24h --worker-freshness-seconds 60 \
   --output artifacts/control-plane-load.json
 ```
 
 The target must be an empty disposable database. The command retains its
 synthetic tenant, results, and immutable outbox evidence for inspection, so
 destroy the database as a whole after capture. It schedules synthetic probe
-profiles but runs no media probes and always reports `capacityCertified=false`.
+profiles and executes the workload's single worker-domain-loss event through
+real PostgreSQL expiry, the production scheduler, lease fencing, and survivor
+reports. The freshness value must match the deployed control plane. The current
+60-second default exceeds the F5 45-second p95 failover gate, so it cannot
+produce admission evidence until the deployment setting is corrected and
+validated. The command runs no media probes, marks endpoint-fault storms
+`out_of_scope`, and always reports `capacityCertified=false`.
 
 Verify a completed scale-evidence bundle against the fail-closed F5 policy:
 

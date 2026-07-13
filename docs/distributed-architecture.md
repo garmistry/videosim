@@ -96,10 +96,10 @@ VideoSim should split into a master control plane and many worker nodes:
   for one worker from a hashed exported-state scenario. It reports cycle/CPU
   percentiles, outcomes, peak RSS, and descriptors, but makes no fleet-capacity
   claim.
-- `python -m videosim fixture-fleet` uses the existing DASH generator plus a
-  standard-library HTTP service to expose deterministic healthy, delayed, dead,
-  and malformed DASH endpoints and write a benchmark-state scenario. SRT
-  transport fixtures remain open.
+- `python -m videosim fixture-fleet` writes benchmark-state scenarios for
+  deterministic healthy, delayed, dead, and malformed DASH or SRT endpoints.
+  It reuses the existing generators, a standard-library DASH HTTP service, and
+  GStreamer SRT listeners.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

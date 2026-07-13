@@ -652,12 +652,12 @@ python -m videosim capacity-check --report <report.json> --policy <gate.json>
 ```
 
 `fixture-fleet`, `worker-benchmark`, and `capacity-check` are now partially or
-fully implemented. The fixture command currently covers the DASH healthy/slow/
-dead/malformed matrix only; the worker command runs real probes from its state;
-the capacity command checks JSON evidence/policy inputs against
-`scale/policies/f5-1000.json`. SRT fixtures, remaining proposed harnesses, and
-production-like evidence are not implemented; harness availability is not
-scale admission.
+fully implemented. The fixture command covers one-cycle DASH and SRT healthy/
+slow/dead/malformed matrices; the worker command runs real probes from their
+states; the capacity command checks JSON evidence/policy inputs against
+`scale/policies/f5-1000.json`. Source cross-products, remaining proposed
+harnesses, and production-like evidence are not implemented; harness
+availability is not scale admission.
 
 CI should run unit/contract/security fixture tests. Representative load, soak, failover, and DR run in a production-like scheduled environment and publish immutable reports tied to code, config, infrastructure version, and dataset.
 

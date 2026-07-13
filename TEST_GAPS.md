@@ -80,10 +80,10 @@ implementation and must pass before those milestones advance.
   representative per-check baseline, or saturation curve yet. `worker-benchmark`
   can produce the single-worker real-probe report from an exported state, but no
   representative scenario result has been committed or admitted.
-- The manifest-driven DASH fixture fleet has unit and one-cycle Linux coverage
-  for healthy, slow, dead, and malformed endpoints. Equivalent SRT transport
-  fixtures, generated/external source cross-product, storm scheduling, and
-  long-run fixture reliability remain open.
+- The manifest-driven DASH and SRT fixture fleets have unit and one-cycle Linux
+  coverage for healthy, slow, dead, and malformed endpoints. The
+  generated/external source cross-product, storm scheduling, and long-run
+  fixture reliability remain open.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker
@@ -124,8 +124,9 @@ implementation and must pass before those milestones advance.
   unreferenced-PID and T-STD timing indicators have unit coverage, and malformed
   DASH fixture sampling is covered through the monitor alarm path for every
   indicator. A Docker `monitor-fixtures` gate is defined for that fixture suite.
-  Malformed live SRT/DASH fixture streams are not yet generated for end-to-end
-  Docker proof of every indicator.
+  The SRT fixture matrix produces malformed live transport and has one-cycle
+  sync-loss/sync-byte evidence, but not end-to-end alarm proof for every
+  indicator.
 - Audio loudness alarms for ITU-R BS.1770 measurement availability, EBU R 128,
   and ATSC A/85 have unit coverage. Full-program loudness compliance runs are
   not part of the live monitor slice; the monitor samples live audio for alarm

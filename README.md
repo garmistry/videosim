@@ -172,9 +172,17 @@ python3 -m videosim fixture-fleet \
   --state-path artifacts/dash-fixtures/state.json
 ```
 
-The blocking fixture service starts one real DASH generator and exposes
-healthy, 30-second slow, unavailable, and malformed endpoints. Run the worker
-benchmark in a second terminal against the generated state file.
+For the equivalent SRT transport matrix, use a separate terminal and state:
+
+```sh
+python3 -m videosim fixture-fleet \
+  --manifest scale/fixtures/srt-matrix.json \
+  --state-path artifacts/srt-fixtures/state.json
+```
+
+Each blocking fixture service exposes healthy, 30-second slow, unavailable,
+and malformed endpoints. Run the worker benchmark in a second terminal against
+the selected generated state file.
 
 ```sh
 python3 -m videosim worker-benchmark \

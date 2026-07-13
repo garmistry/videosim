@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from .feed import require_gst_launch
+
 
 FIXTURE_SCHEMA = "videosim.fixture-fleet/v1"
 BEHAVIORS = ("healthy", "slow", "dead", "malformed")
@@ -27,16 +29,20 @@ def load_fixture_manifest(path: str | Path) -> tuple[dict, str]:
         raise ValueError("fixture fleet manifest must be an object")
     if manifest.get("schemaVersion") != FIXTURE_SCHEMA:
         raise ValueError(f"fixture fleet schemaVersion must be {FIXTURE_SCHEMA}")
-    if manifest.get("protocol") != "dash":
-        raise ValueError("this fixture fleet slice supports protocol=dash")
-    for field in ("bindHost", "advertisedHost", "profile", "dashDir"):
+    protocol = manifest.get("protocol")
+    if protocol not in {"dash", "srt"}:
+        raise ValueError("fixture fleet protocol must be dash or srt")
+    string_fields = ["advertisedHost", "profile"]
+    if protocol == "dash":
+        string_fields.extend(("bindHost", "dashDir"))
+    for field in string_fields:
         if not isinstance(manifest.get(field), str) or not manifest[field].strip():
             raise ValueError(f"fixture fleet {field} must be a non-empty string")
-    for field, minimum, maximum in (
-        ("httpPort", 1, 65535),
-        ("width", 1, 7680),
-        ("height", 1, 4320),
-    ):
+    integer_fields = [("width", 1, 7680), ("height", 1, 4320)]
+    integer_fields.append(
+        ("httpPort", 1, 65535) if protocol == "dash" else ("basePort", 1, 65532)
+    )
+    for field, minimum, maximum in integer_fields:
         value = manifest.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
             raise ValueError(
@@ -56,21 +62,29 @@ def load_fixture_manifest(path: str | Path) -> tuple[dict, str]:
 
 
 def fixture_state(manifest: dict, manifest_sha256: str) -> dict:
-    base_url = f"http://{manifest['advertisedHost']}:{manifest['httpPort']}"
+    protocol = manifest["protocol"]
+    if protocol == "dash":
+        base_url = f"http://{manifest['advertisedHost']}:{manifest['httpPort']}"
+        endpoints = [f"{base_url}/{behavior}/manifest.mpd" for behavior in BEHAVIORS]
+    else:
+        endpoints = [
+            f"srt://{manifest['advertisedHost']}:{manifest['basePort'] + index}?mode=caller"
+            for index in range(len(BEHAVIORS))
+        ]
     streams = [
         {
-            "id": f"dash-{behavior}",
-            "name": f"DASH {behavior} fixture",
-            "protocol": "dash",
+            "id": f"{protocol}-{behavior}",
+            "name": f"{protocol.upper()} {behavior} fixture",
+            "protocol": protocol,
             "source": "external",
             "mode": "normal",
             "status": "running",
-            "endpoint": f"{base_url}/{behavior}/manifest.mpd",
+            "endpoint": endpoint,
             "width": manifest["width"],
             "height": manifest["height"],
             "framerate": str(manifest["framerate"]),
         }
-        for behavior in BEHAVIORS
+        for behavior, endpoint in zip(BEHAVIORS, endpoints)
     ]
     return {
         "schemaVersion": "videosim.fixture-state/v1",
@@ -142,6 +156,91 @@ def stop_process(process: subprocess.Popen):
         process.wait(timeout=5)
 
 
+def srt_fixture_commands(manifest: dict) -> list[list[str]]:
+    gst_launch = require_gst_launch()
+    base_port = manifest["basePort"]
+
+    def listener(port: int) -> list[str]:
+        return [
+            "!",
+            "srtsink",
+            f"uri=srt://:{port}?mode=listener",
+            "wait-for-connection=false",
+        ]
+
+    healthy = [
+        sys.executable,
+        "-m",
+        "videosim",
+        "start",
+        "--profile",
+        manifest["profile"],
+        "--protocol",
+        "srt",
+        "--port",
+        str(base_port),
+        "--width",
+        str(manifest["width"]),
+        "--height",
+        str(manifest["height"]),
+        "--framerate",
+        str(manifest["framerate"]),
+    ]
+    slow = [
+        gst_launch,
+        "-q",
+        "fakesrc",
+        "is-live=true",
+        "do-timestamp=true",
+        "sizetype=fixed",
+        "sizemax=188",
+        "filltype=zero",
+        "!",
+        "identity",
+        f"sleep-time={int(manifest['slowDelaySeconds'] * 1_000_000)}",
+        *listener(base_port + 1),
+    ]
+    malformed = [
+        gst_launch,
+        "-q",
+        "fakesrc",
+        "is-live=true",
+        "do-timestamp=true",
+        "sizetype=fixed",
+        "sizemax=188",
+        "filltype=pattern",
+        "datarate=1880",
+        "sync=true",
+        *listener(base_port + 3),
+    ]
+    return [healthy, slow, malformed]
+
+
+def run_srt_fixture_fleet(manifest: dict, state_path: str, manifest_sha256: str) -> int:
+    processes = []
+    try:
+        for command in srt_fixture_commands(manifest):
+            processes.append(subprocess.Popen(command))
+        time.sleep(0.5)
+        for process in processes:
+            if process.poll() is not None:
+                raise ValueError(f"SRT fixture process exited with {process.returncode}")
+        write_fixture_state(state_path, fixture_state(manifest, manifest_sha256))
+        print(f"SRT fixture fleet ready: state={state_path}", flush=True)
+        while True:
+            for process in processes:
+                if process.poll() is not None:
+                    raise ValueError(
+                        f"SRT fixture process exited with {process.returncode}"
+                    )
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        for process in reversed(processes):
+            stop_process(process)
+
+
 def run_fixture_fleet(
     manifest_path: str, state_path: str, advertised_host: str = ""
 ) -> int:
@@ -149,6 +248,8 @@ def run_fixture_fleet(
     advertised_host = advertised_host.strip()
     if advertised_host:
         manifest = {**manifest, "advertisedHost": advertised_host}
+    if manifest["protocol"] == "srt":
+        return run_srt_fixture_fleet(manifest, state_path, manifest_sha256)
     dash_dir = Path(manifest["dashDir"])
     dash_dir.mkdir(parents=True, exist_ok=True)
     base_url = f"http://{manifest['advertisedHost']}:{manifest['httpPort']}/healthy"

@@ -562,6 +562,20 @@ name>`. The service launches the existing healthy DASH generator, serves its
 manifest/segments, delays every slow response for 30 seconds, returns `503` for
 dead, and serves malformed MPD bytes for malformed. Stop it with Ctrl-C.
 
+For SRT, run the companion matrix:
+
+```sh
+python3 -m videosim fixture-fleet \
+  --manifest scale/fixtures/srt-matrix.json \
+  --state-path artifacts/srt-fixtures/state.json
+```
+
+It reserves four consecutive ports from `basePort`: a normal MPEG-TS feed, a
+listener that stalls each payload for 30 seconds, an unbound dead port, and a
+listener emitting paced non-MPEG-TS bytes. Use the same `--advertised-host`
+override across containers. The process fails if any launched listener exits
+and stops all child pipelines on Ctrl-C.
+
 To benchmark an existing app instead, capture its state:
 
 ```sh

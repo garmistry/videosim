@@ -75,8 +75,8 @@
   production-like workload result exists for it to admit. `worker-benchmark`
   runs real probes from a supplied state scenario, but measures one worker and
   does not provide fixtures, distributed load, failure injection, or a capacity
-  decision. `fixture-fleet` now provides deterministic DASH healthy/slow/dead/
-  malformed endpoints; equivalent SRT transport fixtures are not implemented.
+  decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
+  dead/malformed matrices, but not distributed load or capacity evidence.
 
 ## Monitoring
 

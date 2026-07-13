@@ -32,10 +32,12 @@
 - The candidate fixture-domain deployment requires a Linux Docker engine with
   host networking. One local full-shape startup produced exact 220-SRT and
   220-DASH distinct endpoint inventories and sampled one healthy media path per
-  protocol. A physical stop/restart made both samples fail and recover, but it
-  did not load or observe every path and used one Docker VM. Each host still
-  shares one encoder or generator per protocol; this is not independent-host,
-  per-stream source independence, all-alarm, or 1,000-stream capacity evidence.
+  protocol. A physical stop/restart made both samples fail and recover. A later
+  one-worker run attempted all 220 distinct SRT URLs in 14 cycles, but did not
+  validate every DASH path or drive durable alarms, and it used one Docker VM.
+  Each host still shares one encoder or generator per protocol; this is not
+  independent-host, per-stream source independence, failure-domain headroom, or
+  1,000-stream capacity evidence.
 - The GUI preview is a local refreshed frame matching the active mode, not
   native browser SRT playback and not validation proof of the SRT output.
   Audio-only mode and external feeds have no video preview.
@@ -110,6 +112,12 @@
   first caller. `validationOutcomesByProtocol` exposes this separately from
   DASH; a stream budget below that value cannot support a healthy-SRT capacity
   claim even when cursor freshness passes.
+- Scaled SRT listeners retain distinct URLs and ports but share one multicast
+  source and batch at most 16 sinks per relay process. On the local exact-220
+  startup this reduced the SRT snapshot from 988.6 MiB/1,891 PIDs to 195.5
+  MiB/938 PIDs, while CPU rose from 91.88% to 199.34%. After the all-path probe
+  rotation the container used 516.2 MiB, 937 PIDs, and 194.07% CPU. This is a
+  useful fixture-host improvement, not production sizing or headroom evidence.
 - Correcting the budget does not make the current single-host environment
   sufficient. A 22-survivor, 12-token, 15-second run failed the 90-second gate
   on 14 workers and saturated local CPU/process capacity. This repository has

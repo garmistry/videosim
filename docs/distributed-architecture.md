@@ -147,8 +147,9 @@ VideoSim should split into a master control plane and many worker nodes:
   It reuses the existing generators, a standard-library DASH HTTP service, and
   GStreamer SRT listeners. Optional per-behavior endpoint counts expand distinct
   URLs/listener ports; checked-in manifests declare 500 URLs per protocol. At
-  scale, one captioned SRT encoder feeds local UDP multicast and one lightweight
-  relay per healthy listener instead of duplicating the encoder per port.
+  scale, one captioned SRT encoder feeds local UDP multicast; relay pipelines
+  batch up to 16 distinct listener-port sinks instead of launching one process
+  per listener or duplicating the encoder per port.
 - `python -m videosim fixture-scenario` deterministically expands those states
   into exact logical protocol/behavior mixes for bounded-worker tests. Repeated
   protocol state options aggregate source-host shards, retain their hashes, and
@@ -256,10 +257,11 @@ VideoSim should split into a master control plane and many worker nodes:
   assignment smokes exist, but no independent-host HTTPS/mTLS deployment,
   production load balancer, HA storage, or production recovery artifact exists.
 - The fixture-domain Compose contract and sampled startup path are implemented;
-  one local Docker VM booted an exact 220+220 shard, but the shape has not run
-  on three independent hosts or under all-path worker load. Each shard still
-  shares one media generator per protocol, so independent-source and capacity
-  evidence remain open.
+  one local Docker VM booted an exact 220+220 shard and one worker attempted all
+  220 distinct SRT paths. The shape has not run on three independent hosts or
+  under the full 1,320-stream worker/alarm load. Each shard still shares one
+  media generator per protocol, so independent-source and capacity evidence
+  remain open.
 
 ## Next Upgrade Points
 

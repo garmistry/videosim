@@ -725,6 +725,9 @@ snapshot is captured, and Docker logs contain no critical marker. Retain
 shape; the sampled media check does not prove every endpoint path or capacity.
 `VIDEOSIM_FIXTURE_STARTUP_KEEP=1` is required for the later fault workflow;
 without it the isolated startup validator cleans up its containers on exit.
+Scaled SRT generation keeps every advertised port distinct while batching up
+to 16 listener sinks in one relay pipeline. Treat the captured CPU, memory, and
+PID values as host-specific measurements, not fixture-capacity limits.
 
 Copy the six state files to the workload coordinator and compose the exact
 candidate input:
@@ -748,6 +751,27 @@ not prove that a 220+220 domain stays healthy under concurrent load. Each SRT
 shard still shares one encoder and each DASH shard one generator/origin, so
 this topology reduces shared fate without proving per-stream source
 independence.
+
+Before using a fixture host in a distributed run, exercise every SRT URL from a
+worker-capable Linux environment that can reach the advertised host:
+
+```sh
+python3 -m videosim worker-benchmark \
+  --scenario "$VIDEOSIM_FIXTURE_STATE_DIR/srt-state.json" \
+  --iterations 14 --warmup-iterations 0 \
+  --max-concurrent-checks 16 --max-concurrent-deep-checks 2 \
+  --stream-budget-seconds 15 --batch-budget-seconds 0.001 \
+  --require-full-validation-coverage --json \
+  > "$VIDEOSIM_FIXTURE_STATE_DIR/srt-all-path-report.json"
+```
+
+Require `passed=true`, `mediaProbesExecuted=true`,
+`validationAttemptedStreams=220`, and `validationCoveragePercent=100`. Review
+outcomes against the manifest's healthy/slow/dead/malformed mix; full coverage
+means every path was attempted, not that fault fixtures returned success. Read
+the retained Docker logs and resource snapshots after the run. This host check
+does not exercise durable assignments, alarm transitions, DASH all-path load,
+domain loss, or fleet headroom.
 
 ### Load and validate the candidate catalog
 

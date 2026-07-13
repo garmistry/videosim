@@ -286,26 +286,33 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
             DATABASE_URL, min_pool_size=1, max_pool_size=2
         )
         try:
-            with self.assertRaises(OperationalError):
-                with self.store.assignment_scheduler_transaction() as connection:
-                    with self.assertRaisesRegex(
-                        PostgresStoreError, "another scheduler transaction"
-                    ):
-                        with replica.assignment_scheduler_transaction():
-                            pass
-                    self.store.reconcile_leases(
-                        [feed_id],
-                        worker_id,
-                        incarnation,
-                        ttl_seconds=60,
-                        _connection=connection,
-                    )
-                    with replica._pool.connection() as killer:
-                        terminated = killer.execute(
-                            "SELECT pg_terminate_backend(%s) AS terminated",
-                            (connection.info.backend_pid,),
-                        ).fetchone()["terminated"]
-                    self.assertTrue(terminated)
+            waiting = threading.Event()
+
+            def acquire_replica_scheduler():
+                waiting.set()
+                with replica.assignment_scheduler_transaction():
+                    return True
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                with self.assertRaises(OperationalError):
+                    with self.store.assignment_scheduler_transaction() as connection:
+                        self.store.reconcile_leases(
+                            [feed_id],
+                            worker_id,
+                            incarnation,
+                            ttl_seconds=60,
+                            _connection=connection,
+                        )
+                        takeover = executor.submit(acquire_replica_scheduler)
+                        self.assertTrue(waiting.wait(timeout=1))
+                        self.assertFalse(takeover.done())
+                        with replica._pool.connection() as killer:
+                            terminated = killer.execute(
+                                "SELECT pg_terminate_backend(%s) AS terminated",
+                                (connection.info.backend_pid,),
+                            ).fetchone()["terminated"]
+                        self.assertTrue(terminated)
+                self.assertTrue(takeover.result(timeout=2))
 
             self.assertEqual(replica.leases_for_worker(worker_id, incarnation), [])
             with replica.assignment_scheduler_transaction():

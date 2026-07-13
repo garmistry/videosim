@@ -194,14 +194,10 @@ class PostgresControlPlaneStore:
         with self._pool.connection() as connection:
             with connection.transaction():
                 # ponytail: one transaction per tenant; shard after measured contention.
-                acquired = connection.execute(
-                    "SELECT pg_try_advisory_xact_lock(%s) AS acquired",
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
                     (lock_id,),
-                ).fetchone()["acquired"]
-                if not acquired:
-                    raise PostgresStoreError(
-                        "another scheduler transaction is active for this tenant"
-                    )
+                )
                 yield connection
 
     # FeedRegistrationStore compatibility.

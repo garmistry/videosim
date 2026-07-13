@@ -15,7 +15,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .monitor import empty_monitor_state, monitor_state_for_stream_ids, run_monitor_once
+from .monitor import (
+    BATCH_BUDGET_EXHAUSTED,
+    empty_monitor_state,
+    monitor_state_for_stream_ids,
+    run_monitor_once,
+)
 from .report_spool import EncryptedReportSpool, ReportSpoolError
 
 
@@ -86,6 +91,7 @@ def post_heartbeat(
     stream_budget_seconds: float = 0,
     deep_check_interval_seconds: float = 0,
     batch_budget_seconds: float = 0,
+    pressure: dict | None = None,
 ) -> dict:
     payload = {"workerId": worker_id}
     if worker_incarnation_id:
@@ -113,6 +119,8 @@ def post_heartbeat(
         capacity["deepCheckIntervalSeconds"] = deep_check_interval_seconds
     if batch_budget_seconds:
         capacity["batchBudgetSeconds"] = batch_budget_seconds
+    if pressure is not None:
+        capacity["pressure"] = dict(pressure)
     if capacity:
         payload["capacity"] = capacity
     body = json.dumps(payload).encode("utf-8")
@@ -165,6 +173,7 @@ def _heartbeat_loop(
     stream_budget_seconds: float,
     deep_check_interval_seconds: float,
     batch_budget_seconds: float,
+    pressure_snapshot: Callable[[], dict],
 ):
     while not stop.wait(interval_seconds):
         try:
@@ -191,10 +200,15 @@ def _heartbeat_loop(
                     stream_budget_seconds,
                     deep_check_interval_seconds,
                     batch_budget_seconds,
+                    pressure=pressure_snapshot(),
                 )
             else:
                 post_heartbeat(
-                    control_plane_url, worker_id, ssl_context, worker_incarnation_id
+                    control_plane_url,
+                    worker_id,
+                    ssl_context,
+                    worker_incarnation_id,
+                    pressure=pressure_snapshot(),
                 )
         except Exception:
             # A failed heartbeat is retried on the next independent interval.
@@ -419,6 +433,30 @@ def advance_lease_sequences(
     return current, report_sequences
 
 
+def worker_pressure_from_state(state: dict, assigned_streams: int) -> dict:
+    metrics = state.get("probeMetrics", {})
+    items = metrics.get("streams", []) if isinstance(metrics, dict) else []
+    deferred = [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and item.get("outcome") == "skipped"
+        and item.get("detail") == BATCH_BUDGET_EXHAUSTED
+    ]
+    duration = metrics.get("batchDurationMs", 0) if isinstance(metrics, dict) else 0
+    return {
+        "assignedStreams": assigned_streams,
+        "cycleActive": False,
+        "lastValidationDeferred": sum(
+            item.get("check") == "validation" for item in deferred
+        ),
+        "lastDeepDeferred": sum(
+            item.get("check") == "deep_checks" for item in deferred
+        ),
+        "lastBatchDurationMs": duration,
+    }
+
+
 def run_worker(
     control_plane_url: str,
     worker_id: str,
@@ -481,13 +519,40 @@ def run_worker(
         else None
     )
     spool_blocked = False
+    spool_stats = report_spool.stats() if report_spool is not None else {}
+    pressure_lock = threading.Lock()
+    pressure = {
+        "assignedStreams": 0,
+        "cycleActive": False,
+        "lastValidationDeferred": 0,
+        "lastDeepDeferred": 0,
+        "lastBatchDurationMs": 0,
+        "spoolBlocked": False,
+        "spoolQueuedReports": int(spool_stats.get("queuedReports", 0)),
+        "spoolBytes": int(spool_stats.get("bytes", 0)),
+    }
+
+    def update_pressure(**values):
+        with pressure_lock:
+            pressure.update(values)
+
+    def pressure_snapshot() -> dict:
+        with pressure_lock:
+            return dict(pressure)
 
     def note_spool_pressure(blocked: bool):
         nonlocal spool_blocked
-        if report_spool is None or blocked == spool_blocked:
+        if report_spool is None:
+            return
+        stats = report_spool.stats()
+        update_pressure(
+            spoolBlocked=blocked,
+            spoolQueuedReports=stats["queuedReports"],
+            spoolBytes=stats["bytes"],
+        )
+        if blocked == spool_blocked:
             return
         spool_blocked = blocked
-        stats = report_spool.stats()
         print(
             f"[videosim-worker] report_spool={'blocked' if blocked else 'recovered'} "
             f"queued_reports={stats['queuedReports']} bytes={stats['bytes']} "
@@ -539,6 +604,7 @@ def run_worker(
             stream_budget_seconds,
             deep_check_interval_seconds,
             batch_budget_seconds,
+            pressure_snapshot,
         ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
@@ -589,6 +655,7 @@ def run_worker(
                     stream_budget_seconds,
                     deep_check_interval_seconds,
                     batch_budget_seconds,
+                    pressure=pressure_snapshot(),
                 ),
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
@@ -661,6 +728,7 @@ def run_worker(
                 return 0
             stream_ids = {stream["id"] for stream in streams}
             state = monitor_state_for_stream_ids(state, stream_ids)
+            update_pressure(assignedStreams=len(streams), cycleActive=True)
             monitor_kwargs = {}
             if max_concurrent_checks > 1:
                 monitor_kwargs["max_concurrency"] = max_concurrent_checks
@@ -686,6 +754,7 @@ def run_worker(
                 **monitor_kwargs,
             )
             state = monitor_state_for_stream_ids(state, stream_ids)
+            update_pressure(**worker_pressure_from_state(state, len(streams)))
             report_sequence += 1
             lease_sequences, report_lease_sequences = advance_lease_sequences(
                 streams, lease_sequences

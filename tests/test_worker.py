@@ -23,6 +23,7 @@ from videosim.worker import (
     post_heartbeat,
     post_report,
     run_worker,
+    worker_pressure_from_state,
 )
 
 
@@ -129,6 +130,11 @@ class WorkerTest(unittest.TestCase):
                 stream_budget_seconds=30,
                 deep_check_interval_seconds=60,
                 batch_budget_seconds=20,
+                pressure={
+                    "assignedStreams": 80,
+                    "cycleActive": True,
+                    "lastValidationDeferred": 5,
+                },
             )
         payload = json.loads(open_url.call_args.args[0].data)
         self.assertEqual(
@@ -142,6 +148,49 @@ class WorkerTest(unittest.TestCase):
                 "streamBudgetSeconds": 30,
                 "deepCheckIntervalSeconds": 60,
                 "batchBudgetSeconds": 20,
+                "pressure": {
+                    "assignedStreams": 80,
+                    "cycleActive": True,
+                    "lastValidationDeferred": 5,
+                },
+            },
+        )
+
+    def test_worker_pressure_counts_only_batch_budget_deferrals(self):
+        pressure = worker_pressure_from_state(
+            {
+                "probeMetrics": {
+                    "batchDurationMs": 125.5,
+                    "streams": [
+                        {
+                            "check": "validation",
+                            "outcome": "skipped",
+                            "detail": "validation phase exhausted batch budget",
+                        },
+                        {
+                            "check": "deep_checks",
+                            "outcome": "skipped",
+                            "detail": "validation phase exhausted batch budget",
+                        },
+                        {
+                            "check": "deep_checks",
+                            "outcome": "skipped",
+                            "detail": "deferred until later",
+                        },
+                    ],
+                }
+            },
+            12,
+        )
+
+        self.assertEqual(
+            pressure,
+            {
+                "assignedStreams": 12,
+                "cycleActive": False,
+                "lastValidationDeferred": 1,
+                "lastDeepDeferred": 1,
+                "lastBatchDurationMs": 125.5,
             },
         )
 
@@ -361,7 +410,16 @@ class WorkerTest(unittest.TestCase):
             def fetch(control_plane_url, worker_id, ssl_context, worker_incarnation_id=""):
                 return worker_assignments_payload(state, worker_id, "http://master:8080")
 
-            def heartbeat(control_plane_url, worker_id, ssl_context, worker_incarnation_id=""):
+            pressures = []
+
+            def heartbeat(
+                control_plane_url,
+                worker_id,
+                ssl_context,
+                worker_incarnation_id="",
+                **kwargs,
+            ):
+                pressures.append(kwargs["pressure"])
                 return register_worker(state, worker_id)
 
             def slow_monitor(gui_state, monitor_state, *args):
@@ -397,6 +455,12 @@ class WorkerTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertGreaterEqual(heartbeat_call.call_count, 2)
+        self.assertTrue(
+            any(
+                item["cycleActive"] and item["assignedStreams"] == 1
+                for item in pressures
+            )
+        )
 
     def test_worker_prunes_retained_state_for_empty_assignment(self):
         retained = {
@@ -568,7 +632,7 @@ class WorkerTest(unittest.TestCase):
                 side_effect=lambda *_args: order.append("report") or {"ok": True},
             ), patch(
                 "videosim.worker.post_heartbeat",
-                side_effect=lambda *_args: order.append("heartbeat") or {"ok": True},
+                side_effect=lambda *_args, **_kwargs: order.append("heartbeat") or {"ok": True},
             ), patch(
                 "videosim.worker.fetch_assignments",
                 return_value=durable_assignment(()),

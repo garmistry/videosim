@@ -87,9 +87,11 @@ implementation and must pass before those milestones advance.
   configured cadence staggers deep work; aggregate budget exhaustion stops new
   validation starts, preserves alarms with inconclusive observations, rotates
   deferred streams, and defers the deep phase. Black/frozen validation cost,
-  weighted check-cost/tenant fairness, fleet pressure/recovery telemetry,
-  durable queue backpressure, and slow-stream-storm freshness evidence remain
-  open.
+  weighted check-cost/tenant fairness, durable queue backpressure, and
+  slow-stream-storm freshness evidence remain open. Heartbeats now expose a
+  schema-bounded latest cycle/deferral/spool pressure snapshot, but pressure
+  history, alerts, recovery SLO evaluation, and production saturation evidence
+  remain open.
 - The environment-gated Compose startup workflow proves one worker plus one
   normal SRT feed through the real HTTP API, captures Docker state/logs, and has
   a documented Chrome path. It does not exercise the production PostgreSQL/NATS

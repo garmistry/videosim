@@ -2330,6 +2330,52 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
             raise WorkerReportValidationError(
                 f"capacity.{field} must be a finite number greater than zero"
             )
+    pressure = capacity.get("pressure")
+    if pressure is not None:
+        if not isinstance(pressure, dict):
+            raise WorkerReportValidationError("capacity.pressure must be an object")
+        allowed = {
+            "assignedStreams",
+            "cycleActive",
+            "lastValidationDeferred",
+            "lastDeepDeferred",
+            "lastBatchDurationMs",
+            "spoolBlocked",
+            "spoolQueuedReports",
+            "spoolBytes",
+        }
+        if set(pressure) - allowed:
+            raise WorkerReportValidationError("capacity.pressure contains unknown fields")
+        for field in (
+            "assignedStreams",
+            "lastValidationDeferred",
+            "lastDeepDeferred",
+            "spoolQueuedReports",
+            "spoolBytes",
+        ):
+            value = pressure.get(field)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise WorkerReportValidationError(
+                    f"capacity.pressure.{field} must be a non-negative integer"
+                )
+        for field in ("cycleActive", "spoolBlocked"):
+            value = pressure.get(field)
+            if value is not None and not isinstance(value, bool):
+                raise WorkerReportValidationError(
+                    f"capacity.pressure.{field} must be a boolean"
+                )
+        duration = pressure.get("lastBatchDurationMs")
+        if duration is not None and (
+            isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or not math.isfinite(duration)
+            or duration < 0
+        ):
+            raise WorkerReportValidationError(
+                "capacity.pressure.lastBatchDurationMs must be a finite non-negative number"
+            )
     return dict(capacity)
 
 

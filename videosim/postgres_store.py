@@ -955,7 +955,7 @@ class PostgresControlPlaneStore:
             ).fetchall()
             workers = connection.execute(
                 """
-                SELECT worker_id, last_heartbeat_at
+                SELECT worker_id, last_heartbeat_at, capacity
                 FROM workers
                 WHERE tenant_id = %s AND state = 'active'
                   AND last_heartbeat_at > transaction_timestamp()
@@ -1085,7 +1085,11 @@ class PostgresControlPlaneStore:
             "events": event_payload,
             "pending": pending_payload,
             "workers": [
-                {"id": row["worker_id"], "lastSeenAt": _iso_datetime(row["last_heartbeat_at"])}
+                {
+                    "id": row["worker_id"],
+                    "lastSeenAt": _iso_datetime(row["last_heartbeat_at"]),
+                    "pressure": dict(row["capacity"].get("pressure") or {}),
+                }
                 for row in workers
             ],
             "probeMetrics": {

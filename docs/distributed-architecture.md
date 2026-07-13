@@ -81,6 +81,10 @@ VideoSim should split into a master control plane and many worker nodes:
   fsynced local spool before send. A byte quota bounds disk use; blocked replay
   pauses new probes, startup replay precedes incarnation registration, accepted
   reports are deleted, and explicit `409` stale reports are discarded.
+- Independent worker heartbeats persist a schema-bounded latest pressure
+  snapshot inside durable capacity metadata. Assignment responses retain it and
+  PostgreSQL `/state.json` exposes per-worker cycle-active, prior deferral/batch,
+  and current spool fields without adding unbounded metric labels.
 - Latest-batch probe metrics classify success, issue, error, timeout, and skipped checks with monotonic durations. Metrics are replaced, assignment-scoped summaries rather than unbounded history.
 - `python -m videosim control-plane-benchmark` exercises deterministic in-process assignment/report invariants. Its output explicitly states that it runs no media probes and is not capacity certification.
 
@@ -127,8 +131,8 @@ VideoSim should split into a master control plane and many worker nodes:
   These are static admission counts, not weighted cost or media capacity.
 - Worker concurrency and built-in probe waits are bounded when configured, but
   black/frozen validation can still be expensive. Arbitrary checker/trickling-
-  HTTP preemption, weighted check-cost/tenant tokens, fleet pressure/recovery
-  telemetry, spool key rotation/repair, and durable fleet-queue backpressure
+  HTTP preemption, weighted check-cost/tenant tokens, pressure history/alerts/
+  recovery SLOs, spool key rotation/repair, and durable fleet-queue backpressure
   remain open. Workers bound local probe submissions to one phase-specific
   concurrency window, rotate validation deferred by aggregate budget pressure,
   shed the deep phase, and stagger deep retries at stable per-stream offsets.

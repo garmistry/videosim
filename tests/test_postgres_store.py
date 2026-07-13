@@ -1206,7 +1206,17 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
         version = self.store.upsert(feed(feed_id))
         worker_id = f"worker-{uuid.uuid4()}"
         incarnation = uuid.uuid4()
-        self.store.register_worker(worker_id, incarnation, f"CN={worker_id}")
+        pressure = {
+            "assignedStreams": 12,
+            "cycleActive": False,
+            "lastValidationDeferred": 3,
+        }
+        self.store.register_worker(
+            worker_id,
+            incarnation,
+            f"CN={worker_id}",
+            capacity={"pressure": pressure},
+        )
         lease = self.activate_lease(feed_id, worker_id, incarnation)
         result = CheckResult(
             uuid.uuid4(),
@@ -1227,6 +1237,7 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
             any(item["streamId"] == feed_id for item in projection["alarms"])
         )
         self.assertEqual(projection["workerProbeMetrics"][worker_id]["streams"][0]["check"], "validation")
+        self.assertEqual(projection["workers"][0]["pressure"], pressure)
 
     def test_simultaneous_reports_accept_one_authoritative_sequence(self):
         feed_id = f"feed-{uuid.uuid4()}"

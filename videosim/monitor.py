@@ -34,6 +34,7 @@ from .validator import ValidationReport, validate_config
 
 
 DEFAULT_MONITOR_STATE_PATH = "/tmp/videosim-monitor/state.json"
+BATCH_BUDGET_EXHAUSTED = "validation phase exhausted batch budget"
 
 
 @dataclass(frozen=True)
@@ -648,7 +649,7 @@ def _run_monitor_concurrent(
                 and batch_budget_seconds
                 and monotonic() - started >= batch_budget_seconds
             ):
-                defer_validation_reason = "validation phase exhausted batch budget"
+                defer_validation_reason = BATCH_BUDGET_EXHAUSTED
                 break
             batch = validation_order[offset : offset + max_concurrency]
             validation_results.extend(
@@ -691,7 +692,7 @@ def _run_monitor_concurrent(
             for stream_id, context in result.get("_probeContexts", {}).items()
         }
         defer_deep_reason = defer_validation_reason or (
-            "validation phase exhausted batch budget"
+            BATCH_BUDGET_EXHAUSTED
             if batch_budget_seconds and monotonic() - started >= batch_budget_seconds
             else ""
         )

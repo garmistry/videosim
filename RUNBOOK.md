@@ -479,6 +479,17 @@ phase defers. In-flight checks still run to their per-stream deadline. This
 bounds the local executor queue but is not a durable queue, measured capacity,
 or protocol/tenant cost fairness. Report delivery pressure is handled by the
 encrypted spool below.
+Inspect each durable worker's latest pressure snapshot through `/state.json`:
+
+```sh
+curl -fsS http://127.0.0.1:8080/state.json | jq '.workers[] | {id, pressure}'
+```
+
+`cycleActive` identifies an in-progress cycle; `lastValidationDeferred`,
+`lastDeepDeferred`, and `lastBatchDurationMs` describe the previous completed
+cycle; `spoolBlocked`, `spoolQueuedReports`, and `spoolBytes` describe local
+delivery pressure. The snapshot advances on heartbeats and has no history or
+alert policy; retain external observations when diagnosing saturation/recovery.
 
 For worker API v2, configure all three spool controls together:
 

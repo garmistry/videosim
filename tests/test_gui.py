@@ -41,6 +41,11 @@ class GuiTest(unittest.TestCase):
         for capacity in (
             {"maxConcurrentChecks": 0},
             {"maxConcurrentDeepChecks": 0},
+            {"pressure": []},
+            {"pressure": {"assignedStreams": -1}},
+            {"pressure": {"cycleActive": 1}},
+            {"pressure": {"lastBatchDurationMs": float("inf")}},
+            {"pressure": {"unknown": 1}},
             {"streamBudgetSeconds": float("inf")},
             {"deepCheckIntervalSeconds": "60"},
             {"batchBudgetSeconds": 0},

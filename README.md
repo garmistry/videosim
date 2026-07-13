@@ -86,13 +86,17 @@ windows. After the budget is consumed, the worker stops starting validation,
 records deferred streams as inconclusive, rotates them to the front of the next
 cycle, and skips the deep phase. This bounds the local executor queue, not media
 capacity or a durable fleet queue.
+Long-running workers publish a bounded `capacity.pressure` snapshot on their
+independent heartbeat. PostgreSQL `/state.json` exposes it as
+`workers[].pressure`, including active-cycle, deferral, batch-duration, and
+spool-occupancy fields. This is current state, not historical capacity evidence.
 Worker API v2 can enable an authenticated-encrypted write-ahead report spool
 with `--report-spool-dir`, `--report-spool-key-file`, and
 `--report-spool-max-bytes`. All three are required. Pending reports replay
 before a new incarnation registers, and new probes pause while delivery is
 blocked. The production Compose overlay enables a persistent 512 MiB spool.
-With concurrent checks enabled, every assigned stream finishes validation
-before the worker starts TR-101, frame-rate, or loudness checks.
+With concurrent checks enabled, admitted validation windows finish before the
+worker starts TR-101, frame-rate, or loudness checks.
 
 Run a feed directly from the CLI:
 

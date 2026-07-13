@@ -17,8 +17,8 @@ from .feed import require_gst_launch
 
 FIXTURE_SCHEMA = "videosim.fixture-fleet/v1"
 BEHAVIORS = ("healthy", "slow", "dead", "malformed")
-# ponytail: fixed batching; tune only from fixture-host media saturation evidence.
-SRT_FANOUT_SIZE = 16
+# ponytail: one relay per endpoint; multi-sink relays failed concurrent reconnect sweeps.
+SRT_FANOUT_SIZE = 1
 SRT_MULTICAST_GROUP = "239.255.42.42"
 
 
@@ -239,6 +239,7 @@ def srt_fixture_commands(manifest: dict) -> list[list[str]]:
                     "fanout.",
                     "!",
                     "queue",
+                    "leaky=downstream",
                     *listener(port),
                 ]
             )

@@ -250,6 +250,12 @@ The verifier checks workload/headroom/failure-domain declarations, all ten
 admission criteria, run duration, skipped checks, artifact paths and SHA-256
 hashes. It does not generate the required 24-hour production-like evidence.
 
+The current multi-host run candidate is
+`scale/workloads/f5-1000-candidate.json`: 33 workers split evenly across three
+failure domains. Losing one domain leaves 22 workers with exact capacity for
+1,320 streams, including 660 SRT and 660 DASH. This is checked configuration,
+not an approved capacity result.
+
 ## Documentation
 
 - [Runbook](RUNBOOK.md): install, run, verify, operate, and troubleshoot.

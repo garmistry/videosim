@@ -644,6 +644,14 @@ with about 954% aggregate worker CPU before fixture CPU. Do not raise local
 concurrency further; distribute this workload across real failure domains and
 rerun the same strict reports.
 
+Use `scale/workloads/f5-1000-candidate.json` for that distributed run. Place 11
+of its 33 workers in each of three independent failure domains. Each worker has
+60 total, 30 SRT, and 30 DASH admission tokens; after losing any one domain,
+the 22 survivors retain exact 1,320/660/660 total/SRT/DASH capacity. Run the
+declared domain-loss and endpoint-fault storms and retain every required
+artifact for `capacity-check`. If measured hosts cannot sustain this shape,
+revise the candidate before rerunning rather than weakening the admission gate.
+
 For a strict rotation run with eight admitted validations per cycle:
 
 ```sh
@@ -718,10 +726,11 @@ Artifact paths must be relative to the evidence report and every declared
 SHA-256 must match. The workload must declare the protocol/source mix,
 region/zone placement, check cadence, endpoint and event-storm distributions,
 worker/failure-domain shape, infrastructure versions, 24-hour duration, 1,000
-target streams, 1,300 load streams, and one unavailable failure domain. Survivor
-total/SRT/DASH tokens must carry that declared load. The report must have a
-clean source commit, immutable image digests, all required raw artifacts, no
-skipped checks, and passing detail for all ten admission criteria.
+target streams, at least 1,300 load streams, and one unavailable failure domain.
+The checked-in candidate declares 1,320 load streams. Survivor total/SRT/DASH
+tokens must carry the declared protocol load. The report must have a clean
+source commit, immutable image digests, all required raw artifacts, no skipped
+checks, and passing detail for all ten admission criteria.
 
 Exit zero proves only that a complete, untampered bundle satisfies the policy.
 The repository does not yet contain the production-like run or evidence needed

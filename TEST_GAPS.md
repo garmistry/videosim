@@ -73,7 +73,10 @@ implementation and must pass before those milestones advance.
   admission evidence remain missing and must not be inferred from it. The F5
   policy and `capacity-check` now fail closed on missing/tampered artifacts,
   weak workload/headroom declarations, skipped checks, or incomplete admission
-  criteria; this verifier is not the missing workload or evidence bundle.
+  criteria. `scale/workloads/f5-1000-candidate.json` passes that workload
+  contract with 33 workers across three domains and exact 1,320/660/660
+  total/SRT/DASH survivor tokens after one domain loss, but it has not been run
+  or approved and is not the missing evidence bundle.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
@@ -122,8 +125,9 @@ implementation and must pass before those milestones advance.
   gap gate and the worst upper bound was 99.052 seconds. Protocol outcomes were
   SRT 41 success/124 issue/1,155 timeout and DASH 1,056 success/66 issue/198
   timeout. The single host reached 5.31 GiB, 7,386 processes/threads, and about
-  954% worker CPU before fixture CPU. Multi-host failure-domain capacity remains
-  untested and is required before another F5 claim.
+  954% worker CPU before fixture CPU. The checked-in 33-worker candidate moves
+  this survivor shape across three domains, but multi-host failure-domain
+  capacity remains untested and is required before another F5 claim.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

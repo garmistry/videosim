@@ -239,11 +239,16 @@ class ScaleEvidenceTest(unittest.TestCase):
         self.assertIn("policy.requiredCriteria omits baseline values", combined)
         self.assertIn("policy.requiredArtifactKinds omits baseline values", combined)
 
-    def test_repository_f5_policy_accepts_complete_fixture(self):
-        policy_path = (
-            Path(__file__).resolve().parents[1] / "scale/policies/f5-1000.json"
-        )
+    def test_repository_f5_policy_accepts_checked_in_candidate(self):
+        root = Path(__file__).resolve().parents[1]
+        policy_path = root / "scale/policies/f5-1000.json"
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        self.workload = json.loads(
+            (root / "scale/workloads/f5-1000-candidate.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.rewrite_workload()
         self.evidence["acceptancePolicyVersion"] = policy["policyVersion"]
         self.report_path.write_text(
             json.dumps(self.evidence, sort_keys=True), encoding="utf-8"
@@ -252,6 +257,20 @@ class ScaleEvidenceTest(unittest.TestCase):
         check = check_scale_evidence(self.report_path, policy_path)
 
         self.assertTrue(check.passed, check.errors)
+        self.assertEqual((check.target_streams, check.load_streams), (1000, 1320))
+        shape = self.workload["workerShape"]
+        survivor_workers = shape["count"] - max(
+            shape["failureDomainWorkerCounts"]
+        )
+        self.assertEqual(
+            (
+                survivor_workers,
+                survivor_workers * shape["maxStreams"],
+                survivor_workers * shape["maxSrtStreams"],
+                survivor_workers * shape["maxDashStreams"],
+            ),
+            (22, 1320, 660, 660),
+        )
 
 
 if __name__ == "__main__":

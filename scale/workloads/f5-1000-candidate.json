@@ -1,0 +1,83 @@
+{
+  "checkProfiles": [
+    {
+      "cadenceSeconds": 90,
+      "name": "full-media"
+    },
+    {
+      "cadenceSeconds": 3600,
+      "name": "deep-media"
+    }
+  ],
+  "durationSeconds": 86400,
+  "endpointDistribution": {
+    "deadPercent": 5,
+    "healthyPercent": 80,
+    "latencyMs": {
+      "p50": 50,
+      "p95": 10000,
+      "p99": 15000
+    },
+    "malformedPercent": 5,
+    "slowPercent": 10
+  },
+  "eventStorms": [
+    {
+      "kind": "worker-domain-loss",
+      "offsetSeconds": 3600
+    },
+    {
+      "kind": "endpoint-fault-storm",
+      "offsetSeconds": 7200
+    }
+  ],
+  "expectedInvariants": [
+    "one authoritative lease per stream",
+    "zero stale reports accepted",
+    "all 1320 streams retain bounded validation service",
+    "survivors retain 660 SRT and 660 DASH capacity tokens"
+  ],
+  "failureDomainsUnavailable": 1,
+  "headroomPercent": 32,
+  "infrastructureVersions": {
+    "nats": "2.11",
+    "postgres": "17",
+    "videosim": "candidate"
+  },
+  "loadStreams": 1320,
+  "placement": {
+    "regions": [
+      "candidate-lab"
+    ],
+    "zones": [
+      "candidate-zone-a",
+      "candidate-zone-b",
+      "candidate-zone-c"
+    ]
+  },
+  "protocolMix": {
+    "dashPercent": 50,
+    "srtPercent": 50
+  },
+  "randomSeed": 17,
+  "schemaVersion": "videosim.scale-workload/v1",
+  "sourceMix": {
+    "externalPercent": 100,
+    "generatedPercent": 0
+  },
+  "targetStreams": 1000,
+  "workerShape": {
+    "count": 33,
+    "failureDomainWorkerCounts": [
+      11,
+      11,
+      11
+    ],
+    "failureDomains": 3,
+    "maxConcurrentChecks": 12,
+    "maxConcurrentDeepChecks": 2,
+    "maxDashStreams": 30,
+    "maxSrtStreams": 30,
+    "maxStreams": 60
+  }
+}

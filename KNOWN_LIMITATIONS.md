@@ -71,8 +71,9 @@
   demand must not be treated as measured media capacity. See
   `docs/production-readiness-audit.md` and
   `docs/distributed-implementation-progress.md` for remaining blockers and
-  gates. `capacity-check` now rejects incomplete or tampered F5 bundles, but no
-  production-like workload result exists for it to admit. `worker-benchmark`
+  gates. `capacity-check` now rejects incomplete or tampered F5 bundles. The
+  checked-in three-domain candidate passes its workload contract, but no
+  production-like result exists for the verifier to admit. `worker-benchmark`
   runs real probes from a supplied state scenario, but measures one worker and
   does not provide fixtures, distributed load, failure injection, or a capacity
   decision. `fixture-fleet` provides deterministic DASH and SRT healthy/slow/
@@ -96,7 +97,8 @@
 - Correcting the budget does not make the current single-host environment
   sufficient. A 22-survivor, 12-token, 15-second run failed the 90-second gate
   on 14 workers and saturated local CPU/process capacity. This repository has
-  no measured multi-host failure-domain deployment to replace that failed run.
+  a 33-worker/three-domain candidate sized to retain those 22 survivors, but no
+  measured multi-host deployment to replace that failed run.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

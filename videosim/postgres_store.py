@@ -336,6 +336,48 @@ class PostgresControlPlaneStore:
             with connection.transaction():
                 return self._upsert_feed_in_transaction(connection, config)
 
+    def import_feeds_if_changed(
+        self,
+        feeds: Iterable[Mapping],
+        *,
+        reject_unlisted: bool = False,
+    ) -> int:
+        configs = []
+        feed_ids = set()
+        for feed in feeds:
+            config = dict(feed)
+            config.pop("config_version", None)
+            feed_id = config.get("id")
+            if not isinstance(feed_id, str) or not feed_id:
+                raise ValueError("imported feed ID must be a non-empty string")
+            if feed_id in feed_ids:
+                raise ValueError(f"imported feed IDs must be unique: {feed_id}")
+            feed_ids.add(feed_id)
+            configs.append(config)
+        configs.sort(key=lambda item: item["id"])
+
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                if reject_unlisted:
+                    connection.execute("LOCK TABLE feeds IN SHARE ROW EXCLUSIVE MODE")
+                    unlisted = connection.execute(
+                        """
+                        SELECT id FROM feeds
+                        WHERE tenant_id = %s AND NOT (id = ANY(%s::text[]))
+                        ORDER BY id
+                        LIMIT 1
+                        """,
+                        (self.tenant_id, sorted(feed_ids)),
+                    ).fetchone()
+                    if unlisted is not None:
+                        raise PostgresStoreError(
+                            f"catalog contains unlisted feed: {unlisted['id']}"
+                        )
+                return sum(
+                    self._upsert_feed_in_transaction(connection, config)[0]
+                    for config in configs
+                )
+
     def upsert_with_audit(
         self,
         feed: Mapping,

@@ -1,0 +1,17 @@
+{
+  "advertisedHost": "fixture-domain.example.test",
+  "basePort": 22000,
+  "behaviorEndpointCounts": {
+    "dead": 11,
+    "healthy": 176,
+    "malformed": 11,
+    "slow": 22
+  },
+  "framerate": 10,
+  "height": 180,
+  "profile": "profiles/srt-normal.yaml",
+  "protocol": "srt",
+  "schemaVersion": "videosim.fixture-fleet/v1",
+  "slowDelaySeconds": 30,
+  "width": 320
+}

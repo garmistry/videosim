@@ -1,0 +1,19 @@
+{
+  "advertisedHost": "fixture-domain.example.test",
+  "behaviorEndpointCounts": {
+    "dead": 11,
+    "healthy": 176,
+    "malformed": 11,
+    "slow": 22
+  },
+  "bindHost": "0.0.0.0",
+  "dashDir": "/tmp/videosim-fixtures/dash-endpoints-220-domain",
+  "framerate": 10,
+  "height": 180,
+  "httpPort": 18083,
+  "profile": "profiles/dash-normal.yaml",
+  "protocol": "dash",
+  "schemaVersion": "videosim.fixture-fleet/v1",
+  "slowDelaySeconds": 30,
+  "width": 320
+}

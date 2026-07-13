@@ -53,6 +53,24 @@ class FixtureFleetTest(unittest.TestCase):
                     {"healthy": 400, "slow": 50, "dead": 25, "malformed": 25},
                 )
 
+    def test_repository_domain_manifests_build_exact_headroom_shards(self):
+        for protocol in ("srt", "dash"):
+            with self.subTest(protocol=protocol):
+                manifest, digest = load_fixture_manifest(
+                    ROOT
+                    / f"scale/fixtures/{protocol}-endpoints-220-domain.json"
+                )
+                state = fixture_state(manifest, digest)
+
+                self.assertEqual(len(state["streams"]), 220)
+                self.assertEqual(
+                    len({stream["endpoint"] for stream in state["streams"]}), 220
+                )
+                self.assertEqual(
+                    state["behaviorEndpointCounts"],
+                    {"healthy": 176, "slow": 22, "dead": 11, "malformed": 11},
+                )
+
     def test_repository_dash_manifest_builds_four_benchmark_streams(self):
         manifest, digest = load_fixture_manifest(
             ROOT / "scale/fixtures/dash-matrix.json"

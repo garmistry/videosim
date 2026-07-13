@@ -93,6 +93,45 @@ class FixtureScenarioTest(unittest.TestCase):
             len({stream["endpoint"] for stream in scenario["streams"]}), 1320
         )
 
+    def test_repository_domain_shards_compose_1320_distinct_urls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            states = {protocol: [] for protocol in ("srt", "dash")}
+            for protocol in states:
+                for shard in range(3):
+                    manifest, digest = load_fixture_manifest(
+                        ROOT
+                        / f"scale/fixtures/{protocol}-endpoints-220-domain.json"
+                    )
+                    manifest["advertisedHost"] = (
+                        f"fixture-{shard + 1}.example.test"
+                    )
+                    path = Path(directory) / f"{protocol}-{shard + 1}.json"
+                    path.write_text(
+                        json.dumps(fixture_state(manifest, digest)), encoding="utf-8"
+                    )
+                    states[protocol].append(str(path))
+            output = Path(directory) / "output.json"
+
+            with patch("builtins.print"):
+                run_fixture_scenario(
+                    str(ROOT / "scale/fixtures/mixed-1320.json"),
+                    states["srt"],
+                    states["dash"],
+                    str(output),
+                )
+            scenario = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(scenario["fixtureStateCounts"], {"srt": 3, "dash": 3})
+        self.assertFalse(scenario["logicalStreamsShareEndpoints"])
+        self.assertEqual(scenario["protocolCounts"], {"srt": 660, "dash": 660})
+        self.assertEqual(
+            scenario["behaviorCounts"],
+            {"healthy": 1056, "slow": 132, "dead": 66, "malformed": 66},
+        )
+        self.assertEqual(
+            len({stream["endpoint"] for stream in scenario["streams"]}), 1320
+        )
+
     def test_rejects_invalid_percentages_and_missing_fixture_behavior(self):
         with tempfile.TemporaryDirectory() as directory:
             srt = self.write_fixture_state(directory, "srt")

@@ -707,6 +707,11 @@ def run_worker(
                 base_seconds=retry_base_seconds,
             )
             registered = True
+            print(
+                f"[videosim-worker] worker={worker_id} "
+                f"incarnation={worker_incarnation_id} state=registered",
+                flush=True,
+            )
         while True:
             if drain_requested.is_set():
                 finish_drain()

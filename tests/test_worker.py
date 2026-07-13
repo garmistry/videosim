@@ -311,7 +311,9 @@ class WorkerTest(unittest.TestCase):
             "videosim.worker.post_heartbeat", return_value={"ok": True}
         ), patch(
             "videosim.worker.run_monitor_once", return_value=monitor_state
-        ) as monitor, patch("videosim.worker.post_report", return_value={"ok": True}):
+        ) as monitor, patch(
+            "videosim.worker.post_report", return_value={"ok": True}
+        ), patch("builtins.print") as output:
             self.assertEqual(
                 run_worker(
                     "http://master:8080",
@@ -340,6 +342,7 @@ class WorkerTest(unittest.TestCase):
                 "batch_budget_seconds": 20,
             },
         )
+        self.assertIn("state=registered", output.call_args.args[0])
 
     def test_run_worker_v2_acknowledges_lease_and_posts_stable_report_identity(self):
         assignments = durable_assignment()

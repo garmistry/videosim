@@ -1452,7 +1452,10 @@ class PostgresControlPlaneIntegrationTest(unittest.TestCase):
             any(item["streamId"] == feed_id for item in projection["alarms"])
         )
         self.assertEqual(projection["workerProbeMetrics"][worker_id]["streams"][0]["check"], "validation")
-        self.assertEqual(projection["workers"][0]["pressure"], pressure)
+        projected_worker = next(
+            worker for worker in projection["workers"] if worker["id"] == worker_id
+        )
+        self.assertEqual(projected_worker["pressure"], pressure)
 
     def test_simultaneous_reports_accept_one_authoritative_sequence(self):
         feed_id = f"feed-{uuid.uuid4()}"

@@ -306,33 +306,48 @@ class ScaleEvidenceTest(unittest.TestCase):
             worker["id"]
             for worker in workers[: max(shape["failureDomainWorkerCounts"])]
         }
-        preferred_owners = {
+        baseline_owners = {
             stream.id: worker_id
             for worker_id, assigned in initial.items()
             for stream in assigned
         }
-
-        reassigned, shortfall = capacity_aware_assignments(
-            [worker for worker in workers if worker["id"] not in failed_workers],
-            streams,
-            preferred_owners=preferred_owners,
-        )
+        active_workers = list(workers)
+        reassigned = initial
+        shortfalls = [initial_shortfall]
+        for failed_worker in workers[: max(shape["failureDomainWorkerCounts"])]:
+            active_workers = [
+                worker
+                for worker in active_workers
+                if worker["id"] != failed_worker["id"]
+            ]
+            preferred_owners = {
+                stream.id: worker_id
+                for worker_id, assigned in reassigned.items()
+                if worker_id != failed_worker["id"]
+                for stream in assigned
+            }
+            reassigned, shortfall = capacity_aware_assignments(
+                active_workers,
+                streams,
+                preferred_owners=preferred_owners,
+            )
+            shortfalls.append(shortfall)
         new_owners = {
             stream.id: worker_id
             for worker_id, assigned in reassigned.items()
             for stream in assigned
         }
 
-        self.assertEqual((initial_shortfall, shortfall), (0, 0))
+        self.assertEqual(set(shortfalls), {0})
         self.assertEqual(
             {
                 stream_id
-                for stream_id, owner in preferred_owners.items()
+                for stream_id, owner in baseline_owners.items()
                 if new_owners[stream_id] != owner
             },
             {
                 stream_id
-                for stream_id, owner in preferred_owners.items()
+                for stream_id, owner in baseline_owners.items()
                 if owner in failed_workers
             },
         )

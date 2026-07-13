@@ -85,6 +85,7 @@ services:
       VIDEOSIM_DATABASE_URL: "postgresql://videosim_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-videosim}"
       VIDEOSIM_DB_POOL_MIN: "${VIDEOSIM_DB_POOL_MIN:-1}"
       VIDEOSIM_DB_POOL_MAX: "${VIDEOSIM_DB_POOL_MAX:-10}"
+      VIDEOSIM_WORKER_FRESHNESS_SECONDS: "${VIDEOSIM_WORKER_FRESHNESS_SECONDS:-30}"
       VIDEOSIM_ALARM_REPEAT_SECONDS: "${VIDEOSIM_ALARM_REPEAT_SECONDS:-5}"
       VIDEOSIM_ALARM_EVENT_HISTORY_LIMIT: "${VIDEOSIM_ALARM_EVENT_HISTORY_LIMIT:-1000}"
       VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS: "${VIDEOSIM_ALARM_EVENT_RETENTION_SECONDS:-604800}"
@@ -196,7 +197,7 @@ services:
       --control-plane-url https://proxy:9443
       --worker-id worker-1
       --srt-host app
-      --heartbeat-interval-seconds 20
+      --heartbeat-interval-seconds ${VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS:-5}
       --tls-ca-file /etc/videosim/certs/server-ca.crt
       --tls-cert-file /etc/videosim/certs/worker-1.crt
       --tls-key-file /etc/videosim/certs/worker-1.key

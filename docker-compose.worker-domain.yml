@@ -5,6 +5,7 @@ x-worker-environment: &worker-environment
   VIDEOSIM_SRT_HOST: "${VIDEOSIM_SRT_HOST:?set the generated-feed SRT host}"
   VIDEOSIM_STREAM_BUDGET_SECONDS: "${VIDEOSIM_STREAM_BUDGET_SECONDS:?set the measured stream budget}"
   VIDEOSIM_DEEP_CHECK_INTERVAL_SECONDS: "${VIDEOSIM_DEEP_CHECK_INTERVAL_SECONDS:?set the deep-check interval}"
+  VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS: "${VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS:-5}"
   VIDEOSIM_WORKER_SPOOL_MAX_BYTES: "${VIDEOSIM_WORKER_SPOOL_MAX_BYTES:-536870912}"
 
 x-worker: &worker
@@ -45,7 +46,7 @@ x-worker: &worker
         --srt-host "$${VIDEOSIM_SRT_HOST}" \
         --poll-interval-seconds 5 \
         --repeat-interval-seconds 5 \
-        --heartbeat-interval-seconds 20 \
+        --heartbeat-interval-seconds "$${VIDEOSIM_WORKER_HEARTBEAT_INTERVAL_SECONDS}" \
         --tls-ca-file /etc/videosim/certs/server-ca.crt \
         --tls-cert-file "/etc/videosim/certs/$${VIDEOSIM_WORKER_ID}.crt" \
         --tls-key-file "/etc/videosim/certs/$${VIDEOSIM_WORKER_ID}.key" \

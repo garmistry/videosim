@@ -77,7 +77,9 @@ implementation and must pass before those milestones advance.
 - Worker heartbeats now expose completed-batch CPU delta, cumulative worker and
   child peak RSS, and Linux post-batch descriptor count. There is no time-series
   retention, child aggregate/peak-concurrency RSS, media byte/socket accounting,
-  representative per-check baseline, or saturation curve yet.
+  representative per-check baseline, or saturation curve yet. `worker-benchmark`
+  can produce the single-worker real-probe report from an exported state, but no
+  representative scenario result has been committed or admitted.
 - The v2 heartbeat renews durable membership and matching active leases, but
   still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
   covered, and bounded stream-level concurrency has unit coverage, but worker

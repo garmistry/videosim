@@ -545,6 +545,31 @@ The report must say `scope=in_process_control_plane_only`,
 coverage, unique ownership, contract metadata, and report acceptance in one
 process. It does not run SRT/DASH media checks or satisfy a scale-admission gate.
 
+Measure the real worker probe path against a captured state scenario:
+
+```sh
+mkdir -p artifacts/worker-benchmark
+curl -fsS http://127.0.0.1:8080/state.json \
+  > artifacts/worker-benchmark/state.json
+python3 -m videosim worker-benchmark \
+  --scenario artifacts/worker-benchmark/state.json \
+  --iterations 3 --warmup-iterations 1 \
+  --max-concurrent-checks 8 --max-concurrent-deep-checks 2 \
+  --stream-budget-seconds 30 --batch-budget-seconds 300 --json \
+  > artifacts/worker-benchmark/report.json
+```
+
+The scenario uses the existing GUI `/state.json` shape and must contain unique
+running stream IDs with endpoints reachable from the benchmark host. The report
+hashes that scenario and records real probe cycle/CPU percentiles, outcomes,
+worker/child peak RSS, and post-cycle Linux descriptors. A passing report means
+every running stream produced probe metrics in every measured cycle; outage
+outcomes remain measurements. Run separate scenarios at increasing per-worker
+stream counts to build a saturation curve.
+
+This is a single-worker measurement. It does not prove fleet headroom, lease
+correctness, HA/failover, or 24-hour stability.
+
 ### Scale evidence admission
 
 After a production-like run has produced its immutable bundle, verify it against

@@ -164,6 +164,19 @@ python3 -m videosim control-plane-benchmark --streams 1000 --workers 10 --iterat
 
 This command runs no media probes and is not evidence of 1,000-stream monitoring capacity.
 
+Measure one worker against live endpoints from an exported GUI state:
+
+```sh
+python3 -m videosim worker-benchmark \
+  --scenario artifacts/worker-state.json \
+  --iterations 3 --warmup-iterations 1 \
+  --max-concurrent-checks 8 --max-concurrent-deep-checks 2 --json
+```
+
+This runs real media probes and reports latency, CPU, peak RSS, descriptors, and
+outcomes. It measures only the supplied worker scenario and does not certify
+fleet capacity.
+
 Verify a completed scale-evidence bundle against the fail-closed F5 policy:
 
 ```sh

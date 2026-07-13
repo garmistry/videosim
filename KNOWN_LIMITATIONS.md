@@ -72,7 +72,10 @@
   `docs/production-readiness-audit.md` and
   `docs/distributed-implementation-progress.md` for remaining blockers and
   gates. `capacity-check` now rejects incomplete or tampered F5 bundles, but no
-  production-like workload result exists for it to admit.
+  production-like workload result exists for it to admit. `worker-benchmark`
+  runs real probes from a supplied state scenario, but measures one worker and
+  does not provide fixtures, distributed load, failure injection, or a capacity
+  decision.
 
 ## Monitoring
 

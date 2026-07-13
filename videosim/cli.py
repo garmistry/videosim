@@ -34,6 +34,8 @@ from .soak import run_gui_soak
 from .soak import run_soak
 from .validator import human_summary, validate_config
 from .worker import build_ssl_context, default_worker_id, run_worker
+from .worker_benchmark import human_summary as worker_benchmark_summary
+from .worker_benchmark import run_worker_benchmark
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -195,6 +197,21 @@ def build_parser() -> argparse.ArgumentParser:
     capacity_check.add_argument("--report", required=True)
     capacity_check.add_argument("--policy", required=True)
     capacity_check.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    worker_benchmark = subparsers.add_parser(
+        "worker-benchmark",
+        help="measure one worker running real probes from an exported state scenario",
+    )
+    worker_benchmark.add_argument("--scenario", required=True)
+    worker_benchmark.add_argument("--iterations", type=int, default=3)
+    worker_benchmark.add_argument("--warmup-iterations", type=int, default=1)
+    worker_benchmark.add_argument("--srt-host", default="127.0.0.1")
+    worker_benchmark.add_argument("--max-concurrent-checks", type=int, default=1)
+    worker_benchmark.add_argument("--max-concurrent-deep-checks", type=int, default=0)
+    worker_benchmark.add_argument("--stream-budget-seconds", type=float, default=0)
+    worker_benchmark.add_argument("--deep-check-interval-seconds", type=float, default=0)
+    worker_benchmark.add_argument("--batch-budget-seconds", type=float, default=0)
+    worker_benchmark.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     gui = subparsers.add_parser("gui", help="launch the local browser GUI")
     gui.add_argument("--host", default="127.0.0.1")
@@ -455,6 +472,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "capacity-check":
             report = check_scale_evidence(args.report, args.policy)
             print(report.to_json() if args.json else scale_evidence_summary(report))
+            return 0 if report.passed else 1
+
+        if args.command == "worker-benchmark":
+            report = run_worker_benchmark(
+                args.scenario,
+                args.iterations,
+                args.warmup_iterations,
+                args.srt_host,
+                args.max_concurrent_checks,
+                args.max_concurrent_deep_checks,
+                args.stream_budget_seconds,
+                args.deep_check_interval_seconds,
+                args.batch_budget_seconds,
+            )
+            print(report.to_json() if args.json else worker_benchmark_summary(report))
             return 0 if report.passed else 1
 
         if args.command == "worker":

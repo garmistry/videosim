@@ -651,10 +651,11 @@ python -m videosim chaos --scenario worker-partition|db-failover|event-storm
 python -m videosim capacity-check --report <report.json> --policy <gate.json>
 ```
 
-`capacity-check` is now implemented with JSON evidence/policy inputs and the
-versioned F5 policy at `scale/policies/f5-1000.json`. The remaining proposed
-harnesses and the production-like evidence they must generate are not
-implemented; verifier availability is not scale admission.
+`worker-benchmark` and `capacity-check` are now implemented. The worker command
+runs real probes from an exported-state scenario; the capacity command checks
+JSON evidence/policy inputs against `scale/policies/f5-1000.json`. The remaining
+proposed harnesses and production-like evidence are not implemented; harness
+availability is not scale admission.
 
 CI should run unit/contract/security fixture tests. Representative load, soak, failover, and DR run in a production-like scheduled environment and publish immutable reports tied to code, config, infrastructure version, and dataset.
 

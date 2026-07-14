@@ -192,11 +192,13 @@ class WorkerDomainFault:
         self.services = {f"worker-{number:02d}" for number in range(1, len(self.worker_ids) + 1)}
         self.artifact_dir = Path(args.artifact_dir).resolve()
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        self.baseline_timeout = args.baseline_timeout
         self.recovery_timeout = args.recovery_timeout
         self.rejoin_timeout = args.rejoin_timeout
         self.hold_seconds = args.hold_seconds
         self.poll_seconds = args.poll_seconds
         for name, value in (
+            ("baseline_timeout", self.baseline_timeout),
             ("recovery_timeout", self.recovery_timeout),
             ("rejoin_timeout", self.rejoin_timeout),
             ("hold_seconds", self.hold_seconds),
@@ -259,6 +261,17 @@ class WorkerDomainFault:
         report = verify_assignment_snapshot(snapshot, self.workload, baseline)
         return snapshot, report
 
+    def wait_for_baseline(self):
+        def ready():
+            snapshot, report = self.snapshot_report()
+            if report.passed and report.metrics.get("phase") == "baseline":
+                return snapshot, report
+            raise RuntimeError("; ".join(report.errors))
+
+        return self.wait_for(
+            "assignment baseline", ready, timeout=self.baseline_timeout
+        )
+
     def write_json(self, name: str, value: dict):
         (self.artifact_dir / name).write_text(
             json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -300,11 +313,7 @@ class WorkerDomainFault:
 
             if self.running_services() != self.services:
                 raise RuntimeError("worker domain is not fully running before fault")
-            baseline, baseline_report = self.snapshot_report()
-            if not baseline_report.passed or baseline_report.metrics.get("phase") != "baseline":
-                raise RuntimeError(
-                    "assignment baseline did not pass: " + "; ".join(baseline_report.errors)
-                )
+            baseline, baseline_report = self.wait_for_baseline()
             baseline_owners = authoritative_owners(baseline)
             affected = {
                 stream_id
@@ -454,6 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--database-url", default=os.environ.get("VIDEOSIM_DATABASE_URL", "")
     )
     parser.add_argument("--artifact-dir", required=True)
+    parser.add_argument("--baseline-timeout", type=float, default=120)
     parser.add_argument("--recovery-timeout", type=float, default=120)
     parser.add_argument("--rejoin-timeout", type=float, default=300)
     parser.add_argument("--hold-seconds", type=float, default=15)

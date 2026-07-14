@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,6 +133,37 @@ class WorkerDomainFaultTest(unittest.TestCase):
         self.assertLessEqual(metrics["p50"], metrics["p95"])
         self.assertLessEqual(metrics["p95"], metrics["p99"])
         self.assertEqual(metrics["maximum"], 5)
+
+    def test_assignment_baseline_retries_transient_failure(self):
+        workflow = object.__new__(FAULT["WorkerDomainFault"])
+        workflow.baseline_timeout = 0.1
+        workflow.poll_seconds = 0.001
+        attempts = iter(
+            [
+                (
+                    {"snapshot": 1},
+                    SimpleNamespace(
+                        passed=False,
+                        metrics={"phase": "baseline"},
+                        errors=["one worker heartbeat is temporarily stale"],
+                    ),
+                ),
+                (
+                    {"snapshot": 2},
+                    SimpleNamespace(
+                        passed=True,
+                        metrics={"phase": "baseline"},
+                        errors=[],
+                    ),
+                ),
+            ]
+        )
+        workflow.snapshot_report = lambda: next(attempts)
+
+        snapshot, report = workflow.wait_for_baseline()
+
+        self.assertEqual(snapshot, {"snapshot": 2})
+        self.assertTrue(report.passed)
 
 
 @unittest.skipUnless(

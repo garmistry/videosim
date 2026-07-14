@@ -1190,6 +1190,12 @@ rejection, failover latency, probe freshness, or media health; retain those
 separate chaos/API/worker evidence. A same-host Compose test or a successful
 config render is not failure-domain or capacity evidence.
 
+Include `assignments-domain-loss.json` as the `assignment-domain-loss` artifact
+in the final F5 bundle. `capacity-check` rejects it unless its canonical
+workload digest, baseline snapshot digest format, selected candidate loss domain,
+22-worker survivor count, 1,320/660/660 desired and authoritative totals, and
+both 440 ownership-change values match the checked-in workload.
+
 For a strict rotation run with eight admitted validations per cycle:
 
 ```sh
@@ -1273,7 +1279,10 @@ checks, and passing detail for all ten admission criteria.
 For F5, the required `f5-domain-preflight` artifact is the passed coordinator
 report created above. `capacity-check` verifies its workload SHA-256 and image
 digest against the bundle, plus its 3-domain/33-worker/three-resource-snapshot
-and six-Docker-host shape.
+and six-Docker-host shape. It also requires the passed `assignment-domain-loss`
+report and binds its canonical workload digest, baseline snapshot digest format,
+one-domain survivor/protocol ownership totals, and exact ownership movement to
+the candidate.
 
 Exit zero proves only that a complete, untampered bundle satisfies the policy.
 The repository does not yet contain the production-like run or evidence needed

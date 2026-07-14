@@ -363,6 +363,13 @@ the full command. Include that passed report as the `f5-domain-preflight`
 artifact in the final capacity-evidence bundle; `capacity-check` binds its
 workload hash and image digest to the bundle.
 
+After the one-domain-loss assignment capture passes, include
+`assignments-domain-loss.json` as the `assignment-domain-loss` artifact in the
+same bundle. `capacity-check` requires its canonical workload digest, a valid
+baseline snapshot digest, the declared candidate loss domain, exact 22-worker
+survivor and 1,320/660/660 ownership totals, and both 440 ownership-change
+counts.
+
 After an endpoint-fault exercise, reconcile the durable result and alarm
 projections from one PostgreSQL snapshot:
 

@@ -203,7 +203,9 @@ VideoSim should split into a master control plane and many worker nodes:
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,
   dirty or skipped runs, path escape, and SHA-256 drift. The F5 policy also
   requires and binds the passed cross-domain preflight report to the workload
-  and immutable image; it runs no workload.
+  and immutable image, plus the passed one-domain assignment report to the
+  canonical workload digest, baseline digest format, survivor/protocol totals,
+  and expected ownership movement; it runs no workload.
 - `python -m videosim control-plane-load` drives the exact candidate shape in
   disposable PostgreSQL. Its declared endpoint storm commits separate
   all-stream `feed_reachable` unhealthy and healthy windows and verifies alarm

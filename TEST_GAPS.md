@@ -174,12 +174,13 @@ implementation and must pass before those milestones advance.
   digest, and six distinct bounded Linux Docker Engine identities. Synthetic
   command coverage rejects advertised-host, Engine-ID, worker-incarnation reuse,
   missing/incomplete/malformed/tampered resources, state/image drift, and a
-  non-F5 workload. The F5 policy requires this passed report and a passed
-  `assignment-domain-loss` report; it binds the preflight workload/image values
-  and the assignment report's canonical workload digest, baseline digest format,
-  expected one-domain survivor/protocol totals, and 440 ownership moves. Those
-  artifact checks do not prove physical host independence; no real six-engine
-  artifact set exists yet.
+  non-F5 workload. The F5 policy requires this passed report, a passed
+  `assignment-domain-loss` report, and a passed `alarm-consistency` report; it
+  binds the preflight workload/image values, assignment workload/baseline/loss
+  shape, and the alarm report's canonical workload digest, full 1,320-stream
+  coverage, alarm/outbox parity, and zero-violation check set. Those artifact
+  checks do not prove physical host independence; no real six-engine artifact
+  set exists yet.
 - Composed fixture states can now be imported into an exclusive PostgreSQL feed
   catalog through the production feed-generation and lease semantics. The
   importer validates complete external-feed configs, rejects shared endpoints

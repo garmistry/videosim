@@ -1167,6 +1167,12 @@ does not measure transition latency, broker/consumer delivery, retention beyond
 the captured window, independent-host behavior, or 24-hour stability; those
 remain separate admission evidence.
 
+Include `alarm-consistency.json` as the `alarm-consistency` artifact in the
+final F5 bundle. `capacity-check` rejects it unless its canonical workload
+digest, ISO-8601 capture time, tenant ID, 1,320 desired/observed counts, minimum
+result/current-check coverage, matching positive alarm/outbox counts, and all
+eight zero-violation consistency checks remain intact.
+
 At the declared domain-loss offset, stop all 11 services on one host. After the
 lease TTL and assignment-poll bound, the authenticated state must contain 22
 fresh workers at 60 assignments each. The immutable assignment capture must
@@ -1282,7 +1288,9 @@ digest against the bundle, plus its 3-domain/33-worker/three-resource-snapshot
 and six-Docker-host shape. It also requires the passed `assignment-domain-loss`
 report and binds its canonical workload digest, baseline snapshot digest format,
 one-domain survivor/protocol ownership totals, and exact ownership movement to
-the candidate.
+the candidate. The passed `alarm-consistency` report binds the canonical
+workload digest, identity/capture metadata, complete candidate stream coverage,
+alarm/outbox parity, and all expected zero-violation checks.
 
 Exit zero proves only that a complete, untampered bundle satisfies the policy.
 The repository does not yet contain the production-like run or evidence needed

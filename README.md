@@ -386,6 +386,12 @@ record. Use `--tenant-id` with the `tenantId` emitted by `control-plane-load`
 when inspecting its disposable database. It is a consistency gate, not the
 missing multi-host 24-hour run.
 
+Include that passed file as the `alarm-consistency` artifact in the final F5
+bundle. `capacity-check` binds its canonical workload digest, timestamp and
+tenant identity, exact 1,320 desired/observed counts, coverage of at least
+1,320 results/current checks, matching positive alarm/outbox counts, and all
+eight zero-violation consistency checks.
+
 Boot and validate one 11-worker domain with:
 
 ```sh

@@ -205,7 +205,9 @@ VideoSim should split into a master control plane and many worker nodes:
   requires and binds the passed cross-domain preflight report to the workload
   and immutable image, plus the passed one-domain assignment report to the
   canonical workload digest, baseline digest format, survivor/protocol totals,
-  and expected ownership movement; it runs no workload.
+  and expected ownership movement, plus the passed alarm report to the canonical
+  workload, candidate stream coverage, alarm/outbox parity, and expected
+  zero-violation checks; it runs no workload.
 - `python -m videosim control-plane-load` drives the exact candidate shape in
   disposable PostgreSQL. Its declared endpoint storm commits separate
   all-stream `feed_reachable` unhealthy and healthy windows and verifies alarm

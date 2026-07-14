@@ -916,11 +916,14 @@ files are mode `0600` or stricter, the spool key is valid, and the image uses
 an immutable digest. It renders and converges the existing Compose project,
 checks the control-plane health API from the host and from `worker-01`, then
 requires the exact 11-service set to stay up on one resolved image with zero
-restarts and no critical Docker-log marker. It also records the bounded Linux
-Docker Engine identity in `result.json` and leaves the domain running.
+restarts and no critical Docker-log marker. It requires one accepted
+registration log for every expected worker, rejects duplicate worker or
+incarnation IDs, and records those pairs plus the bounded Linux Docker Engine
+identity in `result.json`. It leaves the domain running.
 Retain `result.json`, `certificate-inventory.json`, `compose-config.json`,
-`compose-ps.txt`, `container-state.json`, `control-plane-health.json`, and
-`docker.log` from `VIDEOSIM_WORKER_STARTUP_ARTIFACT_DIR`.
+`compose-ps.txt`, `container-state.json`, `control-plane-health.json`,
+`worker-registration.json`, and `docker.log` from
+`VIDEOSIM_WORKER_STARTUP_ARTIFACT_DIR`.
 
 Repeat on all three hosts. In an OIDC-authenticated Chrome session, open the
 operator `/state.json` endpoint and verify 33 unique candidate worker IDs,
@@ -965,12 +968,13 @@ python3 scripts/f5-domain-preflight.py \
 
 Require `passed=true`, three unique advertised hosts, three workload failure
 domains, 660 SRT/660 DASH paths, 1,056/132/66/66 behavior counts, 33 unique
-worker IDs, one immutable image digest, `dockerHostCount=6`, and
+worker IDs, `workerRegistrationCount=33`, `workerIncarnationCount=33`, one
+immutable image digest, `dockerHostCount=6`, and
 `distinctDockerHostsValidated=true`. The verifier matches each fixture result
 to its state hashes, rejects duplicate cross-domain endpoints, validates each
-bounded startup host identity, and rejects any reused Docker Engine ID. A
-Docker daemon ID is stronger than an advertised name but cannot prove separate
-physical failure domains, so the report always keeps
+bounded startup host identity, and rejects any reused Docker Engine, worker,
+or incarnation ID. A Docker daemon ID is stronger than an advertised name but
+cannot prove separate physical failure domains, so the report always keeps
 `independentHostsCertified=false` and `capacityCertified=false`. Retain the
 report as preflight evidence, then prove physical topology separately.
 

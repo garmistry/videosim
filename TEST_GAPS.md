@@ -167,12 +167,13 @@ implementation and must pass before those milestones advance.
   fixture/worker hosts, loss/headroom, and the 24-hour run remain open.
 - `f5-domain-preflight.py` now fails closed unless three collected fixture
   result/SRT/DASH triplets and three worker results match the exact candidate:
-  1,320 distinct paths on three advertised hosts, 33 canonical worker IDs in
-  three zones, clean required startup checks/windows, matching state hashes,
-  one immutable image digest, and six distinct bounded Linux Docker Engine
-  identities. Synthetic command coverage rejects advertised-host or Engine-ID
-  reuse, tampering, image drift, and a non-F5 workload. Daemon IDs do not prove
-  physical host independence; no real six-engine artifact set exists yet.
+  1,320 distinct paths on three advertised hosts, 33 canonical accepted worker
+  IDs with unique incarnations in three zones, clean required startup
+  checks/windows, matching state hashes, one immutable image digest, and six
+  distinct bounded Linux Docker Engine identities. Synthetic command coverage
+  rejects advertised-host, Engine-ID, or worker-incarnation reuse, tampering,
+  image drift, and a non-F5 workload. Daemon IDs do not prove physical host
+  independence; no real six-engine artifact set exists yet.
 - Composed fixture states can now be imported into an exclusive PostgreSQL feed
   catalog through the production feed-generation and lease semantics. The
   importer validates complete external-feed configs, rejects shared endpoints
@@ -238,12 +239,13 @@ implementation and must pass before those milestones advance.
   limits. `worker-domain-startup.py` now validates one host's candidate zone,
   11 certificate CN/key pairs, private-file modes, immutable image reference,
   host and worker-path health APIs, bounded Docker Engine identity, exact stable
-  process set, image identity, restart counts, and Docker logs. A marked local
-  PostgreSQL-backed run passed all startup checks with 11 active 60/30/30
-  workers and clean spools, but used a mutable local image and HTTP control
-  path. The domain has not run with a production digest and HTTPS/mTLS path on
-  three independent hosts; host sizing, media load, physical domain loss, and
-  admission evidence remain open.
+  process set, accepted registration ID/incarnation pairs, image identity,
+  restart counts, and Docker logs. A marked local PostgreSQL-backed run passed
+  all startup checks with 11 active 60/30/30 workers, unique accepted
+  registrations, and clean spools, but used a mutable local image and HTTP
+  control path. The domain has not run with a production digest and HTTPS/mTLS
+  path on three independent hosts; host sizing, media load, physical domain
+  loss, and admission evidence remain open.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;

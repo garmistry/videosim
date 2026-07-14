@@ -138,16 +138,18 @@
 - The reusable worker-domain Compose file renders 11 uniquely identified,
   capacity-bounded workers per host. A host-local startup workflow validates
   certificates, image/process identity, two health API paths, restart counts,
-  and Docker logs; a local durable HTTP run registered all 11 workers. No
-  production immutable image over the remote HTTPS/mTLS path, three-host boot,
-  host sizing, media load, or physical domain-loss execution has passed.
+  exact accepted worker/incarnation registrations, and Docker logs; a local
+  durable HTTP run registered all 11 workers. No production immutable image
+  over the remote HTTPS/mTLS path, three-host boot, host sizing, media load, or
+  physical domain-loss execution has passed.
 - The cross-domain startup preflight validates three advertised fixture hosts,
-  three worker zones, exact endpoint/worker counts, retained state hashes, and
-  one immutable image digest, and requires six distinct bounded Linux Docker
-  Engine identities. Engine IDs prevent one daemon from masquerading under
-  multiple advertised names, but collected JSON cannot prove that distinct
-  daemons map to separate physical failure domains. The report therefore keeps
-  `independentHostsCertified=false` and `capacityCertified=false`.
+  three worker zones, exact endpoint/worker counts, 33 unique accepted worker
+  incarnations, retained state hashes, and one immutable image digest, and
+  requires six distinct bounded Linux Docker Engine identities. Engine IDs
+  prevent one daemon from masquerading under multiple advertised names, but
+  collected JSON cannot prove that distinct daemons map to separate physical
+  failure domains. The report therefore keeps `independentHostsCertified=false`
+  and `capacityCertified=false`.
 - The in-process control-plane benchmark can inject worker loss and proves
   survivor coverage plus stale-report rejection. The current round-robin local
   scheduler moved 1,174 assignments for a 1,300-stream/ten-worker/one-loss run

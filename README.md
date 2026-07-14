@@ -351,10 +351,11 @@ After collecting startup artifacts from all three fixture hosts and all three
 worker hosts, run `python3 scripts/f5-domain-preflight.py` with the three
 ordered `--fixture-result`/`--srt-state`/`--dash-state` triplets and three
 `--worker-result` files. It rejects incomplete domains, reused advertised
-hosts/endpoints, reused Docker Engine IDs, worker ID or zone drift,
-mutable/mismatched images, and tampered state hashes. A passing report requires
-`dockerHostCount=6` and `distinctDockerHostsValidated=true`. Docker daemon IDs
-do not attest physical topology, so the report always keeps
+hosts/endpoints, reused Docker Engine or worker-incarnation IDs, worker ID or
+zone drift, mutable/mismatched images, and tampered state hashes. A passing
+report requires `dockerHostCount=6`, `distinctDockerHostsValidated=true`, and
+exact 33-worker registration/incarnation counts. Docker daemon IDs do not
+attest physical topology, so the report always keeps
 `independentHostsCertified` and `capacityCertified` false; see `RUNBOOK.md` for
 the full command.
 
@@ -388,9 +389,9 @@ Use the same file on three separate hosts with distinct failure-domain names,
 worker certificates, and spool storage. The command validates the candidate
 zone and all 11 certificate identities, immutable image resolution, host and
 worker-path health APIs, a bounded Docker Engine identity, process stability,
-and Docker logs, then retains the evidence directory without stopping the
-workers. The runbook contains the cross-domain Chrome/API, failure-injection,
-and admission checks.
+all 11 accepted worker registration records, and Docker logs, then retains the
+evidence directory without stopping the workers. The runbook contains the
+cross-domain Chrome/API, failure-injection, and admission checks.
 
 ## Documentation
 

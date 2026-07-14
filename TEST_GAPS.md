@@ -256,6 +256,13 @@ implementation and must pass before those milestones advance.
   endpoints, so it proves orchestration and durable authority only. Physical
   independent-host loss, HTTPS/mTLS, real media/alarm behavior, survivor CPU/
   memory/network headroom, and 24-hour evidence remain open.
+- A follow-up exact-source run after treating `ConnectionError` response resets
+  as retryable recovered all 440 affected authorities at 35.294-second p95 and
+  36.370-second p99, returned to exact 40-per-worker balance, and left all 33
+  containers running with zero restarts. The two survivor-domain logs had no
+  reset, traceback, re-registration, spool, certificate, identity, or fatal
+  marker in the accepted window. The test does not deliberately inject a TCP
+  reset, so deterministic network-chaos and independent-host coverage remain.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;
@@ -266,10 +273,12 @@ implementation and must pass before those milestones advance.
   TTL hard-loss path recovered twice in 65.466/66.018 seconds around a full
   domain rejoin. Partitions, multi-host timing, and production failure-domain
   recovery remain open.
-- The v2 heartbeat renews durable membership and matching active leases, but
-  still lacks retry/backoff metrics. Static `capacity.maxStreams` admission is
-  covered, and bounded stream-level concurrency has unit coverage, but worker
-  admission can now enforce operator-set total/SRT/DASH counts. Execution bounds
+- The v2 heartbeat renews durable membership and matching active leases, and
+  unit coverage now includes HTTP response connection resets in the bounded
+  retry path, but the worker still lacks retry/backoff metrics. Static
+  `capacity.maxStreams` admission and bounded stream-level concurrency are
+  covered, and worker admission can enforce operator-set total/SRT/DASH counts.
+  Execution bounds
   submissions to one phase-specific concurrency window, rotates validation
   deferred by the aggregate budget, and hard-bounds built-in media
   subprocess/poll waits. Validation/deep tokens are operator settings on one

@@ -1036,7 +1036,10 @@ assigned streams, 40 per worker, zero blocked spools, and zero queued reports.
 Capture timestamped Docker logs from both survivor domains and reject any new
 registration, traceback, spool-blocked, certificate, identity, or fatal marker
 inside the fault result's `startedAt`/`endedAt` window. The script cannot read
-remote peer Docker daemons itself. Its result permanently keeps
+remote peer Docker daemons itself. Workers retry bounded transient HTTP status,
+timeout, URL, and connection-reset failures without changing incarnation; any
+survivor re-registration or nonzero Docker `RestartCount` still fails the run.
+Its result permanently keeps
 `independentHostsCertified=false`, `mediaCapacityCertified=false`, and
 `capacityCertified=false`; same-host execution and placeholder endpoints are
 workflow evidence only.

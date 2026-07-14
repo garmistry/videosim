@@ -31,6 +31,8 @@ MINIMUM_DURATION_SECONDS = 86400
 PROTOCOLS = ("srt", "dash")
 IMAGE_DIGEST = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+DOCKER_CONTAINER_ID = re.compile(r"^[0-9a-f]{12,64}$")
+DOCKER_STAT_FIELDS = ("CPUPerc", "MemUsage", "PIDs")
 FIXTURE_CHECKS = {
     "linux_docker_engine",
     "compose_rendered",
@@ -166,23 +168,75 @@ def _worker_registrations(
 
 
 def _worker_resource_snapshot(
-    value: object, label: str, expected_count: int, errors: list[str]
-) -> None:
+    value: object,
+    path: str | Path,
+    label: str,
+    expected_count: int,
+    errors: list[str],
+) -> str | None:
     if not isinstance(value, dict) or set(value) != {
         "artifact",
         "sha256",
         "containerCount",
     }:
         errors.append(f"{label}.resourceSnapshot is invalid")
-        return
-    if value["artifact"] != "docker-stats.jsonl" or not SHA256.fullmatch(
-        value["sha256"]
+        return None
+    declared_sha256 = value["sha256"]
+    if (
+        value["artifact"] != "docker-stats.jsonl"
+        or not isinstance(declared_sha256, str)
+        or not SHA256.fullmatch(declared_sha256)
     ):
         errors.append(f"{label}.resourceSnapshot must identify docker-stats.jsonl")
     if value["containerCount"] != expected_count:
         errors.append(
             f"{label}.resourceSnapshot.containerCount must be {expected_count}"
         )
+    try:
+        raw = Path(path).read_bytes()
+        lines = raw.decode("utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        errors.append(f"{label} resource snapshot is invalid: {exc}")
+        return None
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if declared_sha256 != actual_sha256:
+        errors.append(f"{label}.resourceSnapshot.sha256 does not match its artifact")
+    container_ids = set()
+    row_count = 0
+    for index, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(f"{label} resource snapshot row {index} is not JSON")
+            continue
+        if not isinstance(row, dict):
+            errors.append(f"{label} resource snapshot row {index} is invalid")
+            continue
+        container_id = row.get("ID")
+        if not isinstance(container_id, str) or not DOCKER_CONTAINER_ID.fullmatch(
+            container_id
+        ):
+            errors.append(f"{label} resource snapshot row {index} has an invalid ID")
+            continue
+        if container_id in container_ids:
+            errors.append(f"{label} resource snapshot contains duplicate container IDs")
+            continue
+        if any(
+            not isinstance(row.get(field), str) or not row[field].strip()
+            for field in DOCKER_STAT_FIELDS
+        ):
+            errors.append(f"{label} resource snapshot row {index} is missing metrics")
+            continue
+        container_ids.add(container_id)
+        row_count += 1
+    if row_count != expected_count:
+        errors.append(
+            f"{label} resource snapshot contains {row_count} valid rows, "
+            f"expected {expected_count}"
+        )
+    return actual_sha256
 
 
 def verify_f5_domain_preflight(
@@ -191,6 +245,7 @@ def verify_f5_domain_preflight(
     srt_state_paths: list[str | Path],
     dash_state_paths: list[str | Path],
     worker_result_paths: list[str | Path],
+    worker_resource_paths: list[str | Path],
 ) -> dict:
     errors: list[str] = []
     workload, workload_sha256 = _read_object(workload_path, "workload")
@@ -281,6 +336,7 @@ def verify_f5_domain_preflight(
         "SRT states": srt_state_paths,
         "DASH states": dash_state_paths,
         "worker results": worker_result_paths,
+        "worker resource snapshots": worker_resource_paths,
     }
     for label, paths in inputs.items():
         if len(paths) != failure_domains:
@@ -292,6 +348,7 @@ def verify_f5_domain_preflight(
         "srtStates": [],
         "dashStates": [],
         "workerResults": [],
+        "workerResourceSnapshots": [],
     }
     fixture_projects = set()
     advertised_hosts = []
@@ -421,8 +478,13 @@ def verify_f5_domain_preflight(
     worker_registration_ids = set()
     worker_incarnation_ids = set()
     resolved_image_ids = set()
-    if len(worker_result_paths) == failure_domains:
-        for index, result_path in enumerate(worker_result_paths, start=1):
+    if (
+        len(worker_result_paths) == failure_domains
+        and len(worker_resource_paths) == failure_domains
+    ):
+        for index, (result_path, resource_path) in enumerate(
+            zip(worker_result_paths, worker_resource_paths), start=1
+        ):
             label = f"worker domain {index}"
             result, result_sha256 = _read_object(result_path, f"{label} result")
             input_sha256["workerResults"].append(result_sha256)
@@ -466,9 +528,15 @@ def verify_f5_domain_preflight(
                 errors.append(f"{label} contains duplicate worker IDs")
             else:
                 worker_ids.update(actual_ids)
-            _worker_resource_snapshot(
-                result.get("resourceSnapshot"), label, len(expected_ids), errors
+            snapshot_sha256 = _worker_resource_snapshot(
+                result.get("resourceSnapshot"),
+                resource_path,
+                label,
+                len(expected_ids),
+                errors,
             )
+            if snapshot_sha256:
+                input_sha256["workerResourceSnapshots"].append(snapshot_sha256)
             registration_ids, incarnation_ids = _worker_registrations(
                 result.get("workerRegistrations"), label, expected_ids, errors
             )
@@ -520,6 +588,7 @@ def verify_f5_domain_preflight(
                 "fixture_domain_artifacts_validated",
                 "worker_domain_artifacts_validated",
                 "worker_registrations_validated",
+                "worker_resource_snapshots_validated",
                 "cross_domain_identity_validated",
                 "distinct_docker_hosts_validated",
             ]
@@ -534,6 +603,7 @@ def verify_f5_domain_preflight(
         "workerCount": len(worker_ids),
         "workerRegistrationCount": len(worker_registration_ids),
         "workerIncarnationCount": len(worker_incarnation_ids),
+        "workerResourceSnapshotCount": len(input_sha256["workerResourceSnapshots"]),
         "protocolCounts": {protocol: protocol_counts[protocol] for protocol in PROTOCOLS},
         "behaviorCounts": {behavior: behavior_counts[behavior] for behavior in BEHAVIORS},
         "advertisedHosts": sorted(set(advertised_hosts)),
@@ -565,6 +635,7 @@ def main() -> int:
     parser.add_argument("--srt-state", action="append", required=True)
     parser.add_argument("--dash-state", action="append", required=True)
     parser.add_argument("--worker-result", action="append", required=True)
+    parser.add_argument("--worker-resource", action="append", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     try:
@@ -574,6 +645,7 @@ def main() -> int:
             args.srt_state,
             args.dash_state,
             args.worker_result,
+            args.worker_resource,
         )
     except ValueError as exc:
         report = {

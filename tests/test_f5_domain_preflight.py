@@ -67,6 +67,7 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
     srt_states = []
     dash_states = []
     worker_results = []
+    worker_resources = []
     fixture_checks = sorted(PREFLIGHT["FIXTURE_CHECKS"])
     worker_checks = sorted(PREFLIGHT["WORKER_CHECKS"])
     for index, host in enumerate(hosts):
@@ -108,6 +109,20 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
         worker_ids = [
             f"{zone}-worker-{number:02d}" for number in range(1, 12)
         ]
+        resource_path = root / f"worker-{index}-docker-stats.jsonl"
+        resource_raw = "\n".join(
+            json.dumps(
+                {
+                    "ID": f"{index + 1:x}{number:011x}",
+                    "CPUPerc": "0.01%",
+                    "MemUsage": "10MiB / 1GiB",
+                    "PIDs": "4",
+                },
+                sort_keys=True,
+            )
+            for number in range(1, len(worker_ids) + 1)
+        ).encode()
+        resource_path.write_bytes(resource_raw)
         write_json(
             worker_result,
             {
@@ -136,14 +151,15 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
                 "checks": worker_checks,
                 "resourceSnapshot": {
                     "artifact": "docker-stats.jsonl",
-                    "sha256": "5" * 64,
+                    "sha256": hashlib.sha256(resource_raw).hexdigest(),
                     "containerCount": len(worker_ids),
                 },
                 "errors": [],
             },
         )
         worker_results.append(worker_result)
-    return fixture_results, srt_states, dash_states, worker_results
+        worker_resources.append(resource_path)
+    return fixture_results, srt_states, dash_states, worker_results, worker_resources
 
 
 class F5DomainPreflightTest(unittest.TestCase):
@@ -163,7 +179,13 @@ class F5DomainPreflightTest(unittest.TestCase):
                 str(WORKLOAD),
             ]
             for option, paths in zip(
-                ("--fixture-result", "--srt-state", "--dash-state", "--worker-result"),
+                (
+                    "--fixture-result",
+                    "--srt-state",
+                    "--dash-state",
+                    "--worker-result",
+                    "--worker-resource",
+                ),
                 artifacts,
             ):
                 for path in paths:
@@ -180,6 +202,8 @@ class F5DomainPreflightTest(unittest.TestCase):
         self.assertEqual(report["workerCount"], 33)
         self.assertEqual(report["workerRegistrationCount"], 33)
         self.assertEqual(report["workerIncarnationCount"], 33)
+        self.assertEqual(report["workerResourceSnapshotCount"], 3)
+        self.assertEqual(len(report["inputSha256"]["workerResourceSnapshots"]), 3)
         self.assertEqual(report["protocolCounts"], {"srt": 660, "dash": 660})
         self.assertEqual(len(report["advertisedHosts"]), 3)
         self.assertEqual(report["dockerHostCount"], 6)
@@ -258,6 +282,50 @@ class F5DomainPreflightTest(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertIn(
             "worker domain 1.resourceSnapshot.containerCount must be 11",
+            report["errors"],
+        )
+
+    def test_rejects_missing_worker_resource_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = create_artifacts(Path(directory))
+            report = self.verify((*artifacts[:4], []))
+
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "worker resource snapshots must contain exactly 3 files", report["errors"]
+        )
+
+    def test_rejects_tampered_and_malformed_worker_resource_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = create_artifacts(Path(directory))
+            artifacts[4][0].write_bytes(artifacts[4][0].read_bytes() + b"\n")
+            artifacts[4][1].write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "ID": f"2{number:011x}",
+                            "CPUPerc": "" if number == 1 else "0.01%",
+                            "MemUsage": "10MiB / 1GiB",
+                            "PIDs": "4",
+                        }
+                    )
+                    for number in range(1, 12)
+                ),
+                encoding="utf-8",
+            )
+            report = self.verify(artifacts)
+
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "worker domain 1.resourceSnapshot.sha256 does not match its artifact",
+            report["errors"],
+        )
+        self.assertIn(
+            "worker domain 2 resource snapshot row 1 is missing metrics",
+            report["errors"],
+        )
+        self.assertIn(
+            "worker domain 2 resource snapshot contains 10 valid rows, expected 11",
             report["errors"],
         )
 

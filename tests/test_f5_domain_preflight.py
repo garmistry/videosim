@@ -134,6 +134,11 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
                 ),
                 "resolvedImageId": IMAGE_ID,
                 "checks": worker_checks,
+                "resourceSnapshot": {
+                    "artifact": "docker-stats.jsonl",
+                    "sha256": "5" * 64,
+                    "containerCount": len(worker_ids),
+                },
                 "errors": [],
             },
         )
@@ -239,6 +244,20 @@ class F5DomainPreflightTest(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertIn(
             "worker domain 2 reuses worker incarnation IDs",
+            report["errors"],
+        )
+
+    def test_rejects_incomplete_worker_resource_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = create_artifacts(Path(directory))
+            worker = json.loads(artifacts[3][0].read_text(encoding="utf-8"))
+            worker["resourceSnapshot"]["containerCount"] = 10
+            write_json(artifacts[3][0], worker)
+            report = self.verify(artifacts)
+
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "worker domain 1.resourceSnapshot.containerCount must be 11",
             report["errors"],
         )
 

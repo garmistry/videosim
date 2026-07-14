@@ -30,6 +30,8 @@ COMPOSE_FILE = ROOT / "docker-compose.worker-domain.yml"
 WORKLOAD_FILE = ROOT / "scale/workloads/f5-1000-candidate.json"
 WORKER_COUNT = 11
 IMAGE_RE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+RESOURCE_SNAPSHOT_NAME = "docker-stats.jsonl"
+RESOURCE_STAT_FIELDS = ("CPUPerc", "MemUsage", "PIDs")
 CRITICAL_LOG_MARKERS = (
     "traceback (most recent call last)",
     "certificate verify failed",
@@ -157,6 +159,47 @@ def validate_container_records(
             raise RuntimeError(f"{service} is not running")
         if record["restartCount"]:
             raise RuntimeError(f"{service} restarted {record['restartCount']} time(s)")
+
+
+def validate_resource_snapshot(raw: str, expected_container_ids: set[str]) -> list[dict]:
+    rows = []
+    captured_ids = set()
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("worker Docker resource snapshot is not JSON") from exc
+        if not isinstance(row, dict):
+            raise RuntimeError("worker Docker resource snapshot row is invalid")
+        raw_id = row.get("ID")
+        matches = (
+            [container_id for container_id in expected_container_ids if container_id.startswith(raw_id)]
+            if isinstance(raw_id, str) and raw_id
+            else []
+        )
+        if len(matches) != 1:
+            raise RuntimeError(
+                "worker Docker resource snapshot contains an unknown container"
+            )
+        container_id = matches[0]
+        if container_id in captured_ids:
+            raise RuntimeError(
+                "worker Docker resource snapshot contains a duplicate container"
+            )
+        if any(
+            not isinstance(row.get(field), str) or not row[field].strip()
+            for field in RESOURCE_STAT_FIELDS
+        ):
+            raise RuntimeError("worker Docker resource snapshot is missing metrics")
+        captured_ids.add(container_id)
+        rows.append(row)
+    if captured_ids != expected_container_ids:
+        raise RuntimeError(
+            "worker Docker resource snapshot does not cover the stable containers"
+        )
+    return rows
 
 
 def critical_log_matches(log_output: str) -> list[str]:
@@ -378,6 +421,27 @@ class WorkerDomainStartup:
                 json.dumps(records, indent=2, sort_keys=True), encoding="utf-8"
             )
 
+    def capture_resource_snapshot(self, records: list[dict]) -> dict:
+        container_ids = [record["containerId"] for record in records]
+        stats = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "json", *container_ids],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+        path = self.artifact_dir / RESOURCE_SNAPSHOT_NAME
+        path.write_text(stats.stdout, encoding="utf-8")
+        if stats.returncode:
+            detail = f": {stats.stderr.strip()}" if stats.stderr.strip() else ""
+            raise RuntimeError(f"worker Docker resource snapshot failed{detail}")
+        validate_resource_snapshot(stats.stdout, set(container_ids))
+        return {
+            "artifact": RESOURCE_SNAPSHOT_NAME,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "containerCount": len(container_ids),
+        }
+
     def run(self) -> dict:
         result = {
             "passed": False,
@@ -437,6 +501,8 @@ class WorkerDomainStartup:
             records = self.container_records(resolved_image_id)
             validate_container_records(records, self.services, resolved_image_id)
             result["checks"].append("worker_services_stable")
+            result["resourceSnapshot"] = self.capture_resource_snapshot(records)
+            result["checks"].append("docker_resources_captured")
 
             self.capture_artifacts(records)
             captured = True

@@ -30,6 +30,7 @@ MINIMUM_HEADROOM_PERCENT = 30
 MINIMUM_DURATION_SECONDS = 86400
 PROTOCOLS = ("srt", "dash")
 IMAGE_DIGEST = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 FIXTURE_CHECKS = {
     "linux_docker_engine",
     "compose_rendered",
@@ -50,6 +51,7 @@ WORKER_CHECKS = {
     "worker_mtls_health_api",
     "worker_registrations_validated",
     "worker_services_stable",
+    "docker_resources_captured",
     "docker_logs_clean",
 }
 
@@ -161,6 +163,26 @@ def _worker_registrations(
     if worker_ids != set(expected_ids):
         errors.append(f"{label}.workerRegistrations do not match expected worker IDs")
     return worker_ids, incarnation_ids
+
+
+def _worker_resource_snapshot(
+    value: object, label: str, expected_count: int, errors: list[str]
+) -> None:
+    if not isinstance(value, dict) or set(value) != {
+        "artifact",
+        "sha256",
+        "containerCount",
+    }:
+        errors.append(f"{label}.resourceSnapshot is invalid")
+        return
+    if value["artifact"] != "docker-stats.jsonl" or not SHA256.fullmatch(
+        value["sha256"]
+    ):
+        errors.append(f"{label}.resourceSnapshot must identify docker-stats.jsonl")
+    if value["containerCount"] != expected_count:
+        errors.append(
+            f"{label}.resourceSnapshot.containerCount must be {expected_count}"
+        )
 
 
 def verify_f5_domain_preflight(
@@ -444,6 +466,9 @@ def verify_f5_domain_preflight(
                 errors.append(f"{label} contains duplicate worker IDs")
             else:
                 worker_ids.update(actual_ids)
+            _worker_resource_snapshot(
+                result.get("resourceSnapshot"), label, len(expected_ids), errors
+            )
             registration_ids, incarnation_ids = _worker_registrations(
                 result.get("workerRegistrations"), label, expected_ids, errors
             )

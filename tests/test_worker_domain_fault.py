@@ -25,6 +25,7 @@ def startup_result(domain="candidate-zone-a"):
         "passed": True,
         "errors": [],
         "checks": [
+            "docker_resources_captured",
             "worker_registrations_validated",
             "worker_services_stable",
             "docker_logs_clean",
@@ -41,6 +42,11 @@ def startup_result(domain="candidate-zone-a"):
             }
             for number, worker_id in enumerate(worker_ids, start=1)
         ],
+        "resourceSnapshot": {
+            "artifact": "docker-stats.jsonl",
+            "sha256": "a" * 64,
+            "containerCount": len(worker_ids),
+        },
     }
 
 
@@ -59,6 +65,10 @@ class WorkerDomainFaultTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "canonical and unique"):
             FAULT["validate_startup_result"](duplicate, WORKLOAD)
+        incomplete_snapshot = startup_result()
+        incomplete_snapshot["resourceSnapshot"]["containerCount"] = 10
+        with self.assertRaisesRegex(ValueError, "does not cover"):
+            FAULT["validate_startup_result"](incomplete_snapshot, WORKLOAD)
 
     def test_authority_and_recovery_reject_healthy_owner_churn(self):
         snapshot = self.authority_snapshot()

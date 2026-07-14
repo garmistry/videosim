@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -40,6 +41,7 @@ CRITICAL_LOG_MARKERS = (
     "certificate verify failed",
     "verified worker identity does not match workerid",
 )
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _read_object(path: str | Path, label: str) -> dict:
@@ -162,6 +164,7 @@ def validate_startup_result(result: dict, workload: dict) -> tuple[str, str, tup
         raise ValueError("worker startup result did not pass cleanly")
     checks = result.get("checks")
     if not isinstance(checks, list) or not {
+        "docker_resources_captured",
         "worker_registrations_validated",
         "worker_services_stable",
         "docker_logs_clean",
@@ -206,6 +209,19 @@ def validate_startup_result(result: dict, workload: dict) -> tuple[str, str, tup
         incarnations.add(incarnation)
     if registered_ids != set(expected_ids):
         raise ValueError("worker startup registrations do not match the workload")
+    snapshot = result.get("resourceSnapshot")
+    if not isinstance(snapshot, dict) or set(snapshot) != {
+        "artifact",
+        "sha256",
+        "containerCount",
+    }:
+        raise ValueError("worker startup resource snapshot is invalid")
+    if snapshot["artifact"] != "docker-stats.jsonl" or not SHA256.fullmatch(
+        snapshot["sha256"]
+    ):
+        raise ValueError("worker startup resource snapshot is invalid")
+    if snapshot["containerCount"] != len(expected_ids):
+        raise ValueError("worker startup resource snapshot does not cover the workload")
     return project, domain, expected_ids
 
 

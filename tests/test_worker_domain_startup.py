@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import runpy
@@ -7,6 +8,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +76,62 @@ class WorkerDomainStartupTest(unittest.TestCase):
         records[0]["imageId"] = "sha256:other"
         with self.assertRaisesRegex(RuntimeError, "resolved worker image"):
             validate(records, services, "sha256:expected")
+
+    def test_resource_snapshot_covers_stable_containers_and_is_hashed(self):
+        container_ids = ("a" * 64, "b" * 64)
+        records = [{"containerId": container_id} for container_id in container_ids]
+        stats = "\n".join(
+            json.dumps(
+                {
+                    "ID": container_id[:12],
+                    "CPUPerc": "1.25%",
+                    "MemUsage": "10MiB / 1GiB",
+                    "PIDs": "4",
+                }
+            )
+            for container_id in container_ids
+        )
+        startup = object.__new__(STARTUP["WorkerDomainStartup"])
+        with tempfile.TemporaryDirectory() as directory:
+            startup.artifact_dir = Path(directory)
+            with patch.object(
+                STARTUP["subprocess"],
+                "run",
+                return_value=SimpleNamespace(returncode=0, stdout=stats, stderr=""),
+            ) as run:
+                snapshot = startup.capture_resource_snapshot(records)
+
+            self.assertEqual(
+                (Path(directory) / "docker-stats.jsonl").read_text(encoding="utf-8"),
+                stats,
+            )
+
+        self.assertEqual(snapshot["artifact"], "docker-stats.jsonl")
+        self.assertEqual(snapshot["containerCount"], 2)
+        self.assertEqual(snapshot["sha256"], hashlib.sha256(stats.encode()).hexdigest())
+        self.assertEqual(
+            run.call_args.args[0],
+            ["docker", "stats", "--no-stream", "--format", "json", *container_ids],
+        )
+
+    def test_resource_snapshot_rejects_missing_metrics_and_containers(self):
+        container_ids = {"a" * 64, "b" * 64}
+        complete = json.dumps(
+            {
+                "ID": "a" * 12,
+                "CPUPerc": "1.25%",
+                "MemUsage": "10MiB / 1GiB",
+                "PIDs": "4",
+            }
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "does not cover"):
+            STARTUP["validate_resource_snapshot"](complete, container_ids)
+        with self.assertRaisesRegex(RuntimeError, "missing metrics"):
+            STARTUP["validate_resource_snapshot"](
+                complete.replace('"CPUPerc": "1.25%"', '"CPUPerc": ""'),
+                {"a" * 64},
+            )
 
     def test_critical_worker_log_markers_are_fail_closed(self):
         matches = STARTUP["critical_log_matches"](
@@ -145,6 +204,9 @@ class WorkerDomainStartupIntegrationTest(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
+            docker_stats = Path(directory, "docker-stats.jsonl").read_text(
+                encoding="utf-8"
+            )
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(evidence["passed"])
@@ -158,9 +220,13 @@ class WorkerDomainStartupIntegrationTest(unittest.TestCase):
         self.assertIn("worker_mtls_health_api", evidence["checks"])
         self.assertIn("worker_registrations_validated", evidence["checks"])
         self.assertIn("worker_services_stable", evidence["checks"])
+        self.assertIn("docker_resources_captured", evidence["checks"])
         self.assertIn("docker_logs_clean", evidence["checks"])
         self.assertEqual(len(evidence["workerRegistrations"]), 11)
         self.assertEqual(registrations, evidence["workerRegistrations"])
+        self.assertEqual(evidence["resourceSnapshot"]["artifact"], "docker-stats.jsonl")
+        self.assertEqual(evidence["resourceSnapshot"]["containerCount"], 11)
+        self.assertTrue(docker_stats.strip())
         self.assertTrue(docker_log.strip())
 
 

@@ -168,14 +168,14 @@ implementation and must pass before those milestones advance.
 - `f5-domain-preflight.py` now fails closed unless three collected fixture
   result/SRT/DASH triplets and three worker results match the exact candidate:
   1,320 distinct paths on three advertised hosts, 33 canonical accepted worker
-  IDs with unique incarnations in three zones, complete 11-container raw
-  Docker-stats artifact metadata, clean required startup checks/windows,
-  matching state hashes, one immutable image digest, and six distinct bounded
-  Linux Docker Engine identities. Synthetic command coverage rejects
-  advertised-host, Engine-ID, worker-incarnation reuse, resource-snapshot
-  incompleteness, tampering, image drift, and a non-F5 workload. Daemon IDs do
-  not prove physical host independence; no real six-engine artifact set exists
-  yet.
+  IDs with unique incarnations in three zones, three ordered raw 11-container
+  Docker-stats files whose hashes and JSON rows match the worker results, clean
+  required startup checks/windows, matching state hashes, one immutable image
+  digest, and six distinct bounded Linux Docker Engine identities. Synthetic
+  command coverage rejects advertised-host, Engine-ID, worker-incarnation reuse,
+  missing/incomplete/malformed/tampered resources, state/image drift, and a
+  non-F5 workload. Daemon IDs do not prove physical host independence; no real
+  six-engine artifact set exists yet.
 - Composed fixture states can now be imported into an exclusive PostgreSQL feed
   catalog through the production feed-generation and lease semantics. The
   importer validates complete external-feed configs, rejects shared endpoints

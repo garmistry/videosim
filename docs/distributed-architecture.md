@@ -186,11 +186,12 @@ VideoSim should split into a master control plane and many worker nodes:
 - `f5-domain-preflight.py` verifies the artifacts copied from three fixture and
   three worker domains before the distributed run. It requires exact candidate
   endpoint/behavior/worker/zone shape, 33 unique accepted worker incarnations,
-  state-hash parity, required startup checks and windows, distinct advertised
-  hosts, six distinct bounded Linux Docker Engine identities, and one immutable
-  image digest. Daemon identity prevents hostname-only reuse but cannot attest
-  physical host topology; the preflight never certifies physical independence
-  or capacity.
+  three supplied raw 11-container Docker-stats files that match each reported
+  SHA-256 and contain valid resource rows, state-hash parity, required startup
+  checks and windows, distinct advertised hosts, six distinct bounded Linux
+  Docker Engine identities, and one immutable image digest. Daemon identity
+  prevents hostname-only reuse but cannot attest physical host topology; the
+  preflight never certifies physical independence or capacity.
 - The candidate worker fault workflow exercises the real Docker stop/start,
   worker HTTP loop, PostgreSQL freshness, production scheduler, lease
   acknowledgement, and assignment verifier paths. A marked same-engine run

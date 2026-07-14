@@ -968,22 +968,26 @@ python3 scripts/f5-domain-preflight.py \
   --srt-state artifacts/fixture-c/srt-state.json \
   --dash-state artifacts/fixture-c/dash-state.json \
   --worker-result artifacts/worker-a/result.json \
+  --worker-resource artifacts/worker-a/docker-stats.jsonl \
   --worker-result artifacts/worker-b/result.json \
+  --worker-resource artifacts/worker-b/docker-stats.jsonl \
   --worker-result artifacts/worker-c/result.json \
+  --worker-resource artifacts/worker-c/docker-stats.jsonl \
   --output artifacts/f5-domain-preflight.json
 ```
 
 Require `passed=true`, three unique advertised hosts, three workload failure
 domains, 660 SRT/660 DASH paths, 1,056/132/66/66 behavior counts, 33 unique
 worker IDs, `workerRegistrationCount=33`, `workerIncarnationCount=33`, one
-immutable image digest, `dockerHostCount=6`, and
+immutable image digest, `workerResourceSnapshotCount=3`, `dockerHostCount=6`, and
 `distinctDockerHostsValidated=true`. The verifier matches each fixture result
 to its state hashes, rejects duplicate cross-domain endpoints, validates each
-bounded startup host identity and 11-container worker-resource metadata, and
-rejects any reused Docker Engine, worker, or incarnation ID. A Docker daemon
-ID is stronger than an advertised name but cannot prove separate physical
-failure domains, so the report always keeps `independentHostsCertified=false`
-and `capacityCertified=false`. Retain the report and raw snapshots as preflight
+bounded startup host identity and the supplied 11-container worker-resource
+files, and rejects a missing, tampered, malformed, or incomplete snapshot as
+well as any reused Docker Engine, worker, or incarnation ID. A Docker daemon ID
+is stronger than an advertised name but cannot prove separate physical failure
+domains, so the report always keeps `independentHostsCertified=false` and
+`capacityCertified=false`. Retain the report and raw snapshots as preflight
 evidence, then prove physical topology and measured headroom separately.
 
 From a coordinator with read access to the same PostgreSQL database, set

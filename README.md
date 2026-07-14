@@ -350,11 +350,13 @@ not an approved capacity result.
 After collecting startup artifacts from all three fixture hosts and all three
 worker hosts, run `python3 scripts/f5-domain-preflight.py` with the three
 ordered `--fixture-result`/`--srt-state`/`--dash-state` triplets and three
-`--worker-result` files. It rejects incomplete domains, reused advertised
-hosts/endpoints, reused Docker Engine or worker-incarnation IDs, worker ID or
-zone drift, mutable/mismatched images, and tampered state hashes. A passing
-report requires `dockerHostCount=6`, `distinctDockerHostsValidated=true`, and
-exact 33-worker registration/incarnation counts. Docker daemon IDs do not
+`--worker-result`/`--worker-resource` pairs. It rejects incomplete domains,
+reused advertised hosts/endpoints, reused Docker Engine or worker-incarnation
+IDs, worker ID or zone drift, mutable/mismatched images, tampered state hashes,
+and missing, tampered, malformed, or incomplete raw worker resource snapshots.
+A passing report requires `dockerHostCount=6`,
+`distinctDockerHostsValidated=true`, and exact 33-worker
+registration/incarnation counts plus three resource snapshots. Docker daemon IDs do not
 attest physical topology, so the report always keeps
 `independentHostsCertified` and `capacityCertified` false; see `RUNBOOK.md` for
 the full command.

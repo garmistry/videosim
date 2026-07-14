@@ -1,9 +1,12 @@
 import json
+import socket
+import struct
 import tempfile
 import threading
 import time
 import unittest
 from http.client import RemoteDisconnected
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
@@ -616,6 +619,58 @@ class WorkerTest(unittest.TestCase):
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(sleeps, [0.125, 0.25, 0.5])
+
+    def test_lease_acknowledgement_retries_real_connection_reset(self):
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                if len(requests) == 1:
+                    self.connection.setsockopt(
+                        socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                    )
+                    self.connection.close()
+                    return
+                body = b'{"ok": true}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        assignment = durable_assignment()
+        try:
+            result = call_with_retry(
+                lambda: post_lease_acknowledgement(
+                    f"http://127.0.0.1:{server.server_port}",
+                    "worker-a",
+                    "00000000-0000-0000-0000-000000000001",
+                    assignment,
+                ),
+                attempts=2,
+                base_seconds=0,
+                sleep=lambda _seconds: None,
+            )
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+        expected = {
+            "apiVersion": "videosim.worker/v2",
+            "workerId": "worker-a",
+            "workerIncarnationId": "00000000-0000-0000-0000-000000000001",
+            "leases": [{"streamId": "stream-1", "epoch": 3, "configVersion": 2}],
+        }
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(requests, [expected, expected])
 
     def test_worker_keeps_incarnation_across_assignment_transport_outage(self):
         monitor_state = {

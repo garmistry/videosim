@@ -10,6 +10,9 @@ from videosim.cli import main
 from videosim.gui import capacity_aware_assignments
 from videosim.scale_evidence import (
     ADMISSION_CRITERIA,
+    ALARM_CONSISTENCY_ARTIFACT_KIND,
+    ALARM_CONSISTENCY_CHECK_NAMES,
+    ALARM_CONSISTENCY_SCHEMA,
     ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND,
     ASSIGNMENT_VERIFICATION_SCHEMA,
     BASELINE_ARTIFACT_KINDS,
@@ -267,6 +270,10 @@ class ScaleEvidenceTest(unittest.TestCase):
             F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
             "\n".join(check.errors),
         )
+        self.assertIn(
+            ALARM_CONSISTENCY_ARTIFACT_KIND,
+            "\n".join(check.errors),
+        )
 
         preflight = {
             "schemaVersion": F5_DOMAIN_PREFLIGHT_SCHEMA,
@@ -293,15 +300,14 @@ class ScaleEvidenceTest(unittest.TestCase):
                 **self.write_json("artifacts/f5-domain-preflight.json", preflight),
             }
         )
+        workload_content_sha256 = hashlib.sha256(
+            json.dumps(self.workload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         assignment = {
             "schemaVersion": ASSIGNMENT_VERIFICATION_SCHEMA,
             "passed": True,
             "errors": [],
-            "workloadContentSha256": hashlib.sha256(
-                json.dumps(
-                    self.workload, sort_keys=True, separators=(",", ":")
-                ).encode()
-            ).hexdigest(),
+            "workloadContentSha256": workload_content_sha256,
             "baselineSnapshotSha256": "e" * 64,
             "metrics": {
                 "phase": "1-domain-loss",
@@ -319,6 +325,35 @@ class ScaleEvidenceTest(unittest.TestCase):
             {
                 "kind": ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND,
                 **self.write_json("artifacts/assignments-domain-loss.json", assignment),
+            }
+        )
+        alarm = {
+            "schemaVersion": ALARM_CONSISTENCY_SCHEMA,
+            "passed": True,
+            "errors": [],
+            "capturedAt": "2026-07-11T00:00:00Z",
+            "tenantId": "candidate-run",
+            "workloadContentSha256": workload_content_sha256,
+            "metrics": {
+                "desiredStreams": 1320,
+                "expectedDesiredStreams": 1320,
+                "observedDesiredStreams": 1320,
+                "checkResults": 1320,
+                "currentChecks": 1320,
+                "pendingAlarms": 0,
+                "currentAlarms": 1320,
+                "alarmEvents": 1320,
+                "alarmOutboxEvents": 1320,
+            },
+            "checks": [
+                {"name": name, "passed": True, "violations": 0, "samples": []}
+                for name in ALARM_CONSISTENCY_CHECK_NAMES
+            ],
+        }
+        self.evidence["artifacts"].append(
+            {
+                "kind": ALARM_CONSISTENCY_ARTIFACT_KIND,
+                **self.write_json("artifacts/alarm-consistency.json", alarm),
             }
         )
         self.save_manifests()
@@ -344,16 +379,24 @@ class ScaleEvidenceTest(unittest.TestCase):
         preflight["errors"] = ["test failure"]
         preflight["inputSha256"]["workload"] = "d" * 64
         preflight["imageDigest"] = "sha256:" + "c" * 64
-        self.evidence["artifacts"][-2] = {
+        self.evidence["artifacts"][-3] = {
             "kind": F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
             **self.write_json("artifacts/f5-domain-preflight.json", preflight),
         }
         assignment["metrics"]["freshWorkers"] = 23
         assignment["metrics"]["ownershipChanges"] = 0
         assignment["workloadContentSha256"] = "f" * 64
-        self.evidence["artifacts"][-1] = {
+        self.evidence["artifacts"][-2] = {
             "kind": ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND,
             **self.write_json("artifacts/assignments-domain-loss.json", assignment),
+        }
+        alarm["metrics"]["observedDesiredStreams"] = 1319
+        alarm["metrics"]["alarmOutboxEvents"] = 1319
+        alarm["workloadContentSha256"] = "f" * 64
+        alarm["checks"][0]["violations"] = 1
+        self.evidence["artifacts"][-1] = {
+            "kind": ALARM_CONSISTENCY_ARTIFACT_KIND,
+            **self.write_json("artifacts/alarm-consistency.json", alarm),
         }
         self.save_manifests()
         check = check_scale_evidence(self.report_path, policy_path)
@@ -371,6 +414,18 @@ class ScaleEvidenceTest(unittest.TestCase):
         )
         self.assertIn(
             "assignment-domain-loss.metrics.ownershipChanges does not match", combined
+        )
+        self.assertIn(
+            "alarm-consistency.metrics.observedDesiredStreams does not match", combined
+        )
+        self.assertIn(
+            "alarm-consistency.workloadContentSha256 does not match", combined
+        )
+        self.assertIn(
+            "alarm-consistency.checks contains a failed consistency check", combined
+        )
+        self.assertIn(
+            "alarm-consistency.metrics.alarmOutboxEvents does not match", combined
         )
 
     def test_checked_in_candidate_survives_rejoin_and_second_domain_loss(self):

@@ -41,6 +41,18 @@ F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND = "f5-domain-preflight"
 F5_DOMAIN_PREFLIGHT_SCHEMA = "videosim.f5-domain-preflight/v1"
 ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND = "assignment-domain-loss"
 ASSIGNMENT_VERIFICATION_SCHEMA = "videosim.assignment-verification/v1"
+ALARM_CONSISTENCY_ARTIFACT_KIND = "alarm-consistency"
+ALARM_CONSISTENCY_SCHEMA = "videosim.alarm-consistency/v1"
+ALARM_CONSISTENCY_CHECK_NAMES = (
+    "current-state-source",
+    "latest-result-projection",
+    "pending-alarm-source",
+    "current-alarm-source",
+    "alarm-event-projection",
+    "alarm-event-source",
+    "alarm-event-payload",
+    "alarm-event-outbox",
+)
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
@@ -600,6 +612,88 @@ def _validate_assignment_domain_loss(
             errors.append(f"{label}.metrics.{field} does not match the workload")
 
 
+def _validate_alarm_consistency(
+    value: object, workload: dict | None, errors: list[str]
+):
+    label = ALARM_CONSISTENCY_ARTIFACT_KIND
+    if not isinstance(value, dict):
+        errors.append(f"{label} must be a JSON object")
+        return
+    if value.get("schemaVersion") != ALARM_CONSISTENCY_SCHEMA:
+        errors.append(f"{label}.schemaVersion must be {ALARM_CONSISTENCY_SCHEMA}")
+    if value.get("passed") is not True or value.get("errors") != []:
+        errors.append(f"{label} did not pass cleanly")
+    _parse_timestamp(value.get("capturedAt"), f"{label}.capturedAt", errors)
+    if not isinstance(value.get("tenantId"), str) or not value["tenantId"].strip():
+        errors.append(f"{label}.tenantId must be a non-empty string")
+    if workload is None:
+        errors.append(f"{label} cannot be matched without a valid workload")
+        return
+    if value.get("workloadContentSha256") != _content_sha256(workload):
+        errors.append(f"{label}.workloadContentSha256 does not match the evidence workload")
+    metrics = value.get("metrics")
+    if not isinstance(metrics, dict):
+        errors.append(f"{label}.metrics must be an object")
+        return
+    load = workload.get("loadStreams")
+    if not _positive_int(load):
+        errors.append(f"{label} cannot be matched to the workload stream count")
+        return
+    for field in (
+        "desiredStreams",
+        "expectedDesiredStreams",
+        "observedDesiredStreams",
+    ):
+        if metrics.get(field) != load:
+            errors.append(f"{label}.metrics.{field} does not match the workload")
+    for field in (
+        "checkResults",
+        "currentChecks",
+        "pendingAlarms",
+        "currentAlarms",
+        "alarmEvents",
+        "alarmOutboxEvents",
+    ):
+        if not _non_negative_int(metrics.get(field)):
+            errors.append(f"{label}.metrics.{field} must be a non-negative integer")
+    if (
+        _non_negative_int(metrics.get("checkResults"))
+        and metrics["checkResults"] < load
+    ):
+        errors.append(f"{label}.metrics.checkResults does not cover the workload")
+    if (
+        _non_negative_int(metrics.get("currentChecks"))
+        and metrics["currentChecks"] < load
+    ):
+        errors.append(f"{label}.metrics.currentChecks does not cover the workload")
+    if metrics.get("alarmEvents") == 0:
+        errors.append(f"{label}.metrics.alarmEvents must be positive")
+    if metrics.get("alarmOutboxEvents") != metrics.get("alarmEvents"):
+        errors.append(f"{label}.metrics.alarmOutboxEvents does not match alarmEvents")
+    checks = value.get("checks")
+    if not isinstance(checks, list):
+        errors.append(f"{label}.checks must be an array")
+        return
+    names = []
+    for check in checks:
+        if not isinstance(check, dict):
+            errors.append(f"{label}.checks entries must be objects")
+            continue
+        name = check.get("name")
+        if isinstance(name, str):
+            names.append(name)
+        if (
+            check.get("passed") is not True
+            or check.get("violations") != 0
+            or check.get("samples") != []
+        ):
+            errors.append(f"{label}.checks contains a failed consistency check")
+    if len(checks) != len(ALARM_CONSISTENCY_CHECK_NAMES) or set(names) != set(
+        ALARM_CONSISTENCY_CHECK_NAMES
+    ):
+        errors.append(f"{label}.checks does not contain the expected consistency checks")
+
+
 def check_scale_evidence(
     report_path: str | Path, policy_path: str | Path
 ) -> ScaleEvidenceCheck:
@@ -809,6 +903,13 @@ def check_scale_evidence(
     if assignment_path is not None:
         _validate_assignment_domain_loss(
             _read_object(assignment_path, ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND, errors),
+            workload,
+            errors,
+        )
+    alarm_path = artifact_paths.get(ALARM_CONSISTENCY_ARTIFACT_KIND)
+    if alarm_path is not None:
+        _validate_alarm_consistency(
+            _read_object(alarm_path, ALARM_CONSISTENCY_ARTIFACT_KIND, errors),
             workload,
             errors,
         )

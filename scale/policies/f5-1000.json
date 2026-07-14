@@ -15,7 +15,8 @@
     "security-report",
     "restore-report",
     "rollback-record",
-    "f5-domain-preflight"
+    "f5-domain-preflight",
+    "assignment-domain-loss"
   ],
   "requiredCriteria": [
     "assignment-correctness",

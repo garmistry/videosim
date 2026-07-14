@@ -10,6 +10,8 @@ from videosim.cli import main
 from videosim.gui import capacity_aware_assignments
 from videosim.scale_evidence import (
     ADMISSION_CRITERIA,
+    ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND,
+    ASSIGNMENT_VERIFICATION_SCHEMA,
     BASELINE_ARTIFACT_KINDS,
     F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
     F5_DOMAIN_PREFLIGHT_SCHEMA,
@@ -243,7 +245,7 @@ class ScaleEvidenceTest(unittest.TestCase):
         self.assertIn("policy.requiredCriteria omits baseline values", combined)
         self.assertIn("policy.requiredArtifactKinds omits baseline values", combined)
 
-    def test_repository_f5_policy_requires_matched_domain_preflight(self):
+    def test_repository_f5_policy_requires_matched_structured_evidence(self):
         root = Path(__file__).resolve().parents[1]
         policy_path = root / "scale/policies/f5-1000.json"
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -291,6 +293,34 @@ class ScaleEvidenceTest(unittest.TestCase):
                 **self.write_json("artifacts/f5-domain-preflight.json", preflight),
             }
         )
+        assignment = {
+            "schemaVersion": ASSIGNMENT_VERIFICATION_SCHEMA,
+            "passed": True,
+            "errors": [],
+            "workloadContentSha256": hashlib.sha256(
+                json.dumps(
+                    self.workload, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest(),
+            "baselineSnapshotSha256": "e" * 64,
+            "metrics": {
+                "phase": "1-domain-loss",
+                "desiredStreams": 1320,
+                "desiredByProtocol": {"srt": 660, "dash": 660},
+                "freshWorkers": 22,
+                "unavailableFailureDomains": ["candidate-zone-a"],
+                "authoritativeAssignments": 1320,
+                "authoritativeByProtocol": {"srt": 660, "dash": 660},
+                "ownershipChanges": 440,
+                "expectedOwnershipChanges": 440,
+            },
+        }
+        self.evidence["artifacts"].append(
+            {
+                "kind": ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND,
+                **self.write_json("artifacts/assignments-domain-loss.json", assignment),
+            }
+        )
         self.save_manifests()
         check = check_scale_evidence(self.report_path, policy_path)
 
@@ -314,9 +344,16 @@ class ScaleEvidenceTest(unittest.TestCase):
         preflight["errors"] = ["test failure"]
         preflight["inputSha256"]["workload"] = "d" * 64
         preflight["imageDigest"] = "sha256:" + "c" * 64
-        self.evidence["artifacts"][-1] = {
+        self.evidence["artifacts"][-2] = {
             "kind": F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
             **self.write_json("artifacts/f5-domain-preflight.json", preflight),
+        }
+        assignment["metrics"]["freshWorkers"] = 23
+        assignment["metrics"]["ownershipChanges"] = 0
+        assignment["workloadContentSha256"] = "f" * 64
+        self.evidence["artifacts"][-1] = {
+            "kind": ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND,
+            **self.write_json("artifacts/assignments-domain-loss.json", assignment),
         }
         self.save_manifests()
         check = check_scale_evidence(self.report_path, policy_path)
@@ -326,6 +363,15 @@ class ScaleEvidenceTest(unittest.TestCase):
         self.assertIn("f5-domain-preflight did not pass cleanly", combined)
         self.assertIn("f5-domain-preflight.inputSha256.workload does not match", combined)
         self.assertIn("f5-domain-preflight.imageDigest does not match", combined)
+        self.assertIn(
+            "assignment-domain-loss.metrics.freshWorkers does not match", combined
+        )
+        self.assertIn(
+            "assignment-domain-loss.workloadContentSha256 does not match", combined
+        )
+        self.assertIn(
+            "assignment-domain-loss.metrics.ownershipChanges does not match", combined
+        )
 
     def test_checked_in_candidate_survives_rejoin_and_second_domain_loss(self):
         root = Path(__file__).resolve().parents[1]

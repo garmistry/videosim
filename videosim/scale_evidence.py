@@ -39,6 +39,8 @@ BASELINE_ARTIFACT_KINDS = (
 )
 F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND = "f5-domain-preflight"
 F5_DOMAIN_PREFLIGHT_SCHEMA = "videosim.f5-domain-preflight/v1"
+ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND = "assignment-domain-loss"
+ASSIGNMENT_VERIFICATION_SCHEMA = "videosim.assignment-verification/v1"
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
@@ -511,6 +513,93 @@ def _validate_f5_domain_preflight(
         errors.append(f"{label}.imageDigest does not match an evidence container image")
 
 
+def _content_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _validate_assignment_domain_loss(
+    value: object, workload: dict | None, errors: list[str]
+):
+    label = ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND
+    if not isinstance(value, dict):
+        errors.append(f"{label} must be a JSON object")
+        return
+    if value.get("schemaVersion") != ASSIGNMENT_VERIFICATION_SCHEMA:
+        errors.append(f"{label}.schemaVersion must be {ASSIGNMENT_VERIFICATION_SCHEMA}")
+    if value.get("passed") is not True or value.get("errors") != []:
+        errors.append(f"{label} did not pass cleanly")
+    if workload is None:
+        errors.append(f"{label} cannot be matched without a valid workload")
+        return
+    if value.get("workloadContentSha256") != _content_sha256(workload):
+        errors.append(f"{label}.workloadContentSha256 does not match the evidence workload")
+    baseline_sha256 = value.get("baselineSnapshotSha256")
+    if not isinstance(baseline_sha256, str) or not _SHA256.fullmatch(baseline_sha256):
+        errors.append(f"{label}.baselineSnapshotSha256 must be a SHA-256 digest")
+    metrics = value.get("metrics")
+    if not isinstance(metrics, dict):
+        errors.append(f"{label}.metrics must be an object")
+        return
+    shape = workload.get("workerShape")
+    placement = workload.get("placement")
+    mix = workload.get("protocolMix")
+    if not all(isinstance(item, dict) for item in (shape, placement, mix)):
+        errors.append(f"{label} cannot be matched to the workload shape")
+        return
+    load = workload.get("loadStreams")
+    zones = placement.get("zones")
+    domain_counts = shape.get("failureDomainWorkerCounts")
+    unavailable = metrics.get("unavailableFailureDomains")
+    if (
+        not _positive_int(load)
+        or not isinstance(zones, list)
+        or not isinstance(domain_counts, list)
+        or not isinstance(unavailable, list)
+        or not all(isinstance(zone, str) for zone in zones)
+        or not all(_positive_int(count) for count in domain_counts)
+        or len(domain_counts) != len(zones)
+        or not all(isinstance(zone, str) for zone in unavailable)
+        or not _positive_int(workload.get("failureDomainsUnavailable"))
+        or len(unavailable) != workload["failureDomainsUnavailable"]
+        or len(unavailable) != len(set(unavailable))
+        or not all(zone in zones for zone in unavailable)
+        or not all(
+            isinstance(mix.get(f"{protocol}Percent"), int)
+            and not isinstance(mix[f"{protocol}Percent"], bool)
+            for protocol in ("srt", "dash")
+        )
+    ):
+        errors.append(f"{label}.unavailableFailureDomains does not match the workload")
+        return
+    unavailable_workers = sum(domain_counts[zones.index(zone)] for zone in unavailable)
+    worker_count = shape.get("count")
+    if not _positive_int(worker_count):
+        errors.append(f"{label} cannot be matched to the workload worker count")
+        return
+    if load % worker_count:
+        errors.append(f"{label} cannot derive balanced ownership changes from the workload")
+        return
+    expected_protocols = {
+        protocol: load * mix.get(f"{protocol}Percent", 0) // 100
+        for protocol in ("srt", "dash")
+    }
+    expected = {
+        "phase": f"{len(unavailable)}-domain-loss",
+        "desiredStreams": load,
+        "freshWorkers": worker_count - unavailable_workers,
+        "authoritativeAssignments": load,
+        "desiredByProtocol": expected_protocols,
+        "authoritativeByProtocol": expected_protocols,
+        "ownershipChanges": load // worker_count * unavailable_workers,
+        "expectedOwnershipChanges": load // worker_count * unavailable_workers,
+    }
+    for field, expected_value in expected.items():
+        if metrics.get(field) != expected_value:
+            errors.append(f"{label}.metrics.{field} does not match the workload")
+
+
 def check_scale_evidence(
     report_path: str | Path, policy_path: str | Path
 ) -> ScaleEvidenceCheck:
@@ -714,6 +803,13 @@ def check_scale_evidence(
             workload,
             workload_sha256,
             image_digests,
+            errors,
+        )
+    assignment_path = artifact_paths.get(ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND)
+    if assignment_path is not None:
+        _validate_assignment_domain_loss(
+            _read_object(assignment_path, ASSIGNMENT_DOMAIN_LOSS_ARTIFACT_KIND, errors),
+            workload,
             errors,
         )
 

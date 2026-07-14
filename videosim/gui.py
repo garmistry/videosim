@@ -61,6 +61,9 @@ PROFILE_OPTIONS = {
     "frozen_video": ("Frozen video", "profiles/srt-frozen-video.yaml"),
 }
 MAX_WORKER_STREAMS = 100_000
+WORKER_TRANSPORT_RETRY_KINDS = frozenset(
+    {"none", "http", "connection", "timeout", "url"}
+)
 PROTOCOL_CAPACITY_FIELDS = {
     "srt": "maxSrtStreams",
     "dash": "maxDashStreams",
@@ -3056,6 +3059,8 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
             "spoolBlocked",
             "spoolQueuedReports",
             "spoolBytes",
+            "transportRetryAttempts",
+            "lastTransportRetryKind",
         }
         if set(pressure) - allowed:
             raise WorkerReportValidationError("capacity.pressure contains unknown fields")
@@ -3068,6 +3073,7 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
             "openFileDescriptors",
             "spoolQueuedReports",
             "spoolBytes",
+            "transportRetryAttempts",
         ):
             value = pressure.get(field)
             if value is not None and (
@@ -3082,6 +3088,14 @@ def normalize_worker_capacity(capacity: dict | None) -> dict | None:
                 raise WorkerReportValidationError(
                     f"capacity.pressure.{field} must be a boolean"
                 )
+        retry_kind = pressure.get("lastTransportRetryKind")
+        if retry_kind is not None and (
+            not isinstance(retry_kind, str)
+            or retry_kind not in WORKER_TRANSPORT_RETRY_KINDS
+        ):
+            raise WorkerReportValidationError(
+                "capacity.pressure.lastTransportRetryKind must be a bounded retry kind"
+            )
         for field in ("lastBatchDurationMs", "lastBatchCpuMs"):
             duration = pressure.get(field)
             if duration is not None and (

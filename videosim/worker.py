@@ -176,6 +176,7 @@ def _heartbeat_loop(
     deep_check_interval_seconds: float,
     batch_budget_seconds: float,
     pressure_snapshot: Callable[[], dict],
+    on_retry: Callable[[Exception], None],
 ):
     while not stop.wait(interval_seconds):
         try:
@@ -212,9 +213,11 @@ def _heartbeat_loop(
                     worker_incarnation_id,
                     pressure=pressure_snapshot(),
                 )
-        except Exception:
+        except Exception as exc:
             # A failed heartbeat is retried on the next independent interval.
             # Assignment and report calls still enforce current authority.
+            if retryable_transport_error(exc):
+                on_retry(exc)
             continue
 
 
@@ -359,6 +362,16 @@ def retryable_transport_error(exc: Exception) -> bool:
     return isinstance(exc, (ConnectionError, TimeoutError, URLError))
 
 
+def transport_retry_kind(exc: Exception) -> str:
+    if isinstance(exc, HTTPError):
+        return "http"
+    if isinstance(exc, ConnectionError):
+        return "connection"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return "url" if isinstance(exc, URLError) else "none"
+
+
 def call_with_retry(
     operation: Callable[[], T],
     *,
@@ -366,6 +379,7 @@ def call_with_retry(
     base_seconds: float = DEFAULT_RETRY_BASE_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     random_value: Callable[[], float] = random.random,
+    on_retry: Callable[[Exception], None] | None = None,
 ) -> T:
     if attempts < 1:
         raise ValueError("retry attempts must be at least 1")
@@ -377,6 +391,8 @@ def call_with_retry(
         except Exception as exc:
             if not retryable_transport_error(exc) or attempt + 1 >= attempts:
                 raise
+            if on_retry is not None:
+                on_retry(exc)
             cap = min(base_seconds * (2**attempt), 5.0)
             sleep(cap * (0.5 + max(0.0, min(1.0, random_value())) / 2))
     raise RuntimeError("retry loop exited unexpectedly")
@@ -388,6 +404,7 @@ def flush_report_spool(
     ssl_context: ssl.SSLContext | None,
     retry_attempts: int,
     retry_base_seconds: float,
+    on_retry: Callable[[Exception], None] | None = None,
 ) -> str:
     disposition = "delivered"
     for path in spool.entries():
@@ -397,6 +414,7 @@ def flush_report_spool(
                 lambda: post_report_payload(control_plane_url, payload, ssl_context),
                 attempts=retry_attempts,
                 base_seconds=retry_base_seconds,
+                on_retry=on_retry,
             )
         except HTTPError as exc:
             if exc.code == 409:
@@ -572,6 +590,8 @@ def run_worker(
         "spoolBlocked": False,
         "spoolQueuedReports": int(spool_stats.get("queuedReports", 0)),
         "spoolBytes": int(spool_stats.get("bytes", 0)),
+        "transportRetryAttempts": 0,
+        "lastTransportRetryKind": "none",
     }
     if "openFileDescriptors" in initial_resources:
         pressure["openFileDescriptors"] = initial_resources[
@@ -585,6 +605,19 @@ def run_worker(
     def pressure_snapshot() -> dict:
         with pressure_lock:
             return dict(pressure)
+
+    def note_transport_retry(exc: Exception):
+        with pressure_lock:
+            pressure["transportRetryAttempts"] += 1
+            pressure["lastTransportRetryKind"] = transport_retry_kind(exc)
+
+    def retry_operation(operation: Callable[[], T]) -> T:
+        return call_with_retry(
+            operation,
+            attempts=retry_attempts,
+            base_seconds=retry_base_seconds,
+            on_retry=note_transport_retry,
+        )
 
     def note_spool_pressure(blocked: bool):
         nonlocal spool_blocked
@@ -614,6 +647,7 @@ def run_worker(
             ssl_context,
             retry_attempts,
             retry_base_seconds,
+            note_transport_retry,
         )
         note_spool_pressure(replay == "blocked")
         if replay != "blocked":
@@ -651,6 +685,7 @@ def run_worker(
             deep_check_interval_seconds,
             batch_budget_seconds,
             pressure_snapshot,
+            note_transport_retry,
         ),
         daemon=True,
         name=f"videosim-heartbeat-{worker_id}",
@@ -664,15 +699,13 @@ def run_worker(
         heartbeat_stop.set()
         heartbeat.join(timeout=min(heartbeat_seconds, 1.0))
         if registered and not drain_sent:
-            call_with_retry(
+            retry_operation(
                 lambda: post_drain(
                     control_plane_url,
                     worker_id,
                     ssl_context,
                     worker_incarnation_id,
                 ),
-                attempts=retry_attempts,
-                base_seconds=retry_base_seconds,
             )
             drain_sent = True
 
@@ -687,7 +720,7 @@ def run_worker(
             or deep_check_interval_seconds
             or batch_budget_seconds
         ):
-            call_with_retry(
+            retry_operation(
                 lambda: post_heartbeat(
                     control_plane_url,
                     worker_id,
@@ -703,8 +736,6 @@ def run_worker(
                     batch_budget_seconds,
                     pressure=pressure_snapshot(),
                 ),
-                attempts=retry_attempts,
-                base_seconds=retry_base_seconds,
             )
             registered = True
             print(
@@ -723,6 +754,7 @@ def run_worker(
                     ssl_context,
                     retry_attempts,
                     retry_base_seconds,
+                    note_transport_retry,
                 )
                 note_spool_pressure(replay == "blocked")
                 if replay == "blocked":
@@ -735,15 +767,13 @@ def run_worker(
                 if replay == "stale":
                     state = empty_monitor_state()
             try:
-                assignments = call_with_retry(
+                assignments = retry_operation(
                     lambda: fetch_assignments(
                         control_plane_url,
                         worker_id,
                         ssl_context,
                         worker_incarnation_id,
                     ),
-                    attempts=retry_attempts,
-                    base_seconds=retry_base_seconds,
                 )
             except Exception as exc:
                 if not retryable_transport_error(exc):
@@ -766,7 +796,7 @@ def run_worker(
                 )
             if assignments.get("apiVersion") == WORKER_API_VERSION_V2:
                 try:
-                    call_with_retry(
+                    retry_operation(
                         lambda: post_lease_acknowledgement(
                             control_plane_url,
                             worker_id,
@@ -774,8 +804,6 @@ def run_worker(
                             assignments,
                             ssl_context,
                         ),
-                        attempts=retry_attempts,
-                        base_seconds=retry_base_seconds,
                     )
                 except Exception as exc:
                     if isinstance(exc, HTTPError) and exc.code == 409:
@@ -858,6 +886,7 @@ def run_worker(
                         ssl_context,
                         retry_attempts,
                         retry_base_seconds,
+                        note_transport_retry,
                     )
                     note_spool_pressure(delivery == "blocked")
                     if delivery == "blocked":
@@ -866,7 +895,7 @@ def run_worker(
                         continue
                     report_conflict = delivery == "stale"
                 else:
-                    call_with_retry(
+                    retry_operation(
                         lambda: post_report(
                             control_plane_url,
                             worker_id,
@@ -879,8 +908,6 @@ def run_worker(
                             report_id=report_id,
                             lease_sequences=report_lease_sequences,
                         ),
-                        attempts=retry_attempts,
-                        base_seconds=retry_base_seconds,
                     )
             except HTTPError as exc:
                 if exc.code != 409:

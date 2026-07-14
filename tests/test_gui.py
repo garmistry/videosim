@@ -58,6 +58,8 @@ class GuiTest(unittest.TestCase):
             {"pressure": {"lastBatchDurationMs": float("inf")}},
             {"pressure": {"lastBatchCpuMs": -1}},
             {"pressure": {"openFileDescriptors": True}},
+            {"pressure": {"transportRetryAttempts": -1}},
+            {"pressure": {"lastTransportRetryKind": "socket-message"}},
             {"pressure": {"unknown": 1}},
             {"streamBudgetSeconds": float("inf")},
             {"deepCheckIntervalSeconds": "60"},
@@ -77,6 +79,8 @@ class GuiTest(unittest.TestCase):
                 "processPeakRssBytes": 10_000_000,
                 "childPeakRssBytes": 20_000_000,
                 "openFileDescriptors": 12,
+                "transportRetryAttempts": 3,
+                "lastTransportRetryKind": "connection",
             }
         }
 

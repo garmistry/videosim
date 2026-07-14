@@ -28,6 +28,7 @@ from videosim.worker import (
     post_heartbeat,
     post_report,
     run_worker,
+    transport_retry_kind,
     worker_pressure_from_state,
     worker_resource_pressure,
     worker_resource_snapshot,
@@ -602,6 +603,7 @@ class WorkerTest(unittest.TestCase):
             ]
         )
         sleeps = []
+        retries = []
 
         def operation():
             outcome = next(outcomes)
@@ -615,10 +617,76 @@ class WorkerTest(unittest.TestCase):
             base_seconds=0.25,
             sleep=sleeps.append,
             random_value=lambda: 0,
+            on_retry=retries.append,
         )
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(sleeps, [0.125, 0.25, 0.5])
+        self.assertEqual(
+            [transport_retry_kind(exc) for exc in retries],
+            ["url", "connection", "http"],
+        )
+
+    def test_worker_reports_bounded_transport_retry_pressure(self):
+        monitor_state = {
+            "updatedAt": "now",
+            "alarms": [],
+            "events": [],
+            "pending": [],
+        }
+        drain = threading.Event()
+        retry_pressure_seen = threading.Event()
+        pressures = []
+        fetch_calls = 0
+
+        def fetch(*_args):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                raise URLError("offline")
+            return durable_assignment()
+
+        def heartbeat(*_args, **kwargs):
+            pressure = kwargs["pressure"]
+            pressures.append(pressure)
+            if pressure["transportRetryAttempts"]:
+                retry_pressure_seen.set()
+                drain.set()
+            return {"ok": True}
+
+        with patch("videosim.worker.fetch_assignments", side_effect=fetch), patch(
+            "videosim.worker.post_heartbeat", side_effect=heartbeat
+        ), patch(
+            "videosim.worker.post_lease_acknowledgement", return_value={"ok": True}
+        ), patch(
+            "videosim.worker.run_monitor_once", return_value=monitor_state
+        ), patch(
+            "videosim.worker.post_report", return_value={"ok": True}
+        ), patch("videosim.worker.post_drain", return_value={"ok": True}):
+            code = run_worker(
+                "http://master:8080",
+                "worker-a",
+                0.02,
+                7,
+                20,
+                "app",
+                heartbeat_seconds=0.005,
+                retry_attempts=2,
+                retry_base_seconds=0,
+                max_streams=1,
+                drain_event=drain,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(retry_pressure_seen.is_set())
+        self.assertEqual(pressures[0]["transportRetryAttempts"], 0)
+        self.assertTrue(
+            any(
+                pressure["transportRetryAttempts"] == 1
+                and pressure["lastTransportRetryKind"] == "url"
+                for pressure in pressures
+            )
+        )
 
     def test_lease_acknowledgement_retries_real_connection_reset(self):
         requests = []

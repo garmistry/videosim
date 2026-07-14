@@ -85,7 +85,7 @@ linked evidence passes in a production-like environment.
 | Input bounds | Nginx/app 1 MiB limit and report collection/identifier caps | Implemented |
 | Destination policy | Inline credential rejection, DNS/IP classification, explicit private/suffix policy | Implemented; VM egress and redirect-aware policy pending |
 | Rate limits | Separate Nginx operator and worker zones | Implemented configuration; production tuning pending |
-| Retry policy | Bounded exponential jitter for transient assignment/report failures, including HTTP response connection resets; 409 refetch separate | Implemented with unit coverage and a same-engine 33-worker fault follow-up with zero survivor restarts; deterministic network reset injection remains open |
+| Retry policy | Bounded exponential jitter for transient assignment/report failures, including HTTP response connection resets; 409 refetch separate | Implemented with a deterministic loopback TCP reset lease-ack test and a same-engine 33-worker fault follow-up with zero survivor restarts; distributed network-chaos remains open |
 | Auditability | Stdout authorization events plus selective immutable PostgreSQL denial/mutation audit, transactional outbox, and non-owner service roles | Implemented for selected scope; allowed reads/workers/local runtime actions and external/WORM archive remain open |
 | Credential lifecycle | Managed CA/secret rotation and revocation | Not implemented; F2/F4 gate |
 | Tenant isolation | Durable tenant/resource grants | Not implemented; F2 gate |

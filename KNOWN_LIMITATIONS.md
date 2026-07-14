@@ -150,9 +150,10 @@
   workflow reads target-host Docker logs only; peer-host logs must be copied
   and audited against the result window. One follow-up copied both peer logs
   after adding bounded retry for `ConnectionError` response resets and found
-  zero survivor restarts or critical/re-registration markers, but it did not
-  deliberately inject a TCP reset. It is not physical-domain or capacity
-  certification.
+  zero survivor restarts or critical/re-registration markers. A worker-level
+  loopback test now deliberately resets a lease-ack TCP connection and proves
+  retry, but no reset is injected into the full domain run. It is not
+  physical-domain or capacity certification.
 - The cross-domain startup preflight validates three advertised fixture hosts,
   three worker zones, exact endpoint/worker counts, 33 unique accepted worker
   incarnations, retained state hashes, and one immutable image digest, and

@@ -261,8 +261,11 @@ implementation and must pass before those milestones advance.
   36.370-second p99, returned to exact 40-per-worker balance, and left all 33
   containers running with zero restarts. The two survivor-domain logs had no
   reset, traceback, re-registration, spool, certificate, identity, or fatal
-  marker in the accepted window. The test does not deliberately inject a TCP
-  reset, so deterministic network-chaos and independent-host coverage remain.
+  marker in the accepted window. A deterministic worker-level loopback test
+  now resets the lease-ack TCP connection before its response and proves the
+  same acknowledgement succeeds on retry. It does not inject that reset into
+  the full 33-worker run, so distributed network-chaos and independent-host
+  coverage remain.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;
@@ -274,8 +277,8 @@ implementation and must pass before those milestones advance.
   domain rejoin. Partitions, multi-host timing, and production failure-domain
   recovery remain open.
 - The v2 heartbeat renews durable membership and matching active leases, and
-  unit coverage now includes HTTP response connection resets in the bounded
-  retry path, but the worker still lacks retry/backoff metrics. Static
+  unit coverage now includes an actual loopback TCP response reset in the
+  bounded retry path, but the worker still lacks retry/backoff metrics. Static
   `capacity.maxStreams` admission and bounded stream-level concurrency are
   covered, and worker admission can enforce operator-set total/SRT/DASH counts.
   Execution bounds

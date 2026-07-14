@@ -87,7 +87,7 @@ the first persistence adapter behind the feed-store boundary.
 | Trusted mode rejects inline credentials and unsafe destination addresses by default | P0 | implemented | `python3 -m unittest tests.test_security` |
 | Request bodies, report collections, and identifiers have hard limits | P0 | implemented | `python3 -m unittest tests.test_security tests.test_worker_api tests.test_gui` |
 | Worker TLS context loads CA and client certificate/key | P0 | implemented | `python3 -m unittest tests.test_worker` |
-| Transient transport failures, including HTTP response connection resets, use bounded jittered retries while 409 refetch remains distinct | P0 | implemented | `python3 -m unittest tests.test_worker` |
+| Transient transport failures, including a real loopback TCP response reset, use bounded jittered retries while 409 refetch remains distinct | P0 | implemented | `python3 -m unittest tests.test_worker` |
 | Production Compose interpolation and Nginx TLS/mTLS configuration validate | P1 | implemented | `docker compose -f docker-compose.production.yml config --quiet`; Nginx `-t` smoke in `docs/work-log.md` |
 | Live worker certificate CN accepted and mismatched worker ID denied through Nginx | P0 | implemented smoke | documented in `docs/work-log.md` |
 

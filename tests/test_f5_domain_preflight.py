@@ -105,6 +105,9 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
 
         zone = f"candidate-zone-{chr(ord('a') + index)}"
         worker_result = root / f"worker-{index}-result.json"
+        worker_ids = [
+            f"{zone}-worker-{number:02d}" for number in range(1, 12)
+        ]
         write_json(
             worker_result,
             {
@@ -113,8 +116,16 @@ def create_artifacts(root: Path, hosts: tuple[str, str, str] = ("fixture-a", "fi
                 "endedAt": f"2026-07-13T10:1{index}:30+00:00",
                 "project": f"worker-{index}",
                 "failureDomain": zone,
-                "expectedWorkerIds": [
-                    f"{zone}-worker-{number:02d}" for number in range(1, 12)
+                "expectedWorkerIds": worker_ids,
+                "workerRegistrations": [
+                    {
+                        "workerId": worker_id,
+                        "workerIncarnationId": (
+                            "00000000-0000-0000-0000-"
+                            f"{index * 11 + number:012d}"
+                        ),
+                    }
+                    for number, worker_id in enumerate(worker_ids, start=1)
                 ],
                 "workerImage": IMAGE,
                 "immutableImage": True,
@@ -162,6 +173,8 @@ class F5DomainPreflightTest(unittest.TestCase):
         self.assertEqual(report["fixtureDomains"], 3)
         self.assertEqual(report["workerDomains"], 3)
         self.assertEqual(report["workerCount"], 33)
+        self.assertEqual(report["workerRegistrationCount"], 33)
+        self.assertEqual(report["workerIncarnationCount"], 33)
         self.assertEqual(report["protocolCounts"], {"srt": 660, "dash": 660})
         self.assertEqual(len(report["advertisedHosts"]), 3)
         self.assertEqual(report["dockerHostCount"], 6)
@@ -210,6 +223,22 @@ class F5DomainPreflightTest(unittest.TestCase):
         self.assertFalse(report["distinctDockerHostsValidated"])
         self.assertIn(
             "domain startup artifacts must come from 6 distinct Docker engines",
+            report["errors"],
+        )
+
+    def test_rejects_reused_worker_incarnation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = create_artifacts(Path(directory))
+            worker = json.loads(artifacts[3][1].read_text(encoding="utf-8"))
+            worker["workerRegistrations"][0]["workerIncarnationId"] = (
+                "00000000-0000-0000-0000-000000000001"
+            )
+            write_json(artifacts[3][1], worker)
+            report = self.verify(artifacts)
+
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "worker domain 2 reuses worker incarnation IDs",
             report["errors"],
         )
 

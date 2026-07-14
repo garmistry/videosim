@@ -9,6 +9,7 @@ import json
 import math
 import re
 import sys
+import uuid
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ WORKER_CHECKS = {
     "worker_services_running",
     "control_plane_health_api",
     "worker_mtls_health_api",
+    "worker_registrations_validated",
     "worker_services_stable",
     "docker_logs_clean",
 }
@@ -117,6 +119,48 @@ def _result_host_identity(value: dict, label: str, errors: list[str]) -> dict | 
     except ValueError as exc:
         errors.append(f"{label}.hostIdentity is invalid: {exc}")
         return None
+
+
+def _worker_registrations(
+    value: object, label: str, expected_ids: list[str], errors: list[str]
+) -> tuple[set[str], set[str]]:
+    if not isinstance(value, list):
+        errors.append(f"{label}.workerRegistrations must be an array")
+        return set(), set()
+    worker_ids = set()
+    incarnation_ids = set()
+    for index, item in enumerate(value):
+        item_label = f"{label}.workerRegistrations[{index}]"
+        if not isinstance(item, dict) or set(item) != {
+            "workerId",
+            "workerIncarnationId",
+        }:
+            errors.append(f"{item_label} must contain workerId and workerIncarnationId")
+            continue
+        worker_id = item["workerId"]
+        if not isinstance(worker_id, str) or not worker_id:
+            errors.append(f"{item_label}.workerId must be a non-empty string")
+            continue
+        raw_incarnation = item["workerIncarnationId"]
+        try:
+            incarnation_id = str(uuid.UUID(raw_incarnation))
+        except (AttributeError, TypeError, ValueError):
+            errors.append(f"{item_label}.workerIncarnationId must be a UUID")
+            continue
+        if incarnation_id != raw_incarnation:
+            errors.append(f"{item_label}.workerIncarnationId must be canonical")
+            continue
+        if worker_id in worker_ids:
+            errors.append(f"{label}.workerRegistrations contains duplicate worker IDs")
+        if incarnation_id in incarnation_ids:
+            errors.append(
+                f"{label}.workerRegistrations contains duplicate incarnation IDs"
+            )
+        worker_ids.add(worker_id)
+        incarnation_ids.add(incarnation_id)
+    if worker_ids != set(expected_ids):
+        errors.append(f"{label}.workerRegistrations do not match expected worker IDs")
+    return worker_ids, incarnation_ids
 
 
 def verify_f5_domain_preflight(
@@ -352,6 +396,8 @@ def verify_f5_domain_preflight(
 
     worker_domains = set()
     worker_ids = set()
+    worker_registration_ids = set()
+    worker_incarnation_ids = set()
     resolved_image_ids = set()
     if len(worker_result_paths) == failure_domains:
         for index, result_path in enumerate(worker_result_paths, start=1):
@@ -398,6 +444,15 @@ def verify_f5_domain_preflight(
                 errors.append(f"{label} contains duplicate worker IDs")
             else:
                 worker_ids.update(actual_ids)
+            registration_ids, incarnation_ids = _worker_registrations(
+                result.get("workerRegistrations"), label, expected_ids, errors
+            )
+            if worker_registration_ids.intersection(registration_ids):
+                errors.append(f"{label} reuses registered worker IDs")
+            if worker_incarnation_ids.intersection(incarnation_ids):
+                errors.append(f"{label} reuses worker incarnation IDs")
+            worker_registration_ids.update(registration_ids)
+            worker_incarnation_ids.update(incarnation_ids)
             resolved = result.get("resolvedImageId")
             if not isinstance(resolved, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", resolved):
                 errors.append(f"{label}.resolvedImageId must be a SHA-256 image ID")
@@ -408,6 +463,16 @@ def verify_f5_domain_preflight(
         errors.append("worker results do not cover every workload failure domain")
     if len(worker_ids) != worker_count:
         errors.append(f"worker results contain {len(worker_ids)} unique IDs, expected {worker_count}")
+    if len(worker_registration_ids) != worker_count:
+        errors.append(
+            "worker results contain "
+            f"{len(worker_registration_ids)} registered IDs, expected {worker_count}"
+        )
+    if len(worker_incarnation_ids) != worker_count:
+        errors.append(
+            "worker results contain "
+            f"{len(worker_incarnation_ids)} unique incarnations, expected {worker_count}"
+        )
     if len(image_digests) != 1:
         errors.append("fixture and worker domains must use one immutable image digest")
     if len(resolved_image_ids) != 1:
@@ -429,6 +494,7 @@ def verify_f5_domain_preflight(
                 "candidate_workload_shape_validated",
                 "fixture_domain_artifacts_validated",
                 "worker_domain_artifacts_validated",
+                "worker_registrations_validated",
                 "cross_domain_identity_validated",
                 "distinct_docker_hosts_validated",
             ]
@@ -441,6 +507,8 @@ def verify_f5_domain_preflight(
         "fixtureDomains": len(fixture_projects),
         "workerDomains": len(worker_domains),
         "workerCount": len(worker_ids),
+        "workerRegistrationCount": len(worker_registration_ids),
+        "workerIncarnationCount": len(worker_incarnation_ids),
         "protocolCounts": {protocol: protocol_counts[protocol] for protocol in PROTOCOLS},
         "behaviorCounts": {behavior: behavior_counts[behavior] for behavior in BEHAVIORS},
         "advertisedHosts": sorted(set(advertised_hosts)),

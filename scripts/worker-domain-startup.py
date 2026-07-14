@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import urlopen
@@ -36,6 +37,9 @@ CRITICAL_LOG_MARKERS = (
     "report_spool=blocked",
     "report spool quota exhausted",
     "fatal:",
+)
+REGISTRATION_RE = re.compile(
+    r"\[videosim-worker\] worker=(\S+) incarnation=(\S+) state=registered(?:\s|$)"
 )
 
 
@@ -158,6 +162,40 @@ def validate_container_records(
 def critical_log_matches(log_output: str) -> list[str]:
     lowered = log_output.lower()
     return [marker for marker in CRITICAL_LOG_MARKERS if marker in lowered]
+
+
+def worker_registration_inventory(
+    log_output: str, expected_worker_ids: tuple[str, ...]
+) -> list[dict]:
+    expected = set(expected_worker_ids)
+    registrations = {}
+    for worker_id, raw_incarnation in REGISTRATION_RE.findall(log_output):
+        if worker_id not in expected:
+            raise RuntimeError(f"unexpected registered worker: {worker_id}")
+        if worker_id in registrations:
+            raise RuntimeError(f"duplicate worker registration log: {worker_id}")
+        try:
+            incarnation = str(uuid.UUID(raw_incarnation))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"worker registration has invalid incarnation: {worker_id}"
+            ) from exc
+        if incarnation != raw_incarnation:
+            raise RuntimeError(
+                f"worker registration has non-canonical incarnation: {worker_id}"
+            )
+        registrations[worker_id] = incarnation
+    missing = sorted(expected - set(registrations))
+    if missing:
+        raise RuntimeError(
+            "worker registration logs are missing: " + ", ".join(missing)
+        )
+    if len(set(registrations.values())) != len(registrations):
+        raise RuntimeError("worker registration incarnations must be unique")
+    return [
+        {"workerId": worker_id, "workerIncarnationId": registrations[worker_id]}
+        for worker_id in sorted(registrations)
+    ]
 
 
 class WorkerDomainStartup:
@@ -413,6 +451,15 @@ class WorkerDomainStartup:
                     "worker Docker logs contain critical markers: "
                     + ", ".join(markers)
                 )
+            registrations = worker_registration_inventory(
+                log_output, self.worker_ids
+            )
+            (self.artifact_dir / "worker-registration.json").write_text(
+                json.dumps(registrations, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            result["workerRegistrations"] = registrations
+            result["checks"].append("worker_registrations_validated")
             result["checks"].append("docker_logs_clean")
             result["passed"] = True
         except Exception as exc:

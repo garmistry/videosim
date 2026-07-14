@@ -86,6 +86,36 @@ class WorkerDomainStartupTest(unittest.TestCase):
         )
         self.assertEqual(STARTUP["critical_log_matches"]("worker ready\n"), [])
 
+    def test_registration_inventory_requires_exact_unique_workers(self):
+        worker_ids = (
+            "candidate-zone-a-worker-01",
+            "candidate-zone-a-worker-02",
+        )
+        first = "11111111-1111-4111-8111-111111111111"
+        second = "22222222-2222-4222-8222-222222222222"
+        logs = (
+            f"worker-01 | [videosim-worker] worker={worker_ids[0]} "
+            f"incarnation={first} state=registered\n"
+            f"worker-02 | [videosim-worker] worker={worker_ids[1]} "
+            f"incarnation={second} state=registered\n"
+        )
+
+        inventory = STARTUP["worker_registration_inventory"](logs, worker_ids)
+
+        self.assertEqual(
+            inventory,
+            [
+                {"workerId": worker_ids[0], "workerIncarnationId": first},
+                {"workerId": worker_ids[1], "workerIncarnationId": second},
+            ],
+        )
+        with self.assertRaisesRegex(RuntimeError, "logs are missing"):
+            STARTUP["worker_registration_inventory"](logs.splitlines()[0], worker_ids)
+        with self.assertRaisesRegex(RuntimeError, "incarnations must be unique"):
+            STARTUP["worker_registration_inventory"](
+                logs.replace(second, first), worker_ids
+            )
+
 
 @unittest.skipUnless(
     STARTUP_INTEGRATION,
@@ -110,6 +140,11 @@ class WorkerDomainStartupIntegrationTest(unittest.TestCase):
                 Path(directory, "result.json").read_text(encoding="utf-8")
             )
             docker_log = Path(directory, "docker.log").read_text(encoding="utf-8")
+            registrations = json.loads(
+                Path(directory, "worker-registration.json").read_text(
+                    encoding="utf-8"
+                )
+            )
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue(evidence["passed"])
@@ -121,8 +156,11 @@ class WorkerDomainStartupIntegrationTest(unittest.TestCase):
         self.assertEqual(len(evidence["expectedWorkerIds"]), 11)
         self.assertIn("control_plane_health_api", evidence["checks"])
         self.assertIn("worker_mtls_health_api", evidence["checks"])
+        self.assertIn("worker_registrations_validated", evidence["checks"])
         self.assertIn("worker_services_stable", evidence["checks"])
         self.assertIn("docker_logs_clean", evidence["checks"])
+        self.assertEqual(len(evidence["workerRegistrations"]), 11)
+        self.assertEqual(registrations, evidence["workerRegistrations"])
         self.assertTrue(docker_log.strip())
 
 

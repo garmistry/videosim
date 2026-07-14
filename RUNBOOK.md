@@ -921,11 +921,13 @@ checks the control-plane health API from the host and from `worker-01`, then
 requires the exact 11-service set to stay up on one resolved image with zero
 restarts and no critical Docker-log marker. It requires one accepted
 registration log for every expected worker, rejects duplicate worker or
-incarnation IDs, and records those pairs plus the bounded Linux Docker Engine
-identity in `result.json`. It leaves the domain running.
+incarnation IDs, captures raw Docker CPU, memory, and PID rows for the exact
+11 stable containers, and records their artifact name, SHA-256, and count with
+the bounded Linux Docker Engine identity in `result.json`. It leaves the domain
+running.
 Retain `result.json`, `certificate-inventory.json`, `compose-config.json`,
 `compose-ps.txt`, `container-state.json`, `control-plane-health.json`,
-`worker-registration.json`, and `docker.log` from
+`worker-registration.json`, `docker-stats.jsonl`, and `docker.log` from
 `VIDEOSIM_WORKER_STARTUP_ARTIFACT_DIR`.
 
 Repeat on all three hosts. Once all 33 registration records are retained,
@@ -948,9 +950,10 @@ The marked test invokes the same script and leaves the worker domain running.
 It is not independent-host, media-load, domain-loss, or soak evidence by
 itself.
 
-Copy the three fixture startup results and six fixture states plus the three
-worker startup results to the coordinator. Keep fixture result/SRT/DASH options
-in the same domain order, then run the cross-domain preflight:
+Copy the three fixture startup results and six fixture states plus each worker
+startup result and its hashed `docker-stats.jsonl` to the coordinator. Keep
+fixture result/SRT/DASH options in the same domain order, then run the
+cross-domain preflight:
 
 ```sh
 python3 scripts/f5-domain-preflight.py \
@@ -976,11 +979,12 @@ worker IDs, `workerRegistrationCount=33`, `workerIncarnationCount=33`, one
 immutable image digest, `dockerHostCount=6`, and
 `distinctDockerHostsValidated=true`. The verifier matches each fixture result
 to its state hashes, rejects duplicate cross-domain endpoints, validates each
-bounded startup host identity, and rejects any reused Docker Engine, worker,
-or incarnation ID. A Docker daemon ID is stronger than an advertised name but
-cannot prove separate physical failure domains, so the report always keeps
-`independentHostsCertified=false` and `capacityCertified=false`. Retain the
-report as preflight evidence, then prove physical topology separately.
+bounded startup host identity and 11-container worker-resource metadata, and
+rejects any reused Docker Engine, worker, or incarnation ID. A Docker daemon
+ID is stronger than an advertised name but cannot prove separate physical
+failure domains, so the report always keeps `independentHostsCertified=false`
+and `capacityCertified=false`. Retain the report and raw snapshots as preflight
+evidence, then prove physical topology and measured headroom separately.
 
 From a coordinator with read access to the same PostgreSQL database, set
 `VIDEOSIM_DATABASE_URL` and retain the converged authority baseline:

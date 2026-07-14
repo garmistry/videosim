@@ -118,6 +118,37 @@ def update_recovery_times(
             recovery_times.setdefault(stream_id, elapsed)
 
 
+def require_survivors_unchanged(
+    baseline_snapshot: dict,
+    current_snapshot: dict,
+    failed_domain: str,
+) -> None:
+    def survivor_incarnations(snapshot: dict) -> dict[str, str]:
+        return {
+            worker["workerId"]: worker["incarnationId"]
+            for worker in snapshot.get("workers", [])
+            if isinstance(worker, dict)
+            and worker.get("state") == "active"
+            and worker.get("heartbeatFresh") is True
+            and not str(worker.get("workerId", "")).startswith(
+                f"{failed_domain}-worker-"
+            )
+        }
+
+    baseline = survivor_incarnations(baseline_snapshot)
+    current = survivor_incarnations(current_snapshot)
+    if current != baseline:
+        changed = sorted(set(baseline) ^ set(current))
+        changed.extend(
+            worker_id
+            for worker_id in set(baseline) & set(current)
+            if baseline[worker_id] != current[worker_id]
+        )
+        raise RuntimeError(
+            "survivor worker incarnation changed: " + ", ".join(sorted(changed)[:5])
+        )
+
+
 def recovery_percentiles(values: list[float]) -> dict:
     ordered = sorted(values)
     return {
@@ -195,12 +226,14 @@ class WorkerDomainFault:
         self.baseline_timeout = args.baseline_timeout
         self.recovery_timeout = args.recovery_timeout
         self.rejoin_timeout = args.rejoin_timeout
+        self.rejoin_hold_seconds = args.rejoin_hold_seconds
         self.hold_seconds = args.hold_seconds
         self.poll_seconds = args.poll_seconds
         for name, value in (
             ("baseline_timeout", self.baseline_timeout),
             ("recovery_timeout", self.recovery_timeout),
             ("rejoin_timeout", self.rejoin_timeout),
+            ("rejoin_hold_seconds", self.rejoin_hold_seconds),
             ("hold_seconds", self.hold_seconds),
             ("poll_seconds", self.poll_seconds),
         ):
@@ -411,8 +444,31 @@ class WorkerDomainFault:
                 "worker domain assignment rejoin", rejoined, self.rejoin_timeout
             )
             self.write_json("assignment-rejoined.json", rejoined_report.payload())
-            self.capture_compose("rejoined")
             result["checks"].append("worker_domain_rejoined")
+
+            hold_deadline = time.monotonic() + self.rejoin_hold_seconds
+            while True:
+                held_snapshot, held_report = self.snapshot_report()
+                if not held_report.passed:
+                    raise RuntimeError(
+                        "rejoined assignment baseline changed: "
+                        + "; ".join(held_report.errors)
+                    )
+                require_survivors_unchanged(
+                    baseline,
+                    held_snapshot,
+                    self.domain,
+                )
+                if time.monotonic() >= hold_deadline:
+                    break
+                time.sleep(
+                    min(self.poll_seconds, hold_deadline - time.monotonic())
+                )
+            self.write_json(
+                "assignment-rejoined-held.json", held_report.payload()
+            )
+            self.capture_compose("rejoined")
+            result["checks"].append("rejoined_survivors_stable")
 
             log_output = (self.artifact_dir / "docker-rejoined.log").read_text(
                 encoding="utf-8"
@@ -466,6 +522,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-timeout", type=float, default=120)
     parser.add_argument("--recovery-timeout", type=float, default=120)
     parser.add_argument("--rejoin-timeout", type=float, default=300)
+    parser.add_argument("--rejoin-hold-seconds", type=float, default=30)
     parser.add_argument("--hold-seconds", type=float, default=15)
     parser.add_argument("--poll-seconds", type=float, default=1)
     return parser

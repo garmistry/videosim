@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,7 +61,89 @@ class WorkerDomainFaultTest(unittest.TestCase):
             FAULT["validate_startup_result"](duplicate, WORKLOAD)
 
     def test_authority_and_recovery_reject_healthy_owner_churn(self):
-        snapshot = {
+        snapshot = self.authority_snapshot()
+        owners = FAULT["authoritative_owners"](snapshot)
+        recovery_times = {}
+
+        FAULT["update_recovery_times"](
+            owners,
+            {
+                "affected": "candidate-zone-c-worker-01",
+                "healthy": owners["healthy"],
+            },
+            {"affected"},
+            recovery_times,
+            31.25,
+        )
+
+        self.assertEqual(recovery_times, {"affected": 31.25})
+        with self.assertRaisesRegex(RuntimeError, "healthy-domain authority changed"):
+            FAULT["update_recovery_times"](
+                owners,
+                {
+                    "affected": "candidate-zone-c-worker-01",
+                    "healthy": "candidate-zone-c-worker-02",
+                },
+                {"affected"},
+                recovery_times,
+                32,
+            )
+
+    def test_recovery_percentiles_are_ordered(self):
+        metrics = FAULT["recovery_percentiles"]([1, 2, 3, 4, 5])
+
+        self.assertEqual(metrics["p50"], 3)
+        self.assertLessEqual(metrics["p50"], metrics["p95"])
+        self.assertLessEqual(metrics["p95"], metrics["p99"])
+        self.assertEqual(metrics["maximum"], 5)
+
+    def test_survivor_incarnation_must_not_change(self):
+        baseline = self.authority_snapshot()
+        current = json.loads(json.dumps(baseline))
+        current["workers"][1]["incarnationId"] = "incarnation-b-new"
+        current["leases"][1]["workerIncarnationId"] = "incarnation-b-new"
+
+        with self.assertRaisesRegex(RuntimeError, "survivor worker incarnation"):
+            FAULT["require_survivors_unchanged"](
+                baseline,
+                current,
+                "candidate-zone-a",
+            )
+
+    def test_assignment_baseline_retries_transient_failure(self):
+        workflow = object.__new__(FAULT["WorkerDomainFault"])
+        workflow.baseline_timeout = 0.1
+        workflow.poll_seconds = 0.001
+        attempts = iter(
+            [
+                (
+                    {"snapshot": 1},
+                    SimpleNamespace(
+                        passed=False,
+                        metrics={"phase": "baseline"},
+                        errors=["one worker heartbeat is temporarily stale"],
+                    ),
+                ),
+                (
+                    {"snapshot": 2},
+                    SimpleNamespace(
+                        passed=True,
+                        metrics={"phase": "baseline"},
+                        errors=[],
+                    ),
+                ),
+            ]
+        )
+        workflow.snapshot_report = lambda: next(attempts)
+
+        snapshot, report = workflow.wait_for_baseline()
+
+        self.assertEqual(snapshot, {"snapshot": 2})
+        self.assertTrue(report.passed)
+
+    @staticmethod
+    def authority_snapshot():
+        return {
             "capturedAt": "2026-07-13T10:00:00+00:00",
             "feeds": [
                 {"streamId": "affected", "configVersion": 1, "desired": True},
@@ -99,71 +182,6 @@ class WorkerDomainFaultTest(unittest.TestCase):
                 },
             ],
         }
-        owners = FAULT["authoritative_owners"](snapshot)
-        recovery_times = {}
-
-        FAULT["update_recovery_times"](
-            owners,
-            {
-                "affected": "candidate-zone-c-worker-01",
-                "healthy": owners["healthy"],
-            },
-            {"affected"},
-            recovery_times,
-            31.25,
-        )
-
-        self.assertEqual(recovery_times, {"affected": 31.25})
-        with self.assertRaisesRegex(RuntimeError, "healthy-domain authority changed"):
-            FAULT["update_recovery_times"](
-                owners,
-                {
-                    "affected": "candidate-zone-c-worker-01",
-                    "healthy": "candidate-zone-c-worker-02",
-                },
-                {"affected"},
-                recovery_times,
-                32,
-            )
-
-    def test_recovery_percentiles_are_ordered(self):
-        metrics = FAULT["recovery_percentiles"]([1, 2, 3, 4, 5])
-
-        self.assertEqual(metrics["p50"], 3)
-        self.assertLessEqual(metrics["p50"], metrics["p95"])
-        self.assertLessEqual(metrics["p95"], metrics["p99"])
-        self.assertEqual(metrics["maximum"], 5)
-
-    def test_assignment_baseline_retries_transient_failure(self):
-        workflow = object.__new__(FAULT["WorkerDomainFault"])
-        workflow.baseline_timeout = 0.1
-        workflow.poll_seconds = 0.001
-        attempts = iter(
-            [
-                (
-                    {"snapshot": 1},
-                    SimpleNamespace(
-                        passed=False,
-                        metrics={"phase": "baseline"},
-                        errors=["one worker heartbeat is temporarily stale"],
-                    ),
-                ),
-                (
-                    {"snapshot": 2},
-                    SimpleNamespace(
-                        passed=True,
-                        metrics={"phase": "baseline"},
-                        errors=[],
-                    ),
-                ),
-            ]
-        )
-        workflow.snapshot_report = lambda: next(attempts)
-
-        snapshot, report = workflow.wait_for_baseline()
-
-        self.assertEqual(snapshot, {"snapshot": 2})
-        self.assertTrue(report.passed)
 
 
 @unittest.skipUnless(
@@ -174,7 +192,10 @@ class WorkerDomainFaultIntegrationTest(unittest.TestCase):
     def test_hard_stops_recovers_and_rejoins_one_worker_domain(self):
         startup = os.environ["VIDEOSIM_WORKER_FAULT_STARTUP_RESULT"]
         database_url = os.environ["VIDEOSIM_TEST_POSTGRES_URL"]
-        with tempfile.TemporaryDirectory() as directory:
+        retained = os.environ.get("VIDEOSIM_WORKER_FAULT_ARTIFACT_DIR")
+        context = nullcontext(retained) if retained else tempfile.TemporaryDirectory()
+        with context as directory:
+            Path(directory).mkdir(parents=True, exist_ok=True)
             result = subprocess.run(
                 [
                     sys.executable,

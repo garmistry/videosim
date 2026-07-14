@@ -277,8 +277,11 @@ implementation and must pass before those milestones advance.
   domain rejoin. Partitions, multi-host timing, and production failure-domain
   recovery remain open.
 - The v2 heartbeat renews durable membership and matching active leases, and
-  unit coverage now includes an actual loopback TCP response reset in the
-  bounded retry path, but the worker still lacks retry/backoff metrics. Static
+  unit coverage includes an actual loopback TCP response reset in the bounded
+  retry path. The latest pressure snapshot now carries process-lifetime
+  `transportRetryAttempts` plus a bounded last kind (`none`, `http`,
+  `connection`, `timeout`, or `url`) without exception text. Retry history,
+  alert thresholds, and recovery-SLO evaluation remain open. Static
   `capacity.maxStreams` admission and bounded stream-level concurrency are
   covered, and worker admission can enforce operator-set total/SRT/DASH counts.
   Execution bounds
@@ -328,7 +331,7 @@ implementation and must pass before those milestones advance.
   deferred streams, and defers the deep phase. Black/frozen validation cost,
   weighted check-cost/tenant fairness, durable queue backpressure, and
   slow-stream-storm freshness evidence remain open. Heartbeats now expose a
-  schema-bounded latest cycle/deferral/spool pressure snapshot, and assignment
+  schema-bounded latest cycle/deferral/spool/retry pressure snapshot, and assignment
   excludes spool-blocked workers with explicit shortfall. Pressure history,
   hysteresis, alerts, recovery SLO evaluation, and production saturation
   evidence remain open. The 1,300-assignment failure-domain test proves only

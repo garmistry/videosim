@@ -356,7 +356,7 @@ def post_report(
 def retryable_transport_error(exc: Exception) -> bool:
     if isinstance(exc, HTTPError):
         return exc.code in {429, 500, 502, 503, 504}
-    return isinstance(exc, (TimeoutError, URLError))
+    return isinstance(exc, (ConnectionError, TimeoutError, URLError))
 
 
 def call_with_retry(

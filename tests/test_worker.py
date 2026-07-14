@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
+from http.client import RemoteDisconnected
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
@@ -589,7 +590,14 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(post.call_count, 3)
 
     def test_transport_retry_uses_bounded_exponential_full_jitter(self):
-        outcomes = iter([URLError("offline"), RetryableServiceError(), {"ok": True}])
+        outcomes = iter(
+            [
+                URLError("offline"),
+                RemoteDisconnected("reset"),
+                RetryableServiceError(),
+                {"ok": True},
+            ]
+        )
         sleeps = []
 
         def operation():
@@ -600,14 +608,14 @@ class WorkerTest(unittest.TestCase):
 
         result = call_with_retry(
             operation,
-            attempts=3,
+            attempts=4,
             base_seconds=0.25,
             sleep=sleeps.append,
             random_value=lambda: 0,
         )
 
         self.assertEqual(result, {"ok": True})
-        self.assertEqual(sleeps, [0.125, 0.25])
+        self.assertEqual(sleeps, [0.125, 0.25, 0.5])
 
     def test_worker_keeps_incarnation_across_assignment_transport_outage(self):
         monitor_state = {

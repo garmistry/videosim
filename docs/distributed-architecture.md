@@ -201,7 +201,9 @@ VideoSim should split into a master control plane and many worker nodes:
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,
-  dirty or skipped runs, path escape, and SHA-256 drift; it runs no workload.
+  dirty or skipped runs, path escape, and SHA-256 drift. The F5 policy also
+  requires and binds the passed cross-domain preflight report to the workload
+  and immutable image; it runs no workload.
 - `python -m videosim control-plane-load` drives the exact candidate shape in
   disposable PostgreSQL. Its declared endpoint storm commits separate
   all-stream `feed_reachable` unhealthy and healthy windows and verifies alarm

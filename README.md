@@ -359,7 +359,9 @@ A passing report requires `dockerHostCount=6`,
 registration/incarnation counts plus three resource snapshots. Docker daemon IDs do not
 attest physical topology, so the report always keeps
 `independentHostsCertified` and `capacityCertified` false; see `RUNBOOK.md` for
-the full command.
+the full command. Include that passed report as the `f5-domain-preflight`
+artifact in the final capacity-evidence bundle; `capacity-check` binds its
+workload hash and image digest to the bundle.
 
 After an endpoint-fault exercise, reconcile the durable result and alarm
 projections from one PostgreSQL snapshot:

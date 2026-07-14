@@ -1270,6 +1270,11 @@ tokens must carry the declared protocol load. The report must have a clean
 source commit, immutable image digests, all required raw artifacts, no skipped
 checks, and passing detail for all ten admission criteria.
 
+For F5, the required `f5-domain-preflight` artifact is the passed coordinator
+report created above. `capacity-check` verifies its workload SHA-256 and image
+digest against the bundle, plus its 3-domain/33-worker/three-resource-snapshot
+and six-Docker-host shape.
+
 Exit zero proves only that a complete, untampered bundle satisfies the policy.
 The repository does not yet contain the production-like run or evidence needed
 for 1,000-stream admission.

@@ -14,7 +14,8 @@
     "dashboard-export",
     "security-report",
     "restore-report",
-    "rollback-record"
+    "rollback-record",
+    "f5-domain-preflight"
   ],
   "requiredCriteria": [
     "assignment-correctness",

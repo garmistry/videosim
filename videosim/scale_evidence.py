@@ -37,6 +37,8 @@ BASELINE_ARTIFACT_KINDS = (
     "restore-report",
     "rollback-record",
 )
+F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND = "f5-domain-preflight"
+F5_DOMAIN_PREFLIGHT_SCHEMA = "videosim.f5-domain-preflight/v1"
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
@@ -461,6 +463,54 @@ def _verify_artifact(
     return resolved
 
 
+def _validate_f5_domain_preflight(
+    value: object,
+    workload: dict | None,
+    workload_sha256: str | None,
+    image_digests: set[str],
+    errors: list[str],
+):
+    label = F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND
+    if not isinstance(value, dict):
+        errors.append(f"{label} must be a JSON object")
+        return
+    if value.get("schemaVersion") != F5_DOMAIN_PREFLIGHT_SCHEMA:
+        errors.append(f"{label}.schemaVersion must be {F5_DOMAIN_PREFLIGHT_SCHEMA}")
+    if value.get("passed") is not True or value.get("errors") != []:
+        errors.append(f"{label} did not pass cleanly")
+    if workload is None:
+        errors.append(f"{label} cannot be matched without a valid workload")
+        return
+    shape = workload.get("workerShape")
+    shape = shape if isinstance(shape, dict) else {}
+    expected = {
+        "targetStreams": workload.get("targetStreams"),
+        "loadStreams": workload.get("loadStreams"),
+        "fixtureDomains": shape.get("failureDomains"),
+        "workerDomains": shape.get("failureDomains"),
+        "workerCount": shape.get("count"),
+        "workerRegistrationCount": shape.get("count"),
+        "workerIncarnationCount": shape.get("count"),
+        "workerResourceSnapshotCount": shape.get("failureDomains"),
+    }
+    for field, expected_value in expected.items():
+        if expected_value is not None and value.get(field) != expected_value:
+            errors.append(f"{label}.{field} does not match the workload")
+    failure_domains = shape.get("failureDomains")
+    if _positive_int(failure_domains) and value.get("dockerHostCount") != failure_domains * 2:
+        errors.append(f"{label}.dockerHostCount does not match the failure domains")
+    if value.get("distinctDockerHostsValidated") is not True:
+        errors.append(f"{label}.distinctDockerHostsValidated must be true")
+    input_sha256 = value.get("inputSha256")
+    if (
+        not isinstance(input_sha256, dict)
+        or input_sha256.get("workload") != workload_sha256
+    ):
+        errors.append(f"{label}.inputSha256.workload does not match the evidence workload")
+    if value.get("imageDigest") not in image_digests:
+        errors.append(f"{label}.imageDigest does not match an evidence container image")
+
+
 def check_scale_evidence(
     report_path: str | Path, policy_path: str | Path
 ) -> ScaleEvidenceCheck:
@@ -506,6 +556,7 @@ def check_scale_evidence(
         errors.append("evidence.dirtySource must be false for this policy")
 
     images = evidence.get("containerImages")
+    image_digests: set[str] = set()
     if not isinstance(images, list) or not images:
         errors.append("evidence.containerImages must be a non-empty array")
     else:
@@ -520,6 +571,8 @@ def check_scale_evidence(
                 errors.append(
                     f"evidence.containerImages[{index}].digest must be a sha256 digest"
                 )
+            else:
+                image_digests.add(digest)
 
     if evidence.get("acceptancePolicyVersion") != policy.get("policyVersion"):
         errors.append("evidence.acceptancePolicyVersion does not match policy")
@@ -591,6 +644,7 @@ def check_scale_evidence(
     seen_paths: set[Path] = set()
     verified = 0
     workload: dict | None = None
+    workload_sha256: str | None = None
     inputs = evidence.get("inputs")
     if not isinstance(inputs, dict):
         errors.append("evidence.inputs must be an object")
@@ -604,8 +658,14 @@ def check_scale_evidence(
                 verified += 1
                 if name == "workload":
                     workload = _read_object(resolved, "workload", errors)
+                    reference = inputs.get(name)
+                    if isinstance(reference, dict) and isinstance(
+                        reference.get("sha256"), str
+                    ):
+                        workload_sha256 = reference["sha256"]
 
     artifact_kinds: set[str] = set()
+    artifact_paths: dict[str, Path] = {}
     artifacts = evidence.get("artifacts")
     if not isinstance(artifacts, list):
         errors.append("evidence.artifacts must be an array")
@@ -622,8 +682,11 @@ def check_scale_evidence(
                 errors.append(f"evidence.artifacts contains duplicate kind {kind}")
             else:
                 artifact_kinds.add(kind)
-            if _verify_artifact(base, item, label, seen_paths, errors) is not None:
+            resolved = _verify_artifact(base, item, label, seen_paths, errors)
+            if resolved is not None:
                 verified += 1
+                if isinstance(kind, str) and kind not in artifact_paths:
+                    artifact_paths[kind] = resolved
     required_kinds = policy.get("requiredArtifactKinds", [])
     if isinstance(required_kinds, list):
         missing = sorted(set(required_kinds) - artifact_kinds)
@@ -643,6 +706,16 @@ def check_scale_evidence(
         ):
             if (ended - started).total_seconds() < workload["durationSeconds"]:
                 errors.append("evidence timestamp duration is below workload duration")
+
+    preflight_path = artifact_paths.get(F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND)
+    if preflight_path is not None:
+        _validate_f5_domain_preflight(
+            _read_object(preflight_path, F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND, errors),
+            workload,
+            workload_sha256,
+            image_digests,
+            errors,
+        )
 
     return ScaleEvidenceCheck(
         tuple(errors),

@@ -11,6 +11,8 @@ from videosim.gui import capacity_aware_assignments
 from videosim.scale_evidence import (
     ADMISSION_CRITERIA,
     BASELINE_ARTIFACT_KINDS,
+    F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
+    F5_DOMAIN_PREFLIGHT_SCHEMA,
     check_scale_evidence,
 )
 
@@ -241,7 +243,7 @@ class ScaleEvidenceTest(unittest.TestCase):
         self.assertIn("policy.requiredCriteria omits baseline values", combined)
         self.assertIn("policy.requiredArtifactKinds omits baseline values", combined)
 
-    def test_repository_f5_policy_accepts_checked_in_candidate(self):
+    def test_repository_f5_policy_requires_matched_domain_preflight(self):
         root = Path(__file__).resolve().parents[1]
         policy_path = root / "scale/policies/f5-1000.json"
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -256,6 +258,40 @@ class ScaleEvidenceTest(unittest.TestCase):
             json.dumps(self.evidence, sort_keys=True), encoding="utf-8"
         )
 
+        check = check_scale_evidence(self.report_path, policy_path)
+
+        self.assertFalse(check.passed)
+        self.assertIn(
+            F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
+            "\n".join(check.errors),
+        )
+
+        preflight = {
+            "schemaVersion": F5_DOMAIN_PREFLIGHT_SCHEMA,
+            "passed": True,
+            "errors": [],
+            "targetStreams": self.workload["targetStreams"],
+            "loadStreams": self.workload["loadStreams"],
+            "fixtureDomains": 3,
+            "workerDomains": 3,
+            "workerCount": 33,
+            "workerRegistrationCount": 33,
+            "workerIncarnationCount": 33,
+            "workerResourceSnapshotCount": 3,
+            "dockerHostCount": 6,
+            "distinctDockerHostsValidated": True,
+            "inputSha256": {
+                "workload": self.evidence["inputs"]["workload"]["sha256"]
+            },
+            "imageDigest": self.evidence["containerImages"][0]["digest"],
+        }
+        self.evidence["artifacts"].append(
+            {
+                "kind": F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
+                **self.write_json("artifacts/f5-domain-preflight.json", preflight),
+            }
+        )
+        self.save_manifests()
         check = check_scale_evidence(self.report_path, policy_path)
 
         self.assertTrue(check.passed, check.errors)
@@ -273,6 +309,23 @@ class ScaleEvidenceTest(unittest.TestCase):
             ),
             (22, 1320, 660, 660),
         )
+
+        preflight["passed"] = False
+        preflight["errors"] = ["test failure"]
+        preflight["inputSha256"]["workload"] = "d" * 64
+        preflight["imageDigest"] = "sha256:" + "c" * 64
+        self.evidence["artifacts"][-1] = {
+            "kind": F5_DOMAIN_PREFLIGHT_ARTIFACT_KIND,
+            **self.write_json("artifacts/f5-domain-preflight.json", preflight),
+        }
+        self.save_manifests()
+        check = check_scale_evidence(self.report_path, policy_path)
+
+        self.assertFalse(check.passed)
+        combined = "\n".join(check.errors)
+        self.assertIn("f5-domain-preflight did not pass cleanly", combined)
+        self.assertIn("f5-domain-preflight.inputSha256.workload does not match", combined)
+        self.assertIn("f5-domain-preflight.imageDigest does not match", combined)
 
     def test_checked_in_candidate_survives_rejoin_and_second_domain_loss(self):
         root = Path(__file__).resolve().parents[1]

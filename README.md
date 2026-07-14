@@ -393,6 +393,26 @@ all 11 accepted worker registration records, and Docker logs, then retains the
 evidence directory without stopping the workers. The runbook contains the
 cross-domain Chrome/API, failure-injection, and admission checks.
 
+For a fresh F5 admission run, register all 33 workers against the empty migrated
+catalog before atomically importing `mixed-1320.json`; this lets the first
+assignment sweep balance at 40 streams per worker. After `verify-assignments`
+passes the exact baseline, hard-stop and validate one domain from that domain's
+Docker host:
+
+```sh
+python3 scripts/worker-domain-fault.py \
+  --startup-result artifacts/worker-a/result.json \
+  --database-url "$VIDEOSIM_DATABASE_URL" \
+  --artifact-dir artifacts/worker-a/fault
+```
+
+The workflow times authority recovery for all 440 affected streams, rejects
+healthy-owner churn during loss, holds the recovered map, restarts the domain,
+requires exact baseline rejoin, holds all 22 survivor incarnations stable for
+30 seconds, and checks target Docker logs. It always reports
+`capacityCertified=false`; retain peer-domain logs and
+`GET /api/operator/overview` separately for the complete run evidence.
+
 ## Documentation
 
 - [Runbook](RUNBOOK.md): install, run, verify, operate, and troubleshoot.

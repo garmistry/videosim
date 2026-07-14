@@ -840,10 +840,12 @@ one-domain readiness evidence.
 
 ### Load and validate the candidate catalog
 
-Boot the migrated production control plane first and use a dedicated default
-tenant catalog with operator writes paused. Set `VIDEOSIM_DATABASE_URL` to the
-same PostgreSQL authority used by the API, then import the composed state before
-any candidate worker starts polling:
+Boot the migrated production control plane first and use a dedicated empty
+default-tenant catalog with operator writes paused. For a fresh F5 admission
+run, start all three worker domains against that empty catalog and require all
+33 registrations before executing this import. This avoids assigning the first
+shards to whichever domain starts earliest. Set `VIDEOSIM_DATABASE_URL` to the
+same PostgreSQL authority used by the API, then import the composed state:
 
 ```sh
 python3 -m videosim import-fixture-scenario \
@@ -856,8 +858,9 @@ counts, running external-feed fields, or endpoint-sharing markers are invalid.
 Distinct endpoints are required by default. It briefly locks catalog writes,
 rejects any feed ID not listed by the scenario, applies all 1,320 definitions
 in one transaction, then rereads and compares every persisted configuration.
-Do not use `--allow-shared-endpoints` for F5 evidence. Run this before worker
-boot because a changed feed configuration revokes its current lease.
+Do not use `--allow-shared-endpoints` for F5 evidence. For a non-empty catalog,
+drain candidate workers before changing configurations because each changed
+feed revokes its current lease.
 
 Require the report to contain `passed=true`, `catalogExclusive=true`,
 `streamsInspected=1320`, exact 660/660 protocol and 1,056/132/66/66 behavior
@@ -925,8 +928,9 @@ Retain `result.json`, `certificate-inventory.json`, `compose-config.json`,
 `worker-registration.json`, and `docker.log` from
 `VIDEOSIM_WORKER_STARTUP_ARTIFACT_DIR`.
 
-Repeat on all three hosts. In an OIDC-authenticated Chrome session, open the
-operator `/state.json` endpoint and verify 33 unique candidate worker IDs,
+Repeat on all three hosts. Once all 33 registration records are retained,
+execute the fresh-catalog import above. In an OIDC-authenticated Chrome session,
+open `/api/operator/overview` and verify 33 unique candidate worker IDs,
 `pressure.assignedStreams=40` for every worker after convergence, and no
 blocked spool. Retain that response. Treat a restarting container, worker API
 authentication error, assignment shortfall, traceback, or fatal Docker-log
@@ -992,6 +996,50 @@ assignments, 660 assignments per protocol, and exactly 40/20/20 total/SRT/DASH
 assignments per worker. The capture uses one read-only repeatable PostgreSQL
 snapshot and treats only an active, unexpired, current-config lease held by the
 fresh matching worker incarnation as authoritative.
+
+### Hard-stop one candidate worker domain
+
+Run this on the Docker host for the domain under test with that domain's
+`.env.worker-domain` loaded and with PostgreSQL reachable from the host:
+
+```sh
+python3 scripts/worker-domain-fault.py \
+  --startup-result artifacts/worker-a/result.json \
+  --database-url "$VIDEOSIM_DATABASE_URL" \
+  --artifact-dir artifacts/worker-a/fault
+```
+
+The workflow waits up to 120 seconds for the exact baseline, stops all 11
+domain containers with a zero-second Compose timeout, and observes durable
+authority once per second. It requires exactly 440 affected streams to move,
+rejects any ownership change among the other 880 streams during loss, enforces
+45-second p95 and 90-second p99 recovery limits, and holds recovered authority
+stable for 15 seconds. It then restarts the same domain, waits for the exact
+33-worker baseline, and holds that baseline for another 30 seconds while all
+22 survivor worker incarnations remain unchanged. Target Compose state and
+timestamped Docker logs are retained before, during, after rejoin, and on final
+exit; a fail-safe restart runs if the workflow exits while the domain is down.
+
+Run the marked contract with a retained artifact directory:
+
+```sh
+VIDEOSIM_WORKER_DOMAIN_FAULT_INTEGRATION=1 \
+VIDEOSIM_WORKER_FAULT_STARTUP_RESULT=artifacts/worker-a/result.json \
+VIDEOSIM_WORKER_FAULT_ARTIFACT_DIR=artifacts/worker-a/marked-fault \
+VIDEOSIM_TEST_POSTGRES_URL="$VIDEOSIM_DATABASE_URL" \
+  python3 -m unittest \
+  tests.test_worker_domain_fault.WorkerDomainFaultIntegrationTest
+```
+
+After the run, capture `/api/operator/overview` and require 33 workers, 1,320
+assigned streams, 40 per worker, zero blocked spools, and zero queued reports.
+Capture timestamped Docker logs from both survivor domains and reject any new
+registration, traceback, spool-blocked, certificate, identity, or fatal marker
+inside the fault result's `startedAt`/`endedAt` window. The script cannot read
+remote peer Docker daemons itself. Its result permanently keeps
+`independentHostsCertified=false`, `mediaCapacityCertified=false`, and
+`capacityCertified=false`; same-host execution and placeholder endpoints are
+workflow evidence only.
 
 ### Run durable control-plane load
 

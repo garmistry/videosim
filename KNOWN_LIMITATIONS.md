@@ -142,6 +142,14 @@
   durable HTTP run registered all 11 workers. No production immutable image
   over the remote HTTPS/mTLS path, three-host boot, host sizing, media load, or
   physical domain-loss execution has passed.
+- The worker-domain fault workflow passes a marked same-engine exact
+  33-worker/1,320-stream authority exercise and holds survivor incarnations
+  stable after rejoin. Its local input advertises 1,320 distinct but
+  unreachable placeholder URLs, uses a mutable image and HTTP control path,
+  and records no real media, alarm, network, or host-headroom result. The
+  workflow reads target-host Docker logs only; peer-host logs must be copied
+  and audited against the result window. It is not physical-domain or capacity
+  certification.
 - The cross-domain startup preflight validates three advertised fixture hosts,
   three worker zones, exact endpoint/worker counts, 33 unique accepted worker
   incarnations, retained state hashes, and one immutable image digest, and

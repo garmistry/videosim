@@ -59,6 +59,12 @@ VideoSim should split into a master control plane and many worker nodes:
   host plus worker-path health APIs, bounded Docker Engine identity,
   exact accepted worker/incarnation registrations, zero-restart process
   stability, and logs; one local run is not three-host deployment evidence.
+- `worker-domain-fault.py` waits for exact candidate authority, hard-stops one
+  11-worker Compose domain, times all 440 replacement authorities, rejects
+  healthy-owner churn during loss, holds recovery, restarts and rejoins the
+  domain, then holds all 22 survivor incarnations stable for one freshness
+  window. It retains assignment/Compose/log evidence but cannot certify remote
+  peer logs, physical topology, media capacity, or host headroom.
 - Generated DASH assignments include a master HTTP `monitorEndpoint` so workers do not need a shared DASH volume.
 - Generated SRT workers use `--srt-host` to reach listener feeds through the master/app container host name.
 - Worker contract `videosim.worker/v1` adds process-restart, generation, and assignment-token fencing. HTTP 409 causes a bounded assignment refetch instead of silently applying stale state.
@@ -185,6 +191,12 @@ VideoSim should split into a master control plane and many worker nodes:
   image digest. Daemon identity prevents hostname-only reuse but cannot attest
   physical host topology; the preflight never certifies physical independence
   or capacity.
+- The candidate worker fault workflow exercises the real Docker stop/start,
+  worker HTTP loop, PostgreSQL freshness, production scheduler, lease
+  acknowledgement, and assignment verifier paths. A marked same-engine run
+  recovered exact 440/440 authority at 36.233-second p95 and 37.315-second p99,
+  rejoined exact 33-worker balance, and held survivor incarnations stable. It
+  used placeholder endpoints and therefore adds no media-capacity claim.
 - `python -m videosim capacity-check` verifies a versioned scale workload and
   immutable evidence bundle against a policy. It fails on missing baseline
   criteria/artifacts, insufficient declared duration/headroom/survivor tokens,

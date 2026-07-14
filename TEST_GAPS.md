@@ -246,6 +246,16 @@ implementation and must pass before those milestones advance.
   control path. The domain has not run with a production digest and HTTPS/mTLS
   path on three independent hosts; host sizing, media load, physical domain
   loss, and admission evidence remain open.
+- `worker-domain-fault.py` now hard-stops all 11 containers in one candidate
+  domain, measures authority recovery for its exact 440 assignments, rejects
+  healthy-owner churn during loss, rejoins the domain, and holds all 22
+  survivor incarnations stable for 30 seconds. A marked local 33-worker/
+  1,320-stream run passed at 36.233-second p95 and 37.315-second p99 with exact
+  API balance and no new peer-log marker in the run window. It used one Docker
+  engine, mutable local image, HTTP control path, and unreachable placeholder
+  endpoints, so it proves orchestration and durable authority only. Physical
+  independent-host loss, HTTPS/mTLS, real media/alarm behavior, survivor CPU/
+  memory/network headroom, and 24-hour evidence remain open.
 - Process-local failure injection covers complete survivor assignment and stale
   report rejection for 1,300 logical streams after one of ten workers is
   removed. It also exposes 1,044 excess assignment moves above the 130 required;
